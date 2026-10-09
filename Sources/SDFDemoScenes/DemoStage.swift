@@ -11,7 +11,7 @@ public enum DemoStage {
     /// The ground body of every scene is invisible; upstream draws a floor at y = 0 instead
     public static func makeFloor() -> Entity {
         var material = PhysicallyBasedMaterial()
-        material.baseColor = .init(tint: .init(white: 0.82, alpha: 1))
+        material.baseColor = .init(tint: .init(white: 0.32, alpha: 1))
         material.roughness = 0.9
         let floor = ModelEntity(mesh: .generatePlane(width: 60, depth: 60), materials: [material])
         floor.name = "Floor"

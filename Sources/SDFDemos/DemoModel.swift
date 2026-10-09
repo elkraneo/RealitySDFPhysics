@@ -29,6 +29,8 @@ final class DemoModel {
         didSet { showsContacts ? root.addChild(contactMarkers) : contactMarkers.removeFromParent() }
     }
 
+    var showsRealityKitStatistics = false
+
     var dropShape = "Box"
 
     var parameters = SDFSimulation.Parameters() {
@@ -75,6 +77,22 @@ final class DemoModel {
             try await dropper.drop(dropShape, above: camera.target)
         } catch {
             errorMessage = "Could not drop \(dropShape): \(error.localizedDescription)"
+        }
+    }
+
+    /// Cycles through scenes with a slowly orbiting camera, for recording the app
+    func runShowcase() async {
+        showsRealityKitStatistics = true
+        let reel = [(scene: 7, contacts: false), (8, false), (6, false), (1, true), (3, false)]
+        while !Task.isCancelled {
+            for (scene, contacts) in reel {
+                showsContacts = contacts
+                await loadScene(scene)
+                for _ in 0..<300 { // About 5 s
+                    orbit(by: CGSize(width: -0.4, height: 0))
+                    try? await Task.sleep(for: .milliseconds(16))
+                }
+            }
         }
     }
 
