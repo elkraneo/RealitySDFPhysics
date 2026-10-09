@@ -1,10 +1,14 @@
 // C interface over the SDF-SDF collision engine of Giles and Andrews, "Real-Time Collision Handling
 // for Signed Distance Fields via Caching and Importance Sampling" (Pacific Graphics 2026). The
-// engine itself is vendored unmodified in upstream/, this header is the only API Swift sees, so
-// clients do not need C++ interoperability.
+// engine is vendored unmodified in upstream/; this header is the only API Swift sees, so clients
+// do not need C++ interoperability.
 //
-// All functions on one world must be called from a single thread at a time. Shapes are shared
-// between worlds (the upstream shape library is global), so loading scenes is not thread safe.
+// Shapes are immutable once created and may be created and used from any thread. A world must be
+// used from one thread at a time.
+//
+// Poses are given in the frame of the caller's object (an entity): the position of its origin,
+// its orientation and its uniform scale. The facade converts to the engine's frames, including
+// the unit cube normalization of baked voxel shapes.
 
 #pragma once
 
@@ -14,6 +18,62 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+// MARK: Shapes
+
+typedef struct SDFShape SDFShape;
+
+// Analytical shapes. Axes of symmetry are y; capsule and cylinder lengths are half lengths.
+SDFShape *sdf_shape_box(float halfX, float halfY, float halfZ);
+SDFShape *sdf_shape_sphere(float radius);
+SDFShape *sdf_shape_capsule(float radius, float halfLength);
+SDFShape *sdf_shape_cylinder(float radius, float halfHeight);
+SDFShape *sdf_shape_cone(float radius, float halfHeight);
+SDFShape *sdf_shape_torus(float majorRadius, float minorRadius);
+
+// Analytical composites and operator distorted boxes of the paper (Sec. 4.5, Figs. 1, 4 and 9)
+SDFShape *sdf_shape_spike_plate(float halfX, float halfY, float halfZ, int32_t count, float spikeRadius,
+                                float minHeight, float maxHeight);
+SDFShape *sdf_shape_spiky_wheel(float hubRadius, float hubHalfWidth, float spikeRadius, float spikeLength,
+                                int32_t spikes);
+typedef enum
+{
+    SDFWarpBend = 0,
+    SDFWarpTwist = 1,
+    SDFWarpDisplace = 2,
+} SDFWarp;
+SDFShape *sdf_shape_warped_box(SDFWarp warp, float halfX, float halfY, float halfZ, float k);
+
+// Voxel SDF baked from a closed triangle mesh (3 floats per vertex, 3 indices per triangle).
+// The grid has `resolution` cells across the longest side of the mesh. Returns NULL for an empty
+// mesh. Baking takes from milliseconds to about a second.
+SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint32_t *indices, int32_t indexCount,
+                         int32_t resolution);
+
+void sdf_shape_release(SDFShape *shape);
+
+// False for baked meshes whose edges are not all shared by two triangles; their inside and
+// outside may be ambiguous
+bool sdf_shape_is_watertight(const SDFShape *shape);
+
+// Volume enclosed by the shape, in its frame's units
+float sdf_shape_volume(const SDFShape *shape);
+
+// Signed distance (negative inside) and its gradient at a point of the shape's frame
+float sdf_shape_distance(const SDFShape *shape, const float point[3], float gradient[3]);
+
+// Triangle mesh of the shape's surface in its frame, for display. Valid while the shape lives.
+typedef struct
+{
+    const float *positions;      // 3 floats per vertex
+    const float *normals;        // 3 floats per vertex
+    const uint32_t *indices;     // 3 per triangle
+    int32_t vertexCount;
+    int32_t indexCount;
+} SDFShapeMesh;
+SDFShapeMesh sdf_shape_mesh(const SDFShape *shape);
+
+// MARK: Worlds
 
 typedef struct SDFWorld SDFWorld;
 
@@ -37,6 +97,7 @@ typedef struct
     int32_t substeps;            // Substeps per time step, each with its own collision detection
     int32_t solverIterations;    // Solver iterations per substep
     float timeStep;              // Seconds per step
+    float gravity[3];
 } SDFParams;
 
 // Per step statistics
@@ -51,85 +112,72 @@ typedef struct
     double stepMilliseconds;     // Whole step, including the solver
 } SDFStats;
 
-// Render state of a body. The transform maps the shape's local frame (in which its mesh is
-// given) to world space: world = origin + rotate(orientation, local * scale).
+SDFWorld *sdf_world_create(void);
+void sdf_world_destroy(SDFWorld *world);
+
+SDFParams sdf_default_params(void);
+SDFParams sdf_world_params(const SDFWorld *world);
+// Non-finite and negative values are ignored, counts are clamped to at least 1 where needed
+void sdf_world_set_params(SDFWorld *world, SDFParams params);
+
+void sdf_world_step(SDFWorld *world);
+SDFStats sdf_world_stats(const SDFWorld *world);
+
+// MARK: Bodies
+
+// Identifies a body in its world, 0 is never a valid body
+typedef uint32_t SDFBodyID;
+
+typedef enum
+{
+    SDFBodyDynamic = 0,
+    SDFBodyKinematic = 1,        // Moved by the caller, pushes dynamic bodies with its velocity
+    SDFBodyStatic = 2,
+} SDFBodyMode;
+
 typedef struct
 {
-    float origin[3];
+    float position[3];           // Origin of the caller's frame
     float orientation[4];        // Quaternion x, y, z, w
-    float scale;
-    float color[3];
-    int32_t shape;               // Index for sdf_world_shape_mesh
-    bool visible;                // The ground is a body too, drawn as a floor instead
-    bool isStatic;
-} SDFBodyState;
+    float scale;                 // Uniform
+} SDFPose;
 
-// Triangle mesh of a shape in its local frame. The pointers stay valid until the next scene load.
+// The shape is retained by the body. Dynamic bodies get a mass of 1000 per unit volume.
+SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pose, SDFBodyMode mode);
+void sdf_world_remove_body(SDFWorld *world, SDFBodyID body);
+
+SDFPose sdf_world_body_pose(const SDFWorld *world, SDFBodyID body);
+// Moves the body to a pose (its scale is fixed at creation and ignored here)
+void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID body, SDFPose pose);
+
+void sdf_world_body_velocity(const SDFWorld *world, SDFBodyID body, float linear[3], float angular[3]);
+void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID body, const float linear[3], const float angular[3]);
+
+float sdf_world_body_mass(const SDFWorld *world, SDFBodyID body);
+// Rescales the inertia with the mass. Ignored for kinematic and static bodies.
+void sdf_world_set_body_mass(SDFWorld *world, SDFBodyID body, float mass);
+void sdf_world_set_body_friction(SDFWorld *world, SDFBodyID body, float friction);
+
+// Impulse at a world point, changes the velocity immediately
+void sdf_world_apply_impulse(SDFWorld *world, SDFBodyID body, const float impulse[3], const float point[3]);
+
+// MARK: Contacts and picking
+
 typedef struct
 {
-    const float *positions;      // 3 floats per vertex
-    const float *normals;        // 3 floats per vertex
-    const uint32_t *indices;     // 3 per triangle
-    int32_t vertexCount;
-    int32_t indexCount;
-} SDFShapeMesh;
-
-typedef struct
-{
+    SDFBodyID bodyA, bodyB;
     float position[3];           // x* (world space)
     float normal[3];             // From body A to body B
     float separation;            // Gap (> 0) or overlap (< 0)
     bool cached;                 // Warm started from the cache, as opposed to a new sample
 } SDFContact;
 
-typedef struct
-{
-    float target[3];
-    float distance, yaw, pitch;
-} SDFCamera;
-
-// Directory that contains assets/*.obj (the built in voxel shapes). Call before loading a scene
-// that uses them.
-void sdf_set_resource_directory(const char *path);
-
-// Built in scenes
-int32_t sdf_scene_count(void);
-const char *sdf_scene_name(int32_t index);
-const char *sdf_scene_description(int32_t index);
-
-// Shapes that can be spawned by name
-int32_t sdf_shape_name_count(void);
-const char *sdf_shape_name(int32_t index);
-
-SDFParams sdf_default_params(void);
-
-SDFWorld *sdf_world_create(void);
-void sdf_world_destroy(SDFWorld *world);
-
-void sdf_world_load_scene(SDFWorld *world, int32_t index);
-SDFCamera sdf_world_camera(const SDFWorld *world);
-void sdf_world_spawn(SDFWorld *world, const char *shape, const float position[3]);
-
-void sdf_world_step(SDFWorld *world);
-SDFStats sdf_world_stats(const SDFWorld *world);
-
-SDFParams sdf_world_params(const SDFWorld *world);
-void sdf_world_set_params(SDFWorld *world, SDFParams params);
-
-int32_t sdf_world_body_count(const SDFWorld *world);
-// Writes min(capacity, count) bodies, returns the body count
-int32_t sdf_world_body_states(const SDFWorld *world, SDFBodyState *bodies, int32_t capacity);
-
-int32_t sdf_world_shape_count(const SDFWorld *world);
-SDFShapeMesh sdf_world_shape_mesh(const SDFWorld *world, int32_t shape);
-const char *sdf_world_shape_name(const SDFWorld *world, int32_t shape);
-
 // Writes min(capacity, count) active contacts of the last substep, returns their count
 int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t capacity);
 
 // Mouse dragging: picks the closest dynamic body on the ray and holds it at the hit point, which
-// then follows sdf_world_drag_to. Returns the picked body or -1.
-int32_t sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3]);
+// then follows sdf_world_drag_to. Returns the picked body or 0.
+SDFBodyID sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3]);
 void sdf_world_drag_to(SDFWorld *world, const float target[3]);
 void sdf_world_end_drag(SDFWorld *world);
 

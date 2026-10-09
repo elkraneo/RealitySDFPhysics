@@ -8,7 +8,6 @@ let package = Package(
     products: [
         .library(name: "SDFCollisionKit", targets: ["SDFCollisionKit"]),
         .executable(name: "SDFDemos", targets: ["SDFDemos"]),
-        .executable(name: "sdf-bench", targets: ["sdf-bench"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
     ],
     targets: [
@@ -16,31 +15,27 @@ let package = Package(
         .target(
             name: "SDFCore",
             exclude: ["upstream/LICENSE"],
-            cxxSettings: [
-                .headerSearchPath("upstream"),
-                .headerSearchPath("shim"),
-            ]
+            cxxSettings: [.headerSearchPath("upstream")]
         ),
-        // Swift wrapper and RealityKit integration (components, system, mesh conversion)
+        // The library: shapes, components and the RealityKit system
         .target(
             name: "SDFCollisionKit",
-            dependencies: ["SDFCore"],
+            dependencies: ["SDFCore"]
+        ),
+        // The upstream demo scenes rebuilt on the public API, shared by the app and snapshots
+        .target(
+            name: "SDFDemoScenes",
+            dependencies: ["SDFCollisionKit"],
             resources: [.copy("Resources/assets")]
         ),
-        // macOS RealityKit port of the upstream demo scenes
         .executableTarget(
             name: "SDFDemos",
-            dependencies: ["SDFCollisionKit"]
+            dependencies: ["SDFDemoScenes"]
         ),
-        // Headless timing of every scene, for comparison with the upstream demo
-        .executableTarget(
-            name: "sdf-bench",
-            dependencies: ["SDFCollisionKit"]
-        ),
-        // Offscreen RealityKit renders of every scene
+        // Offscreen RealityKit renders of every demo scene
         .executableTarget(
             name: "sdf-snapshot",
-            dependencies: ["SDFCollisionKit"]
+            dependencies: ["SDFDemoScenes"]
         ),
         .testTarget(
             name: "SDFCollisionKitTests",

@@ -1,9 +1,8 @@
-// Renders every built-in scene offscreen with RealityKit after simulating it, and writes PNGs.
+// Simulates every demo scene and renders it offscreen with RealityKit to a PNG, and prints timings.
 //
-//   swift run -c release sdf-snapshot <output directory> [steps] [scene index...]
+//   swift run -c release sdf-snapshot <output directory> [steps >= 0] [scene index...]
 //
-// Steps default to 240 (4 s of simulated time). Useful to compare with the upstream web demo,
-// and to check the RealityKit side without a window.
+// Steps default to 240 (4 s of simulated time).
 
 import CoreGraphics
 import Foundation
@@ -11,56 +10,75 @@ import ImageIO
 import Metal
 import RealityKit
 import SDFCollisionKit
+import SDFDemoScenes
 import UniformTypeIdentifiers
 
-@MainActor
-func run() throws {
-    func usage() -> Never {
-        print("usage: sdf-snapshot <output directory> [steps >= 0] [scene index...]")
-        exit(1)
-    }
-    let arguments = CommandLine.arguments.dropFirst()
-    guard let output = arguments.first else { usage() }
-    let numbers = arguments.dropFirst().compactMap { Int($0) }
-    guard numbers.count == arguments.dropFirst().count else { usage() }
-    let steps = numbers.first ?? 240
-    let selected = numbers.count > 1 ? Array(numbers.dropFirst()) : SDFWorld.scenes.map(\.id)
-    guard steps >= 0, selected.allSatisfy(SDFWorld.scenes.indices.contains) else { usage() }
-    try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
+func usage() -> Never {
+    print("usage: sdf-snapshot <output directory> [steps >= 0] [scene index...]")
+    exit(1)
+}
 
-    let width = 1280, height = 800
-    let device = MTLCreateSystemDefaultDevice()!
-    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm_srgb, width: width, height: height, mipmapped: false)
+let arguments = CommandLine.arguments.dropFirst()
+guard let output = arguments.first else { usage() }
+let numbers = arguments.dropFirst().compactMap { Int($0) }
+guard numbers.count == arguments.count - 1 else { usage() }
+let steps = numbers.first ?? 240
+let selected = numbers.count > 1 ? Array(numbers.dropFirst()) : DemoScene.all.map(\.id)
+guard steps >= 0, selected.allSatisfy(DemoScene.all.indices.contains) else { usage() }
+
+do {
+    try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
+    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm_srgb, width: 1280, height: 800,
+                                                              mipmapped: false)
     descriptor.usage = [.renderTarget, .shaderRead]
     descriptor.storageMode = .shared
-    let texture = device.makeTexture(descriptor: descriptor)!
+    let texture = MTLCreateSystemDefaultDevice()!.makeTexture(descriptor: descriptor)!
 
+    print("scene                     bodies  load ms  step ms (mean / max)  contacts")
     for index in selected {
-        // Simulate headless, then mirror the final state into entities once
-        let world = SDFWorld()
-        world.loadScene(index)
-        for _ in 0..<steps { world.step() }
-        let simulation = SDFSimulation(world: world)
-        simulation.synchronize()
-        simulation.showsContacts = true
+        let scene = DemoScene.all[index]
+        let simulation = SDFSimulation()
+        let root = Entity()
+        root.components.set(SDFSimulationComponent(simulation: simulation))
+
+        let loadStart = Date()
+        try await scene.load(into: root)
+        let loadMilliseconds = Date().timeIntervalSince(loadStart) * 1000
+        root.addChild(ContactMarkers.makeEntity())
+
+        var total = 0.0, slowest = 0.0
+        for _ in 0..<steps {
+            simulation.step(root: root)
+            total += simulation.statistics.stepMilliseconds
+            slowest = max(slowest, simulation.statistics.stepMilliseconds)
+        }
 
         let renderer = try RealityRenderer()
-        let camera = SDFDemoStage.makeCamera()
-        SDFDemoStage.place(camera, at: simulation.world.camera)
-        renderer.entities.append(contentsOf: [simulation.root, SDFDemoStage.makeFloor(), SDFDemoStage.makeLight(), camera])
+        let camera = DemoStage.makeCamera()
+        OrbitCamera(for: scene).place(camera)
+        renderer.entities.append(contentsOf: [root, DemoStage.makeFloor(), DemoStage.makeLight(), camera])
         renderer.activeCamera = camera
         renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.62, green: 0.70, blue: 0.80, alpha: 1))
-
-        let done = DispatchSemaphore(value: 0)
+        // Without time passing the simulation only synchronizes, and the contact markers update
         let cameraOutput = try RealityRenderer.CameraOutput(.singleProjection(colorTexture: texture))
-        try renderer.updateAndRender(deltaTime: 0, cameraOutput: cameraOutput, onComplete: { _ in done.signal() })
-        done.wait()
+        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+            do {
+                try renderer.updateAndRender(deltaTime: 0, cameraOutput: cameraOutput, onComplete: { _ in done.resume() })
+            } catch {
+                done.resume(throwing: error)
+            }
+        }
 
-        let name = SDFWorld.scenes[index].name.replacingOccurrences(of: ":", with: "").replacingOccurrences(of: " ", with: "-")
-        let url = URL(fileURLWithPath: output).appendingPathComponent(String(format: "%02d-%@.png", index, name))
-        try writePNG(texture, to: url)
-        print("\(url.path)  (\(simulation.world.stats.contacts) contacts)")
+        let name = scene.name.replacingOccurrences(of: ":", with: "").replacingOccurrences(of: " ", with: "-")
+        try writePNG(texture, to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%02d-%@.png", index, name)))
+        let stats = simulation.statistics
+        print(scene.name.padding(toLength: 25, withPad: " ", startingAt: 0)
+            + String(format: " %6d %8.0f %9.2f / %6.2f %9d", stats.bodies, loadMilliseconds,
+                     total / Double(max(steps, 1)), slowest, stats.contacts))
     }
+} catch {
+    print("error: \(error)")
+    exit(1)
 }
 
 func writePNG(_ texture: MTLTexture, to url: URL) throws {
@@ -77,11 +95,4 @@ func writePNG(_ texture: MTLTexture, to url: URL) throws {
     else { throw CocoaError(.fileWriteUnknown) }
     CGImageDestinationAddImage(destination, image, nil)
     guard CGImageDestinationFinalize(destination) else { throw CocoaError(.fileWriteUnknown) }
-}
-
-MainActor.assumeIsolated {
-    do { try run() } catch {
-        print("error: \(error)")
-        exit(1)
-    }
 }

@@ -3,42 +3,24 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstring>
 #include <map>
-#include <string>
-#include <vector>
+#include <tuple>
+#include <unordered_map>
 
 #include "SDFCore.h"
-#include "scenes.h"
+#include "solver.h"
 
-char sdfResourceDirectory[4096] = "";
+// MARK: Shapes
 
-struct SDFWorld
+// An engine shape with the frame it is used in. Baked voxel shapes are normalized to a unit cube
+// centered at the origin: shape = (caller - center) * unitScale.
+struct SDFShape
 {
-    Solver solver;
-    Camera camera;
-    double stepMilliseconds = 0;
-
-    // Shapes of the bodies, indexed in order of first use
-    std::vector<const Shape *> shapes;
-    std::map<const Shape *, int32_t> shapeIndex;
-
-    int32_t indexOf(const Shape *shape)
-    {
-        auto it = shapeIndex.find(shape);
-        if (it != shapeIndex.end())
-            return it->second;
-        int32_t index = (int32_t)shapes.size();
-        shapes.push_back(shape);
-        shapeIndex[shape] = index;
-        return index;
-    }
-
-    void indexShapes()
-    {
-        for (auto &body : solver.bodies)
-            indexOf(body->shape.get());
-    }
+    ShapePtr shape;
+    float3 center = {0, 0, 0};
+    float unitScale = 1;
+    Mesh display; // In the caller's frame
+    bool watertight = true;
 };
 
 static float3 toFloat3(const float v[3]) { return {v[0], v[1], v[2]}; }
@@ -48,38 +30,161 @@ static void store(float out[3], float3 v)
     out[0] = v.x, out[1] = v.y, out[2] = v.z;
 }
 
+static SDFShape *makeShape(Shape *shape)
+{
+    shape->finalize();
+    SDFShape *handle = new SDFShape();
+    handle->shape = ShapePtr(shape);
+    handle->display = shape->mesh;
+    return handle;
+}
+
 extern "C" {
 
-void sdf_set_resource_directory(const char *path)
+SDFShape *sdf_shape_box(float halfX, float halfY, float halfZ) { return makeShape(new Box({halfX, halfY, halfZ})); }
+SDFShape *sdf_shape_sphere(float radius) { return makeShape(new Sphere(radius)); }
+SDFShape *sdf_shape_capsule(float radius, float halfLength) { return makeShape(new Capsule(radius, halfLength)); }
+SDFShape *sdf_shape_cylinder(float radius, float halfHeight) { return makeShape(new Cylinder(radius, halfHeight)); }
+SDFShape *sdf_shape_cone(float radius, float halfHeight) { return makeShape(new Cone(radius, halfHeight)); }
+SDFShape *sdf_shape_torus(float majorRadius, float minorRadius) { return makeShape(new Torus(majorRadius, minorRadius)); }
+
+SDFShape *sdf_shape_spike_plate(float halfX, float halfY, float halfZ, int32_t count, float spikeRadius,
+                                float minHeight, float maxHeight)
 {
-    std::string directory = path ? path : "";
-    if (!directory.empty() && directory.back() != '/')
-        directory += '/';
-    strncpy(sdfResourceDirectory, directory.c_str(), sizeof(sdfResourceDirectory) - 1);
+    return makeShape(new SpikePlate({halfX, halfY, halfZ}, std::max(1, count), spikeRadius, minHeight, maxHeight));
 }
 
-int32_t sdf_scene_count(void) { return sceneCount; }
-
-const char *sdf_scene_name(int32_t index) { return index >= 0 && index < sceneCount ? scenes[index].name : ""; }
-
-const char *sdf_scene_description(int32_t index)
+SDFShape *sdf_shape_spiky_wheel(float hubRadius, float hubHalfWidth, float spikeRadius, float spikeLength, int32_t spikes)
 {
-    return index >= 0 && index < sceneCount ? scenes[index].description : "";
+    return makeShape(new SpikyWheel(hubRadius, hubHalfWidth, spikeRadius, spikeLength, std::max(1, spikes)));
 }
 
-static const std::vector<std::string> &cachedShapeNames()
+SDFShape *sdf_shape_warped_box(SDFWarp warp, float halfX, float halfY, float halfZ, float k)
 {
-    static std::vector<std::string> names = shapeNames();
-    return names;
+    return makeShape(new WarpedBox((WarpedBox::Type)std::clamp((int)warp, 0, 2), {halfX, halfY, halfZ}, k));
 }
 
-int32_t sdf_shape_name_count(void) { return (int32_t)cachedShapeNames().size(); }
-
-const char *sdf_shape_name(int32_t index)
+SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint32_t *indices, int32_t indexCount,
+                         int32_t resolution)
 {
-    const auto &names = cachedShapeNames();
-    return index >= 0 && index < (int32_t)names.size() ? names[index].c_str() : "";
+    if (!positions || !indices || vertexCount <= 0 || indexCount < 3 || indexCount % 3 != 0)
+        return nullptr;
+    AABB box = emptyAABB();
+    for (int32_t i = 0; i < vertexCount; i++)
+        grow(box, {positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]});
+    float extent = maxComponent(size(box));
+    if (!(extent > 0))
+        return nullptr;
+
+    // Weld duplicated positions as upstream's OBJ loader does. Meshes split their vertices at
+    // normal and texture seams, which would otherwise break the watertightness check.
+    float cell = max(extent * 1e-5f, 1e-9f);
+    std::map<std::tuple<int, int, int>, uint32_t> unique;
+    std::vector<uint32_t> remap(vertexCount);
+    Mesh mesh;
+    for (int32_t i = 0; i < vertexCount; i++)
+    {
+        float3 p = {positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]};
+        float3 q = (p - box.min) / cell;
+        auto key = std::make_tuple((int)lroundf(q.x), (int)lroundf(q.y), (int)lroundf(q.z));
+        auto it = unique.find(key);
+        if (it == unique.end())
+            it = unique.emplace(key, mesh.addVertex(p, {0, 1, 0})).first;
+        remap[i] = it->second;
+    }
+    for (int32_t i = 0; i < indexCount; i += 3)
+    {
+        if (indices[i] >= (uint32_t)vertexCount || indices[i + 1] >= (uint32_t)vertexCount || indices[i + 2] >= (uint32_t)vertexCount)
+            return nullptr;
+        uint32_t a = remap[indices[i]], b = remap[indices[i + 1]], c = remap[indices[i + 2]];
+        if (a != b && b != c && c != a)
+            mesh.addTriangle(a, b, c);
+    }
+    if (mesh.indices.empty())
+        return nullptr;
+
+    // VoxelSdf normalizes the mesh with the same center and scale
+    auto voxel = std::make_shared<VoxelSdf>(mesh, "", std::max(8, resolution));
+    voxel->finalize();
+    SDFShape *handle = new SDFShape();
+    handle->shape = voxel;
+    handle->center = center(box);
+    handle->unitScale = 1.0f / extent;
+    handle->watertight = voxel->watertight;
+    handle->display = voxel->mesh;
+    for (float3 &p : handle->display.positions)
+        p = p / handle->unitScale + handle->center;
+    return handle;
 }
+
+void sdf_shape_release(SDFShape *shape) { delete shape; }
+
+bool sdf_shape_is_watertight(const SDFShape *shape) { return shape->watertight; }
+
+float sdf_shape_volume(const SDFShape *shape) { return shape->shape->volume / powf(shape->unitScale, 3); }
+
+float sdf_shape_distance(const SDFShape *shape, const float point[3], float gradient[3])
+{
+    float3 g;
+    float d = shape->shape->sdf((toFloat3(point) - shape->center) * shape->unitScale, &g) / shape->unitScale;
+    if (gradient)
+        store(gradient, g);
+    return d;
+}
+
+SDFShapeMesh sdf_shape_mesh(const SDFShape *shape)
+{
+    static_assert(sizeof(float3) == 3 * sizeof(float), "float3 must be tightly packed");
+    const Mesh &m = shape->display;
+    SDFShapeMesh mesh = {};
+    mesh.positions = m.positions.empty() ? nullptr : &m.positions[0].x;
+    mesh.normals = m.normals.size() == m.positions.size() && !m.normals.empty() ? &m.normals[0].x : nullptr;
+    mesh.indices = m.indices.empty() ? nullptr : m.indices.data();
+    mesh.vertexCount = (int32_t)m.positions.size();
+    mesh.indexCount = (int32_t)m.indices.size();
+    return mesh;
+}
+
+} // extern "C"
+
+// MARK: Worlds
+
+struct BodyRecord
+{
+    Body *body;
+    SDFBodyMode mode;
+    float3 center;   // Of the shape, see SDFShape
+    float unitScale;
+};
+
+struct SDFWorld
+{
+    Solver solver;
+    double stepMilliseconds = 0;
+    SDFBodyID nextID = 1;
+    std::unordered_map<SDFBodyID, BodyRecord> records;
+    std::unordered_map<const Body *, SDFBodyID> ids;
+
+    BodyRecord *find(SDFBodyID id)
+    {
+        auto it = records.find(id);
+        return it != records.end() ? &it->second : nullptr;
+    }
+
+    const BodyRecord *find(SDFBodyID id) const
+    {
+        auto it = records.find(id);
+        return it != records.end() ? &it->second : nullptr;
+    }
+};
+
+// World position of the shape's origin for a pose of the caller's frame
+static float3 shapeOrigin(const BodyRecord &r, SDFPose pose, quat q)
+{
+    return toFloat3(pose.position) + rotate(q, r.center * pose.scale);
+}
+
+static quat toQuat(const float q[4]) { return normalize(quat{q[0], q[1], q[2], q[3]}); }
 
 static SDFParams paramsOf(const Solver &solver)
 {
@@ -102,45 +207,56 @@ static SDFParams paramsOf(const Solver &solver)
     p.substeps = solver.substeps;
     p.solverIterations = solver.iterations;
     p.timeStep = solver.dt;
+    store(p.gravity, solver.gravity);
     return p;
 }
 
-SDFParams sdf_default_params(void)
+// Non-finite or negative values are ignored, they would poison the solver
+static void setNonNegative(float &field, float value)
 {
-    static Solver defaults;
-    return paramsOf(defaults);
+    if (std::isfinite(value) && value >= 0)
+        field = value;
 }
+
+extern "C" {
 
 SDFWorld *sdf_world_create(void) { return new SDFWorld(); }
 
 void sdf_world_destroy(SDFWorld *world) { delete world; }
 
-void sdf_world_load_scene(SDFWorld *world, int32_t index)
+SDFParams sdf_default_params(void)
 {
-    if (index < 0 || index >= sceneCount)
-        return;
-    world->shapes.clear();
-    world->shapeIndex.clear();
-    world->stepMilliseconds = 0;
-    world->solver.stats = CollisionStats();
-    scenes[index].build(world->solver, world->camera);
-    world->indexShapes();
+    static const Solver defaults;
+    return paramsOf(defaults);
 }
 
-SDFCamera sdf_world_camera(const SDFWorld *world)
-{
-    SDFCamera camera;
-    store(camera.target, world->camera.target);
-    camera.distance = world->camera.distance;
-    camera.yaw = world->camera.yaw;
-    camera.pitch = world->camera.pitch;
-    return camera;
-}
+SDFParams sdf_world_params(const SDFWorld *world) { return paramsOf(world->solver); }
 
-void sdf_world_spawn(SDFWorld *world, const char *shape, const float position[3])
+void sdf_world_set_params(SDFWorld *world, SDFParams p)
 {
-    Body *body = spawn(world->solver, shape, toFloat3(position), world->solver.rng.orientation());
-    world->indexOf(body->shape.get());
+    Solver &solver = world->solver;
+    CollisionParams &c = solver.params;
+    c.optimizer = (Optimizer)std::clamp(p.optimizer, 0, (int32_t)OPTIMIZER_COUNT - 1);
+    c.cacheSize = std::max(0, p.cacheSize);
+    c.randomSamples = std::max(0, p.randomSamples);
+    c.warmStart = p.warmStart;
+    c.curvatureSampling = p.curvatureSampling;
+    c.skipConvexSamples = p.skipConvexSamples;
+    setNonNegative(c.epsilon, p.epsilon);
+    setNonNegative(c.alpha, p.alpha);
+    setNonNegative(c.replacementThreshold, p.replacementThreshold);
+    setNonNegative(c.tolerance, p.tolerance);
+    c.maxIterations = std::max(1, p.maxIterations);
+    setNonNegative(c.stepSize, p.stepSize);
+    setNonNegative(c.margin, p.margin);
+    setNonNegative(c.allowedPenetration, p.allowedPenetration);
+    solver.substeps = std::max(1, p.substeps);
+    solver.iterations = std::max(1, p.solverIterations);
+    if (p.timeStep > 0)
+        setNonNegative(solver.dt, p.timeStep);
+    float3 gravity = toFloat3(p.gravity);
+    if (std::isfinite(gravity.x) && std::isfinite(gravity.y) && std::isfinite(gravity.z))
+        solver.gravity = gravity;
 }
 
 void sdf_world_step(SDFWorld *world)
@@ -164,100 +280,156 @@ SDFStats sdf_world_stats(const SDFWorld *world)
     return stats;
 }
 
-SDFParams sdf_world_params(const SDFWorld *world) { return paramsOf(world->solver); }
+// MARK: Bodies
 
-// Non-finite or negative values are ignored, they would poison the solver
-static void setNonNegative(float &field, float value)
+SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pose, SDFBodyMode mode)
 {
-    if (std::isfinite(value) && value >= 0)
-        field = value;
-}
-
-void sdf_world_set_params(SDFWorld *world, SDFParams p)
-{
-    CollisionParams &c = world->solver.params;
-    c.optimizer = (Optimizer)std::clamp(p.optimizer, 0, (int32_t)OPTIMIZER_COUNT - 1);
-    c.cacheSize = std::max(0, p.cacheSize);
-    c.randomSamples = std::max(0, p.randomSamples);
-    c.warmStart = p.warmStart;
-    c.curvatureSampling = p.curvatureSampling;
-    c.skipConvexSamples = p.skipConvexSamples;
-    setNonNegative(c.epsilon, p.epsilon);
-    setNonNegative(c.alpha, p.alpha);
-    setNonNegative(c.replacementThreshold, p.replacementThreshold);
-    setNonNegative(c.tolerance, p.tolerance);
-    c.maxIterations = std::max(1, p.maxIterations);
-    setNonNegative(c.stepSize, p.stepSize);
-    setNonNegative(c.margin, p.margin);
-    setNonNegative(c.allowedPenetration, p.allowedPenetration);
-    world->solver.substeps = std::max(1, p.substeps);
-    world->solver.iterations = std::max(1, p.solverIterations);
-    if (p.timeStep > 0)
-        setNonNegative(world->solver.dt, p.timeStep);
-}
-
-int32_t sdf_world_body_count(const SDFWorld *world) { return (int32_t)world->solver.bodies.size(); }
-
-int32_t sdf_world_body_states(const SDFWorld *world, SDFBodyState *bodies, int32_t capacity)
-{
-    int32_t count = (int32_t)world->solver.bodies.size();
-    for (int32_t i = 0; i < std::min(count, capacity); i++)
+    if (!shape || !(pose.scale > 0))
+        return 0;
+    BodyRecord record = {nullptr, mode, shape->center, shape->unitScale};
+    quat q = toQuat(pose.orientation);
+    // shape = (caller - center) * unitScale, so the body scales the shape by scale / unitScale
+    Body *body = new Body(shape->shape, shapeOrigin(record, pose, q), q, pose.scale / shape->unitScale, mode != SDFBodyDynamic);
+    if (mode == SDFBodyDynamic)
     {
-        const Body &body = *world->solver.bodies[i];
-        SDFBodyState &state = bodies[i];
-        store(state.origin, body.toWorld({0, 0, 0}));
-        state.orientation[0] = body.orientation.x;
-        state.orientation[1] = body.orientation.y;
-        state.orientation[2] = body.orientation.z;
-        state.orientation[3] = body.orientation.w;
-        state.scale = body.scale;
-        store(state.color, body.color);
-        auto it = world->shapeIndex.find(body.shape.get());
-        state.shape = it != world->shapeIndex.end() ? it->second : -1;
-        state.visible = body.visible;
-        state.isStatic = body.isStatic;
+        // Upstream bodies have unit density, ours that of water
+        body->mass *= 1000, body->inertia = body->inertia * 1000;
+        body->updateInertia();
     }
-    return count;
+    world->solver.add(body);
+
+    record.body = body;
+    SDFBodyID id = world->nextID++;
+    world->records[id] = record;
+    world->ids[body] = id;
+    return id;
 }
 
-int32_t sdf_world_shape_count(const SDFWorld *world) { return (int32_t)world->shapes.size(); }
-
-SDFShapeMesh sdf_world_shape_mesh(const SDFWorld *world, int32_t shape)
+void sdf_world_remove_body(SDFWorld *world, SDFBodyID id)
 {
-    SDFShapeMesh mesh = {};
-    if (shape < 0 || shape >= (int32_t)world->shapes.size())
-        return mesh;
-    const Mesh &m = world->shapes[shape]->mesh;
-    static_assert(sizeof(float3) == 3 * sizeof(float), "float3 must be tightly packed");
-    mesh.positions = m.positions.empty() ? nullptr : &m.positions[0].x;
-    mesh.normals = m.normals.size() == m.positions.size() && !m.normals.empty() ? &m.normals[0].x : nullptr;
-    mesh.indices = m.indices.empty() ? nullptr : m.indices.data();
-    mesh.vertexCount = (int32_t)m.positions.size();
-    mesh.indexCount = (int32_t)m.indices.size();
-    return mesh;
+    BodyRecord *record = world->find(id);
+    if (!record)
+        return;
+    Solver &solver = world->solver;
+    Body *body = record->body;
+    int index = (int)(std::find_if(solver.bodies.begin(), solver.bodies.end(), [&](auto &b) { return b.get() == body; }) -
+                      solver.bodies.begin());
+
+    // Manifolds are keyed by body indices, which shift down past the removed body. Their points and
+    // body pointers stay valid, so the other pairs keep their temporal cache.
+    std::map<std::pair<int, int>, Manifold> manifolds;
+    for (auto &entry : solver.manifolds)
+    {
+        auto [a, b] = entry.first;
+        if (a == index || b == index)
+            continue;
+        manifolds[{a - (a > index), b - (b > index)}] = std::move(entry.second);
+    }
+    solver.manifolds.swap(manifolds);
+
+    if (solver.dragBody == body)
+        solver.dragBody = nullptr;
+    world->ids.erase(body);
+    world->records.erase(id);
+    solver.bodies.erase(solver.bodies.begin() + index);
 }
 
-const char *sdf_world_shape_name(const SDFWorld *world, int32_t shape)
+SDFPose sdf_world_body_pose(const SDFWorld *world, SDFBodyID id)
 {
-    if (shape < 0 || shape >= (int32_t)world->shapes.size())
-        return "";
-    if (auto voxel = dynamic_cast<const VoxelSdf *>(world->shapes[shape]))
-        return voxel->name.c_str();
-    return "";
+    SDFPose pose = {};
+    const BodyRecord *record = world->find(id);
+    if (!record)
+        return pose;
+    const Body &body = *record->body;
+    pose.scale = body.scale * record->unitScale;
+    pose.orientation[0] = body.orientation.x;
+    pose.orientation[1] = body.orientation.y;
+    pose.orientation[2] = body.orientation.z;
+    pose.orientation[3] = body.orientation.w;
+    store(pose.position, body.toWorld({0, 0, 0}) - rotate(body.orientation, record->center * pose.scale));
+    return pose;
 }
+
+void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID id, SDFPose pose)
+{
+    BodyRecord *record = world->find(id);
+    if (!record)
+        return;
+    Body &body = *record->body;
+    pose.scale = body.scale * record->unitScale;
+    body.orientation = toQuat(pose.orientation);
+    body.position = shapeOrigin(*record, pose, body.orientation) + rotate(body.orientation, body.shape->centerOfMass * body.scale);
+    body.updateInertia();
+    body.updateBounds();
+}
+
+void sdf_world_body_velocity(const SDFWorld *world, SDFBodyID id, float linear[3], float angular[3])
+{
+    const BodyRecord *record = world->find(id);
+    store(linear, record ? record->body->velocity : float3{0, 0, 0});
+    store(angular, record ? record->body->angularVelocity : float3{0, 0, 0});
+}
+
+void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID id, const float linear[3], const float angular[3])
+{
+    if (BodyRecord *record = world->find(id))
+    {
+        record->body->velocity = toFloat3(linear);
+        record->body->angularVelocity = toFloat3(angular);
+    }
+}
+
+float sdf_world_body_mass(const SDFWorld *world, SDFBodyID id)
+{
+    const BodyRecord *record = world->find(id);
+    return record ? record->body->mass : 0;
+}
+
+void sdf_world_set_body_mass(SDFWorld *world, SDFBodyID id, float mass)
+{
+    BodyRecord *record = world->find(id);
+    if (!record || record->mode != SDFBodyDynamic || !(mass > 0) || !std::isfinite(mass))
+        return;
+    Body &body = *record->body;
+    body.inertia = body.inertia * (mass / body.mass);
+    body.mass = mass;
+    body.updateInertia();
+}
+
+void sdf_world_set_body_friction(SDFWorld *world, SDFBodyID id, float friction)
+{
+    if (BodyRecord *record = world->find(id))
+        setNonNegative(record->body->friction, friction);
+}
+
+void sdf_world_apply_impulse(SDFWorld *world, SDFBodyID id, const float impulse[3], const float point[3])
+{
+    BodyRecord *record = world->find(id);
+    if (!record || record->mode != SDFBodyDynamic)
+        return;
+    Body &body = *record->body;
+    float3 j = toFloat3(impulse);
+    body.velocity += j * body.invMass;
+    body.angularVelocity += body.invInertiaWorld * cross(toFloat3(point) - body.position, j);
+}
+
+// MARK: Contacts and picking
 
 int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t capacity)
 {
     int32_t count = 0;
     for (const auto &entry : world->solver.manifolds)
     {
-        for (const ContactPoint &point : entry.second.points)
+        const Manifold &m = entry.second;
+        for (const ContactPoint &point : m.points)
         {
             if (!point.active)
                 continue;
             if (count < capacity)
             {
                 SDFContact &contact = contacts[count];
+                contact.bodyA = world->ids.at(m.bodyA);
+                contact.bodyB = world->ids.at(m.bodyB);
                 store(contact.position, point.x);
                 store(contact.normal, point.normal);
                 contact.separation = point.separation;
@@ -269,7 +441,7 @@ int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t 
     return count;
 }
 
-int32_t sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3])
+SDFBodyID sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3])
 {
     Solver &solver = world->solver;
     // Upstream refreshes the bounds before integrating, so they lag the poses after a step
@@ -278,15 +450,12 @@ int32_t sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float
     float3 point;
     solver.dragBody = solver.pick(toFloat3(origin), normalize(toFloat3(direction)), point);
     if (!solver.dragBody)
-        return -1;
+        return 0;
     solver.dragAnchor = rotate(conjugate(solver.dragBody->orientation), point - solver.dragBody->position);
     solver.dragTarget = point;
     if (hit)
         store(hit, point);
-    for (size_t i = 0; i < solver.bodies.size(); i++)
-        if (solver.bodies[i].get() == solver.dragBody)
-            return (int32_t)i;
-    return -1;
+    return world->ids.at(solver.dragBody);
 }
 
 void sdf_world_drag_to(SDFWorld *world, const float target[3]) { world->solver.dragTarget = toFloat3(target); }

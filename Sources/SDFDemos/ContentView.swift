@@ -1,5 +1,6 @@
 import RealityKit
 import SDFCollisionKit
+import SDFDemoScenes
 import SwiftUI
 
 struct ContentView: View {
@@ -12,10 +13,12 @@ struct ContentView: View {
         } detail: {
             ZStack(alignment: .topLeading) {
                 Viewport(model: model)
-                StatsOverlay(simulation: model.simulation, sceneDescription: model.sceneDescription)
+                StatsOverlay(simulation: model.simulation, sceneDescription: model.sceneDescription,
+                             isLoading: model.isLoading, errorMessage: model.errorMessage)
                     .padding(12)
             }
         }
+        .task { await model.loadScene(0) }
     }
 }
 
@@ -27,29 +30,33 @@ private struct Sidebar: View {
     var body: some View {
         Form {
             Section("Scene") {
-                Picker("Scene", selection: Binding(get: { model.sceneIndex }, set: { model.loadScene($0) })) {
-                    ForEach(SDFWorld.scenes) { scene in
+                Picker("Scene", selection: Binding(get: { model.sceneIndex }, set: { index in
+                    Task { await model.loadScene(index) }
+                })) {
+                    ForEach(DemoScene.all) { scene in
                         Text(scene.name).tag(scene.id)
                     }
                 }
+                .disabled(model.isLoading)
                 HStack {
                     Button(model.isPaused ? "Play" : "Pause") { model.isPaused.toggle() }
                         .keyboardShortcut("p", modifiers: [])
-                    Button("Step") { model.simulation.step() }
+                    Button("Step") { model.step() }
                         .disabled(!model.isPaused)
-                    Button("Reset") { model.reset() }
+                    Button("Reset") { Task { await model.reset() } }
                         .keyboardShortcut("r", modifiers: [])
+                        .disabled(model.isLoading)
                 }
                 Toggle("Show contacts", isOn: $model.showsContacts)
             }
 
             Section("Drop") {
                 Picker("Shape", selection: $model.dropShape) {
-                    ForEach(SDFWorld.shapeNames, id: \.self) { name in
+                    ForEach(DemoShapes.names, id: \.self) { name in
                         Text(name).tag(name)
                     }
                 }
-                Button("Drop Shape") { model.drop() }
+                Button("Drop Shape") { Task { await model.drop() } }
                     .keyboardShortcut(.space, modifiers: [])
             }
 
@@ -66,30 +73,30 @@ private struct Sidebar: View {
 }
 
 private struct ParametersSection: View {
-    @Binding var parameters: SDFParams
+    @Binding var parameters: SDFSimulation.Parameters
     let reset: () -> Void
 
     var body: some View {
         Section("Collision Detection") {
             Picker("Optimizer", selection: $parameters.optimizer) {
-                Text("Nelder–Mead").tag(Int32(0))
-                Text("Ellipsoid").tag(Int32(1))
-                Text("Gradient Descent").tag(Int32(2))
+                Text("Nelder–Mead").tag(SDFSimulation.Parameters.Optimizer.nelderMead)
+                Text("Ellipsoid").tag(SDFSimulation.Parameters.Optimizer.ellipsoid)
+                Text("Gradient Descent").tag(SDFSimulation.Parameters.Optimizer.gradientDescent)
             }
-            Stepper("Cached samples: \(parameters.cacheSize)", value: $parameters.cacheSize, in: 0...16)
+            Stepper("Cached samples: \(parameters.cachedSamples)", value: $parameters.cachedSamples, in: 0...16)
             Stepper("Random samples: \(parameters.randomSamples)", value: $parameters.randomSamples, in: 0...16)
-            Toggle("Temporal cache", isOn: $parameters.warmStart)
-            Toggle("Curvature sampling", isOn: $parameters.curvatureSampling)
-            Toggle("Skip convex samples", isOn: $parameters.skipConvexSamples)
-            LabeledSlider(title: "Softmax ε", value: $parameters.epsilon, range: 0...0.5)
-            LabeledSlider(title: "Repulsion α", value: $parameters.alpha, range: 0...0.1)
+            Toggle("Temporal cache", isOn: $parameters.usesTemporalCache)
+            Toggle("Curvature sampling", isOn: $parameters.usesCurvatureSampling)
+            Toggle("Skip convex samples", isOn: $parameters.skipsConvexSamples)
+            LabeledSlider(title: "Softmax ε", value: $parameters.softmaxEpsilon, range: 0...0.5)
+            LabeledSlider(title: "Repulsion α", value: $parameters.repulsionAlpha, range: 0...0.1)
             LabeledSlider(title: "Tolerance τ", value: $parameters.tolerance, range: 0.001...0.05)
             Stepper("Max iterations: \(parameters.maxIterations)", value: $parameters.maxIterations, in: 5...200, step: 5)
         }
         Section("Solver") {
             Stepper("Substeps: \(parameters.substeps)", value: $parameters.substeps, in: 1...16)
             Stepper("Iterations: \(parameters.solverIterations)", value: $parameters.solverIterations, in: 1...100)
-            LabeledSlider(title: "Contact margin", value: $parameters.margin, range: 0...0.1)
+            LabeledSlider(title: "Contact margin", value: $parameters.contactMargin, range: 0...0.1)
             Button("Paper Defaults", action: reset)
         }
     }
@@ -116,16 +123,24 @@ private struct LabeledSlider: View {
 private struct StatsOverlay: View {
     let simulation: SDFSimulation
     let sceneDescription: String
+    let isLoading: Bool
+    let errorMessage: String?
 
     var body: some View {
         // The simulation is not observable; sample its statistics a few times per second
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let stats = simulation.world.stats
+            let stats = simulation.statistics
             VStack(alignment: .leading, spacing: 2) {
                 Text(sceneDescription).font(.headline)
+                if isLoading {
+                    Text("Baking shapes…")
+                }
+                if let errorMessage {
+                    Text(errorMessage).foregroundStyle(.red)
+                }
                 Text("\(stats.bodies) bodies · \(stats.pairs) pairs · \(stats.contacts) contacts")
                 Text("step \(stats.stepMilliseconds, format: .number.precision(.fractionLength(2))) ms · collision \(stats.collisionMilliseconds, format: .number.precision(.fractionLength(2))) ms")
-                Text("\(stats.iterations) iterations · \(stats.queries) queries")
+                Text("\(stats.optimizerIterations) iterations · \(stats.queries) queries")
             }
             .font(.caption.monospacedDigit())
             .padding(8)
@@ -150,9 +165,9 @@ private struct Viewport: View {
     var body: some View {
         GeometryReader { geometry in
             RealityView { content in
-                content.add(model.simulation.root)
-                content.add(SDFDemoStage.makeFloor())
-                content.add(SDFDemoStage.makeLight())
+                content.add(model.root)
+                content.add(DemoStage.makeFloor())
+                content.add(DemoStage.makeLight())
                 content.add(model.cameraEntity)
             }
             .gesture(dragGesture(in: geometry.size))
@@ -166,21 +181,22 @@ private struct Viewport: View {
                 switch interaction {
                 case nil:
                     let ray = model.ray(through: value.startLocation, in: size)
-                    if let hit = model.simulation.world.beginDrag(origin: ray.origin, direction: ray.direction) {
-                        interaction = .body(distance: simd_distance(hit, ray.origin))
+                    // The root is at the scene origin, so its frame is the world's
+                    if let picked = model.simulation.beginDrag(origin: ray.origin, direction: ray.direction) {
+                        interaction = .body(distance: simd_distance(picked.hit, ray.origin))
                     } else {
                         interaction = .orbit(last: value.startLocation)
                     }
                 case .body(let distance):
                     let ray = model.ray(through: value.location, in: size)
-                    model.simulation.world.drag(to: ray.origin + ray.direction * distance)
+                    model.simulation.drag(to: ray.origin + ray.direction * distance)
                 case .orbit(let last):
                     model.orbit(by: CGSize(width: value.location.x - last.x, height: value.location.y - last.y))
                     interaction = .orbit(last: value.location)
                 }
             }
             .onEnded { _ in
-                model.simulation.world.endDrag()
+                model.simulation.endDrag()
                 interaction = nil
             }
     }

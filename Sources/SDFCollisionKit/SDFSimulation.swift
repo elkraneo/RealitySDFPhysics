@@ -1,206 +1,281 @@
+import Foundation
 import RealityKit
+internal import SDFCore
 import simd
 
-#if canImport(AppKit)
-import AppKit
-typealias PlatformColor = NSColor
-#else
-import UIKit
-typealias PlatformColor = UIColor
-#endif
-
-/// Drives an `SDFWorld` from RealityKit: steps it at a fixed rate from `SDFSimulationSystem` and
-/// mirrors its bodies as entities under `root`.
+/// A rigid body world whose collision detection is SDF-SDF optimization with temporal caching and
+/// importance sampling (Giles and Andrews, Pacific Graphics 2026).
 ///
-/// RealityKit's own physics is not involved. The body entities have no `PhysicsBodyComponent` or
-/// `CollisionComponent`; collision detection and response are entirely the SDF engine's.
+/// Set it on a root entity with `SDFSimulationComponent`. Every frame it adds, updates and removes
+/// bodies for the root's descendants with an `SDFBodyComponent`, advances in fixed steps and writes
+/// the poses of dynamic bodies back to their entities. Everything happens in the root's local
+/// frame: scale the root to scale the whole simulation.
+///
+/// RealityKit's own physics is not involved.
 @MainActor
 public final class SDFSimulation {
-    public let world: SDFWorld
-
-    /// Parent of the body and debug entities. Add it to a RealityKit scene to run the simulation.
-    public let root = Entity()
+    nonisolated(unsafe) let world: OpaquePointer
 
     public var isPaused = false
 
-    /// Shows the active contact points and their normals
-    public var showsContacts = false {
-        didSet {
-            if showsContacts { updateContacts() }
-            contactRoot.isEnabled = showsContacts
-        }
-    }
-
-    /// Simulation steps taken since the scene was loaded
-    public private(set) var stepCount = 0
-
-    /// Upper bound on the steps taken in one frame, so a slow frame does not spiral
+    /// Upper bound on the steps taken in one frame, so that slow frames do not spiral
     public var maximumStepsPerFrame = 4
 
-    private let bodyRoot = Entity()
-    private let contactRoot = Entity()
-    private var bodyEntities: [Entity] = []
-    private var meshes: [Int: MeshResource] = [:]
-    private var contactEntities: [Entity] = []
+    /// Steps taken so far
+    public private(set) var stepCount = 0
+
+    private var bodies: [Entity.ID: Body] = [:]
+    private var entityIDs: [SDFBodyID: Entity.ID] = [:]
     private var accumulator: TimeInterval = 0
-    private var builtGeneration = -1
 
-    public init(world: SDFWorld = SDFWorld()) {
-        Self.registerOnce()
-        self.world = world
-        root.name = "SDFSimulation"
-        root.addChild(bodyRoot)
-        root.addChild(contactRoot)
-        contactRoot.isEnabled = false
-        root.components.set(SDFSimulationComponent(simulation: self))
+    public init() {
+        _ = Self.systemRegistration
+        world = sdf_world_create()
     }
 
-    /// Replaces the world with a built-in scene and rebuilds the body entities
-    public func loadScene(_ index: Int) {
-        world.loadScene(index)
-        synchronize()
+    deinit {
+        sdf_world_destroy(world)
     }
 
-    public func spawn(_ shape: String, at position: SIMD3<Float>) {
-        world.spawn(shape, at: position)
-        synchronize()
-    }
+    private static let systemRegistration: Void = SDFSimulationSystem.registerSystem()
 
-    /// Takes one step regardless of `isPaused`
-    public func step() {
-        world.step()
-        stepCount += 1
-        synchronize()
-    }
+    // MARK: Stepping
 
-    /// Advances the simulation by real time in fixed steps. Called by `SDFSimulationSystem`.
-    public func advance(by deltaTime: TimeInterval) {
+    /// Synchronizes the bodies with the root's descendants and advances by real time in fixed
+    /// steps. `SDFSimulationSystem` calls this every frame.
+    public func update(root: Entity, deltaTime: TimeInterval) {
+        let dynamic = synchronize(root: root, deltaTime: deltaTime)
         guard !isPaused else { return }
-        let timeStep = TimeInterval(world.parameters.timeStep)
+        let timeStep = TimeInterval(parameters.timeStep)
         accumulator += min(deltaTime, 0.25)
         var steps = 0
         while accumulator >= timeStep && steps < max(maximumStepsPerFrame, 1) {
-            world.step()
+            sdf_world_step(world)
             accumulator -= timeStep
             steps += 1
         }
         // Drop the whole steps a slow frame could not catch up on, keep the fraction
         accumulator = accumulator.truncatingRemainder(dividingBy: timeStep)
         stepCount += steps
-        if steps > 0 { synchronize() }
+        if steps > 0 { writeBack(dynamic, root: root) }
     }
 
-    /// Copies the body poses (and contacts, when shown) from the world to the entities. Rebuilds
-    /// the entities when the world has loaded another scene.
-    public func synchronize() {
-        if builtGeneration != world.sceneGeneration {
-            for entity in bodyEntities { entity.removeFromParent() }
-            bodyEntities.removeAll()
-            meshes.removeAll()
-            accumulator = 0
-            stepCount = 0
-            builtGeneration = world.sceneGeneration
-        }
-        let bodies = world.bodies()
-        while bodyEntities.count < bodies.count {
-            let entity = makeEntity(for: bodies[bodyEntities.count])
-            bodyRoot.addChild(entity)
-            bodyEntities.append(entity)
-        }
-        for (entity, body) in zip(bodyEntities, bodies) {
-            entity.transform = Transform(scale: SIMD3(repeating: body.scale), rotation: body.orientation, translation: body.origin)
-        }
-        if showsContacts { updateContacts() }
+    /// Synchronizes and takes exactly one step, also while paused
+    public func step(root: Entity) {
+        let dynamic = synchronize(root: root, deltaTime: TimeInterval(parameters.timeStep))
+        sdf_world_step(world)
+        stepCount += 1
+        writeBack(dynamic, root: root)
     }
 
-    // MARK: Entities
+    // MARK: Bodies
 
-    private func makeEntity(for body: SDFWorld.Body) -> Entity {
-        // The ground is a body too, which the demo draws as a separate floor
-        guard body.isVisible, let mesh = mesh(forShape: body.shape) else { return Entity() }
-        var material = PhysicallyBasedMaterial()
-        material.baseColor = .init(tint: PlatformColor(red: CGFloat(body.color.x), green: CGFloat(body.color.y),
-                                                       blue: CGFloat(body.color.z), alpha: 1))
-        material.roughness = 0.55
-        return ModelEntity(mesh: mesh, materials: [material])
-    }
+    private struct Pose {
+        var position: SIMD3<Float>
+        var orientation: simd_quatf
 
-    private func mesh(forShape shape: Int) -> MeshResource? {
-        if let mesh = meshes[shape] { return mesh }
-        let source = world.mesh(forShape: shape)
-        guard !source.indices.isEmpty else { return nil }
-        var descriptor = MeshDescriptor(name: "SDFShape\(shape)")
-        descriptor.positions = MeshBuffers.Positions(source.positions)
-        if let normals = source.normals { descriptor.normals = MeshBuffers.Normals(normals) }
-        descriptor.primitives = .triangles(source.indices)
-        guard let mesh = try? MeshResource.generate(from: [descriptor]) else { return nil }
-        meshes[shape] = mesh
-        return mesh
-    }
-
-    // MARK: Contacts
-
-    private static let contactRadius: Float = 0.035
-    private static let normalLength: Float = 0.3
-    private lazy var pointMesh = MeshResource.generateSphere(radius: Self.contactRadius)
-    private lazy var lineMesh = MeshResource.generateBox(size: [0.012, Self.normalLength, 0.012])
-    private lazy var cachedMaterial = UnlitMaterial(color: PlatformColor(red: 0.2, green: 0.8, blue: 0.3, alpha: 1))
-    private lazy var newMaterial = UnlitMaterial(color: PlatformColor(red: 0.95, green: 0.25, blue: 0.2, alpha: 1))
-
-    private func updateContacts() {
-        let contacts = world.contacts(limit: 2048)
-        while contactEntities.count < contacts.count {
-            let marker = Entity()
-            marker.addChild(ModelEntity(mesh: pointMesh, materials: [cachedMaterial]))
-            let line = ModelEntity(mesh: lineMesh, materials: [cachedMaterial])
-            line.position = [0, Self.normalLength / 2, 0]
-            marker.addChild(line)
-            contactRoot.addChild(marker)
-            contactEntities.append(marker)
+        @MainActor init(of entity: Entity, relativeTo root: Entity) {
+            position = entity.position(relativeTo: root)
+            orientation = entity.orientation(relativeTo: root)
         }
-        for (i, marker) in contactEntities.enumerated() {
-            guard i < contacts.count else {
-                marker.isEnabled = false
-                continue
-            }
-            let contact = contacts[i]
-            marker.isEnabled = true
-            marker.transform = Transform(rotation: simd_quatf(from: [0, 1, 0], to: normalize(contact.normal)),
-                                         translation: contact.position)
-            let material: any Material = contact.isCached ? cachedMaterial : newMaterial
-            for case let model as ModelEntity in marker.children {
-                model.model?.materials = [material]
+
+        init(_ pose: SDFPose) {
+            position = SIMD3(pose.position.0, pose.position.1, pose.position.2)
+            orientation = simd_quatf(ix: pose.orientation.0, iy: pose.orientation.1, iz: pose.orientation.2, r: pose.orientation.3)
+        }
+
+        func engine(scale: Float) -> SDFPose {
+            let q = orientation.vector
+            return SDFPose(position: (position.x, position.y, position.z), orientation: (q.x, q.y, q.z, q.w), scale: scale)
+        }
+
+        func isClose(to other: Pose) -> Bool {
+            simd_distance(position, other.position) < 1e-5 && abs(simd_dot(orientation.vector, other.orientation.vector)) > 1 - 1e-6
+        }
+    }
+
+    private struct Body {
+        var id: SDFBodyID
+        var shape: ObjectIdentifier
+        var mode: SDFBodyComponent.Mode
+        var scale: Float
+        var defaultMass: Float
+        var mass: Float?
+        var friction: Float
+        /// The entity's pose when last read or written
+        var pose: Pose
+        /// The motion component when last read or written
+        var motion: SDFMotionComponent?
+    }
+
+    /// Updates the bodies from the root's descendants. Returns the entities of dynamic bodies.
+    private func synchronize(root: Entity, deltaTime: TimeInterval) -> [Entity] {
+        var dynamic: [Entity] = []
+        var attached: Set<Entity.ID> = []
+        func visit(_ entity: Entity) {
+            for child in entity.children where !child.components.has(SDFSimulationComponent.self) {
+                if let component = child.components[SDFBodyComponent.self] {
+                    attach(child, component, root: root, deltaTime: deltaTime)
+                    attached.insert(child.id)
+                    if component.mode == .dynamic { dynamic.append(child) }
+                }
+                visit(child)
             }
         }
-    }
-
-    // MARK: Registration
-
-    private static var registered = false
-
-    private static func registerOnce() {
-        guard !registered else { return }
-        SDFSimulationComponent.registerComponent()
-        SDFSimulationSystem.registerSystem()
-        registered = true
-    }
-}
-
-/// Marks the root entity of an `SDFSimulation`, which `SDFSimulationSystem` advances every frame
-struct SDFSimulationComponent: Component {
-    /// Weak, since the simulation owns the entity this component is set on
-    weak var simulation: SDFSimulation?
-}
-
-/// Steps every `SDFSimulation` in the scene with the frame time
-struct SDFSimulationSystem: System {
-    private static let query = EntityQuery(where: .has(SDFSimulationComponent.self))
-
-    init(scene: RealityKit.Scene) {}
-
-    mutating func update(context: SceneUpdateContext) {
-        for entity in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
-            entity.components[SDFSimulationComponent.self]?.simulation?.advance(by: context.deltaTime)
+        visit(root)
+        for entityID in bodies.keys where !attached.contains(entityID) {
+            removeBody(of: entityID)
         }
+        return dynamic
+    }
+
+    private func attach(_ entity: Entity, _ component: SDFBodyComponent, root: Entity, deltaTime: TimeInterval) {
+        let pose = Pose(of: entity, relativeTo: root)
+        let scale = entity.scale(relativeTo: root).x
+        let motion = entity.components[SDFMotionComponent.self]
+        guard var body = bodies[entity.id], body.shape == ObjectIdentifier(component.shape), body.mode == component.mode,
+              abs(body.scale - scale) <= 1e-5 * scale
+        else {
+            removeBody(of: entity.id)
+            addBody(of: entity, component, pose: pose, scale: scale, motion: motion)
+            return
+        }
+
+        if body.friction != component.friction {
+            sdf_world_set_body_friction(world, body.id, component.friction)
+            body.friction = component.friction
+        }
+        if body.mass != component.mass {
+            sdf_world_set_body_mass(world, body.id, component.mass ?? body.defaultMass)
+            body.mass = component.mass
+        }
+        switch component.mode {
+        case .static:
+            if !pose.isClose(to: body.pose) { sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale)) }
+        case .kinematic:
+            let (linear, angular) = velocity(from: body.pose, to: pose, over: deltaTime)
+            sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale))
+            sdf_world_set_body_velocity(world, body.id, [linear.x, linear.y, linear.z], [angular.x, angular.y, angular.z])
+        case .dynamic:
+            // The entity moved since the last write: teleport the body
+            if !pose.isClose(to: body.pose) { sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale)) }
+            if let motion, motion != body.motion { setVelocity(of: body.id, motion) }
+        }
+        body.pose = pose
+        body.motion = motion
+        bodies[entity.id] = body
+    }
+
+    private func addBody(of entity: Entity, _ component: SDFBodyComponent, pose: Pose, scale: Float,
+                         motion: SDFMotionComponent?) {
+        let mode: SDFBodyMode = switch component.mode {
+        case .dynamic: SDFBodyDynamic
+        case .kinematic: SDFBodyKinematic
+        case .static: SDFBodyStatic
+        }
+        let id = sdf_world_add_body(world, component.shape.handle, pose.engine(scale: scale), mode)
+        guard id != 0 else { return }
+        let defaultMass = sdf_world_body_mass(world, id)
+        if let mass = component.mass { sdf_world_set_body_mass(world, id, mass) }
+        sdf_world_set_body_friction(world, id, component.friction)
+        if let motion { setVelocity(of: id, motion) }
+        bodies[entity.id] = Body(id: id, shape: ObjectIdentifier(component.shape), mode: component.mode, scale: scale,
+                                 defaultMass: defaultMass, mass: component.mass, friction: component.friction,
+                                 pose: pose, motion: motion)
+        entityIDs[id] = entity.id
+    }
+
+    private func removeBody(of entityID: Entity.ID) {
+        guard let body = bodies.removeValue(forKey: entityID) else { return }
+        entityIDs[body.id] = nil
+        sdf_world_remove_body(world, body.id)
+    }
+
+    private func writeBack(_ dynamic: [Entity], root: Entity) {
+        for entity in dynamic {
+            guard var body = bodies[entity.id] else { continue }
+            let pose = Pose(sdf_world_body_pose(world, body.id))
+            entity.setPosition(pose.position, relativeTo: root)
+            entity.setOrientation(pose.orientation, relativeTo: root)
+            // Read back, so rounding in the transform is not mistaken for a teleport
+            body.pose = Pose(of: entity, relativeTo: root)
+            if entity.components.has(SDFMotionComponent.self) {
+                var linear: [Float] = [0, 0, 0], angular: [Float] = [0, 0, 0]
+                sdf_world_body_velocity(world, body.id, &linear, &angular)
+                let motion = SDFMotionComponent(linearVelocity: SIMD3(linear[0], linear[1], linear[2]),
+                                                angularVelocity: SIMD3(angular[0], angular[1], angular[2]))
+                entity.components.set(motion)
+                body.motion = motion
+            }
+            bodies[entity.id] = body
+        }
+    }
+
+    private func setVelocity(of id: SDFBodyID, _ motion: SDFMotionComponent) {
+        let v = motion.linearVelocity, w = motion.angularVelocity
+        sdf_world_set_body_velocity(world, id, [v.x, v.y, v.z], [w.x, w.y, w.z])
+    }
+
+    /// Velocities that move a pose to another over a time
+    private func velocity(from a: Pose, to b: Pose, over time: TimeInterval) -> (SIMD3<Float>, SIMD3<Float>) {
+        guard time > 0 else { return (.zero, .zero) }
+        var delta = b.orientation * a.orientation.inverse
+        if delta.real < 0 { delta = simd_quatf(vector: -delta.vector) }
+        let angular = delta.angle > 1e-6 ? delta.axis * (delta.angle / Float(time)) : .zero
+        return ((b.position - a.position) / Float(time), angular)
+    }
+
+    // MARK: Queries and interaction
+
+    /// Mass of an entity's body, nil when it has none (yet)
+    public func mass(of entity: Entity) -> Float? {
+        bodies[entity.id].map { sdf_world_body_mass(world, $0.id) }
+    }
+
+    /// Applies an impulse at a point (in the root's frame) to a dynamic body
+    public func applyImpulse(_ impulse: SIMD3<Float>, at point: SIMD3<Float>, to entity: Entity) {
+        guard let body = bodies[entity.id] else { return }
+        sdf_world_apply_impulse(world, body.id, [impulse.x, impulse.y, impulse.z], [point.x, point.y, point.z])
+    }
+
+    public struct Contact: Sendable {
+        public var entityA: Entity.ID
+        public var entityB: Entity.ID
+        /// In the root's frame
+        public var position: SIMD3<Float>
+        /// From entity A to entity B
+        public var normal: SIMD3<Float>
+        /// Gap (positive) or overlap (negative) of the surfaces
+        public var separation: Float
+        /// Tracked from the previous step by the temporal cache, rather than newly found
+        public var isCached: Bool
+    }
+
+    /// Active contacts of the last substep
+    public func contacts(limit: Int = 4096) -> [Contact] {
+        var buffer = [SDFContact](repeating: SDFContact(), count: limit)
+        let count = Int(buffer.withUnsafeMutableBufferPointer { sdf_world_contacts(world, $0.baseAddress, Int32(limit)) })
+        return buffer.prefix(min(count, limit)).compactMap { c in
+            guard let a = entityIDs[c.bodyA], let b = entityIDs[c.bodyB] else { return nil }
+            return Contact(entityA: a, entityB: b, position: SIMD3(c.position.0, c.position.1, c.position.2),
+                           normal: SIMD3(c.normal.0, c.normal.1, c.normal.2), separation: c.separation, isCached: c.cached)
+        }
+    }
+
+    /// Picks the closest dynamic body on a ray (in the root's frame) and holds it at the hit point,
+    /// which then follows `drag(to:)`. Returns the entity and the hit point.
+    public func beginDrag(origin: SIMD3<Float>, direction: SIMD3<Float>) -> (entity: Entity.ID, hit: SIMD3<Float>)? {
+        var hit: [Float] = [0, 0, 0]
+        let id = sdf_world_begin_drag(world, [origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], &hit)
+        guard let entityID = entityIDs[id] else { return nil }
+        return (entityID, SIMD3(hit[0], hit[1], hit[2]))
+    }
+
+    public func drag(to target: SIMD3<Float>) {
+        sdf_world_drag_to(world, [target.x, target.y, target.z])
+    }
+
+    public func endDrag() {
+        sdf_world_end_drag(world)
     }
 }
