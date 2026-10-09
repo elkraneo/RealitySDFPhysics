@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "SDFCollisionKit", targets: ["SDFCollisionKit"]),
         .executable(name: "SDFDemos", targets: ["SDFDemos"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
+        .executable(name: "sdf-video", targets: ["sdf-video"]),
     ],
     targets: [
         // Upstream C++ engine (vendored unmodified in upstream/) behind a C interface
@@ -35,6 +36,11 @@ let package = Package(
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(
             name: "sdf-snapshot",
+            dependencies: ["SDFDemoScenes"]
+        ),
+        // Showcase video of the demo scenes, rendered offscreen
+        .executableTarget(
+            name: "sdf-video",
             dependencies: ["SDFDemoScenes"]
         ),
         .testTarget(

@@ -131,7 +131,8 @@ private struct StatsOverlay: View {
         TimelineView(.periodic(from: .now, by: 0.25)) { _ in
             let stats = simulation.statistics
             VStack(alignment: .leading, spacing: 2) {
-                Text(sceneDescription).font(.headline)
+                Text(sceneDescription).font(.headline.monospaced())
+                Text("physics: SDF engine (RealityKit physics off)")
                 if isLoading {
                     Text("Baking shapes…")
                 }
@@ -142,7 +143,7 @@ private struct StatsOverlay: View {
                 Text("step \(stats.stepMilliseconds, format: .number.precision(.fractionLength(2))) ms · collision \(stats.collisionMilliseconds, format: .number.precision(.fractionLength(2))) ms")
                 Text("\(stats.optimizerIterations) iterations · \(stats.queries) queries")
             }
-            .font(.caption.monospacedDigit())
+            .font(.caption.monospaced())
             .padding(8)
             .background(.regularMaterial, in: .rect(cornerRadius: 8))
         }
