@@ -42,24 +42,30 @@ extension SDFShape {
     private static func appendTriangles(of entity: Entity, relativeTo root: Entity, positions: inout [SIMD3<Float>],
                                         indices: inout [UInt32]) {
         if let mesh = entity.components[ModelComponent.self]?.mesh {
-            let toRoot = entity.transformMatrix(relativeTo: root)
-            let contents = mesh.contents
-            for instance in contents.instances {
-                guard let model = contents.models[instance.model] else { continue }
-                let transform = toRoot * instance.transform
-                for part in model.parts {
-                    guard let triangles = part.triangleIndices else { continue }
-                    let base = UInt32(positions.count)
-                    positions += part.positions.elements.map { p in
-                        let w = transform * SIMD4(p, 1)
-                        return SIMD3(w.x, w.y, w.z)
-                    }
-                    indices += triangles.elements.map { base + $0 }
-                }
-            }
+            appendTriangles(of: mesh, transform: entity.transformMatrix(relativeTo: root), positions: &positions,
+                            indices: &indices)
         }
         for child in entity.children {
             appendTriangles(of: child, relativeTo: root, positions: &positions, indices: &indices)
+        }
+    }
+
+    @MainActor
+    static func appendTriangles(of mesh: MeshResource, transform: simd_float4x4, positions: inout [SIMD3<Float>],
+                                indices: inout [UInt32]) {
+        let contents = mesh.contents
+        for instance in contents.instances {
+            guard let model = contents.models[instance.model] else { continue }
+            let transform = transform * instance.transform
+            for part in model.parts {
+                guard let triangles = part.triangleIndices else { continue }
+                let base = UInt32(positions.count)
+                positions += part.positions.elements.map { p in
+                    let w = transform * SIMD4(p, 1)
+                    return SIMD3(w.x, w.y, w.z)
+                }
+                indices += triangles.elements.map { base + $0 }
+            }
         }
     }
 }

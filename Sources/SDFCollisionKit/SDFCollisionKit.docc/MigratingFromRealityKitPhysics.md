@@ -7,7 +7,12 @@ Move entities from RealityKit's physics to SDF bodies, and know what differs.
 SDFCollisionKit mirrors the names and shapes of RealityKit's physics API, and reuses its
 `PhysicsBodyMode`, `CollisionFilter`, `CollisionGroup`, `CollisionCastQueryType` and
 `PhysicsSimulationComponent` option types. The two simulations are separate: SDF bodies and
-RealityKit physics bodies don't collide with each other, so give each entity one or the other.
+RealityKit physics bodies don't push each other, so give each moving entity one or the other.
+For the static and kinematic colliders a scene already has, such as floors, walls and tables,
+`addSDFColliders(mode:material:resolution:)` adds SDF bodies for an entity's `CollisionComponent`
+shapes, so that SDF bodies collide with them too. Axis-aligned boxes, spheres and capsules become
+exact analytical shapes; other shapes are baked from their meshes with
+``SDFShape/make(from:resolution:)``.
 
 ## Counterparts
 
@@ -69,5 +74,6 @@ RealityKit physics bodies don't collide with each other, so give each entity one
 - **Not yet available:** joints, continuous collision detection (fast thin bodies can pass
   through others), sweeps of a shape along a path, and the simulation `clock`.
 - **Sleeping.** Bodies at rest fall asleep and wake when touched, moved or pushed. Turn it off
-  with ``SDFSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``. While asleep, a pair in contact keeps reporting `Updated` with
-  the contacts and impulses it had when it fell asleep.
+  with ``SDFSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``.
+  While asleep, a pair in contact keeps reporting `Updated` with the contacts and impulses it had
+  when it fell asleep.

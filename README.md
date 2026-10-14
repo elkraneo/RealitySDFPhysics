@@ -117,8 +117,10 @@ vary by up to about 20% between runs.
   then takes the same steps as upstream's (`SolverReferenceTests`).
 - **Threads.** The simulation steps on the main actor; its collision detection runs on several
   threads, and baking in the background.
-- **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies do not collide with each
-  other. Give an entity one or the other.
+- **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies don't push each other;
+  give a moving entity one or the other. `entity.addSDFColliders()` gives an entity's RealityKit
+  collision shapes to the SDF simulation as static or kinematic bodies, so SDF bodies land on the
+  floors and tables a scene already has.
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.
 - **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
   pushed (`isSleepingEnabled`).
