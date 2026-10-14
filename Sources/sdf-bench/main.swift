@@ -19,8 +19,9 @@
 // no meshes, so that rendering costs next to nothing.
 //
 // SDFCollisionKit's time is that of `SDFSimulation.step(root:)`, synchronization included.
-// RealityKit doesn't report its physics time: it is estimated as the time of a frame with the
-// physics clock advancing by a step, minus that of a frame with the clock still.
+// RealityKit's is measured between its `PhysicsSimulationEvents.WillSimulate` and `DidSimulate`
+// events, and cross-checked with an estimate: the time of a frame with the physics clock advancing
+// by a step, minus that of a frame with the clock still.
 
 import CoreMedia
 import Foundation
@@ -93,7 +94,7 @@ func check(_ bodies: [Entity]) -> String {
 }
 
 @MainActor
-func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, check: String) {
+func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, estimate: Double, check: String) {
     var timebase: CMTimebase?
     CMTimebaseCreateWithSourceClock(allocator: nil, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &timebase)
     guard let timebase else { throw CocoaError(.featureUnsupported) }
@@ -137,6 +138,16 @@ func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, ch
     descriptor.storageMode = .private
     let output = try RealityRenderer.CameraOutput(.singleProjection(colorTexture: MTLCreateSystemDefaultDevice()!.makeTexture(descriptor: descriptor)!))
 
+    // The simulate step, between the events RealityKit sends around it
+    var willSimulate: UInt64 = 0, simulated: [Double] = []
+    let subscriptions = [
+        renderer.subscribe(to: PhysicsSimulationEvents.WillSimulate.self) { _ in willSimulate = DispatchTime.now().uptimeNanoseconds },
+        renderer.subscribe(to: PhysicsSimulationEvents.DidSimulate.self) { _ in
+            simulated.append(Double(DispatchTime.now().uptimeNanoseconds - willSimulate) / 1e6)
+        },
+    ]
+    defer { _ = subscriptions }
+
     func frame(advancing: Bool, to step: Int) async throws -> Double {
         if advancing { CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(step), timescale: 60)) }
         let start = DispatchTime.now().uptimeNanoseconds
@@ -150,9 +161,11 @@ func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, ch
     var baseline: [Double] = []
     for _ in 0..<60 { baseline.append(try await frame(advancing: false, to: 0)) }
     let overhead = baseline.sorted()[baseline.count / 2]
+    simulated.removeAll()
     var times: [Double] = []
     for step in 1...steps { times.append(max(0, try await frame(advancing: true, to: step) - overhead)) }
-    return (times.reduce(0, +) / Double(times.count), times.max() ?? 0, check(bodies))
+    guard simulated.count == steps else { throw CocoaError(.featureUnsupported, userInfo: ["steps": simulated.count]) }
+    return (simulated.reduce(0, +) / Double(steps), simulated.max() ?? 0, times.reduce(0, +) / Double(steps), check(bodies))
 }
 
 /// A setting of the simulation: substeps, velocity and position iterations, and sleeping
@@ -270,7 +283,7 @@ if isQuality {
 }
 
 print("ms/step, mean / worst. SDFCollisionKit: the default real-time preset, with sleeping, and the paper's settings,")
-print("multithreaded and on one thread. RealityKit: 12-capsule tori, estimated.")
+print("multithreaded and on one thread. RealityKit: 12-capsule tori, measured between its simulation events.")
 print("tori   real time           paper               paper, one thread   RealityKit")
 for count in counts {
     let realTime = timeSDF(count: count, isMultithreaded: true, preset: .realTime)
@@ -279,5 +292,6 @@ for count in counts {
     let realityKit = try await timeRealityKit(count: count)
     print(String(format: "%4d   %6.2f / %6.2f     %6.2f / %6.2f     %6.2f / %6.2f     %6.2f / %6.2f", count,
                  realTime.mean, realTime.worst, sdf.mean, sdf.worst, single.mean, single.worst, realityKit.mean, realityKit.worst))
-    print("       after \(steps) steps: real time \(realTime.check), paper \(sdf.check), RealityKit \(realityKit.check)")
+    print(String(format: "       after \(steps) steps: real time \(realTime.check), paper \(sdf.check), RealityKit \(realityKit.check) (frame estimate %.2f)",
+                 realityKit.estimate))
 }
