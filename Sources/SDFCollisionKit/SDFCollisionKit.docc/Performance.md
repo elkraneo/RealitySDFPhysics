@@ -45,7 +45,8 @@ cheap to begin with.
 - Lower ``SDFSimulationComponent/substeps`` and the solver iterations for scenes that don't stack.
 - Bake each mesh once and share the shape.
 - Keep ``SDFSimulationComponent/isSleepingEnabled`` on. In a box of tori, a pile of 400 asleep
-  takes 4.4 ms a step, against 22 ms awake, most of it the broad phase, which still runs.
+  takes 1.7 ms a step on an M1, against 22 ms awake. While every body is asleep or static, the
+  broad phase and the collision detection are skipped.
 
 ## Limits
 
