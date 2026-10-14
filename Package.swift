@@ -8,6 +8,7 @@ let package = Package(
     products: [
         .library(name: "SDFCollisionKit", targets: ["SDFCollisionKit"]),
         .executable(name: "SDFDemos", targets: ["SDFDemos"]),
+        .executable(name: "RealityKitSamples", targets: ["RealityKitSamples"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
         .executable(name: "sdf-video", targets: ["sdf-video"]),
     ],
@@ -27,11 +28,19 @@ let package = Package(
         .target(
             name: "SDFDemoScenes",
             dependencies: ["SDFCollisionKit"],
+            path: "Samples/SDFDemoScenes",
             resources: [.copy("Resources/assets")]
         ),
         .executableTarget(
             name: "SDFDemos",
-            dependencies: ["SDFDemoScenes"]
+            dependencies: ["SDFDemoScenes"],
+            path: "Samples/SDFDemos"
+        ),
+        // Apple's RealityKit physics samples, ported to SDF bodies
+        .executableTarget(
+            name: "RealityKitSamples",
+            dependencies: ["SDFCollisionKit"],
+            path: "Samples/RealityKitSamples"
         ),
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(

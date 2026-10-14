@@ -59,14 +59,22 @@ The documentation catalog covers getting started, migrating from RealityKit phys
 baking, tuning the paper's parameters, and performance. Build it with Xcode's
 **Product › Build Documentation**.
 
-## Demo
+## Samples
 
-`SDFDemos` is a macOS app with the 11 scenes of the upstream demo, rebuilt on the public API in the
-`SDFDemoScenes` module. `sdf-snapshot` renders them offscreen with timings, and `sdf-video` renders
-a showcase video.
+In `Samples/`, macOS apps built on the public API:
+
+- `SDFDemos`: the 11 scenes of the upstream demo, rebuilt in the `SDFDemoScenes` module with the
+  paper's settings on one thread, so they play out as in the upstream demo, for comparison.
+- `RealityKitSamples`: Apple's RealityKit physics samples ported to SDF bodies, keeping Apple's
+  structure and values. So far, "Simulating physics with collisions", with a switch from spheres
+  to concave tori and spiky wheels.
+
+`sdf-snapshot` renders the demo scenes offscreen with timings, and `sdf-video` renders a showcase
+video.
 
 ```sh
 swift run -c release SDFDemos
+swift run -c release RealityKitSamples
 swift run -c release sdf-snapshot out/ [steps] [scene index...]
 swift test
 ```
