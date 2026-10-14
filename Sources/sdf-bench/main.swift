@@ -47,9 +47,10 @@ let walls: [(center: SIMD3<Float>, halfExtents: SIMD3<Float>)] = [
 ]
 
 @MainActor
-func timeSDF(count: Int, isMultithreaded: Bool) -> (mean: Double, worst: Double, check: String) {
+func timeSDF(count: Int, isMultithreaded: Bool, preset: SDFSimulationComponent.Preset = .paper)
+    -> (mean: Double, worst: Double, check: String) {
     let root = Entity(), simulation = SDFSimulation()
-    var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
+    var settings = SDFSimulationComponent(simulation: simulation, preset: preset)
     settings.isMultithreaded = isMultithreaded
     root.components.set(settings)
     for wall in walls {
@@ -215,12 +216,15 @@ if isQuality {
     exit(0)
 }
 
-print("tori   SDFCollisionKit ms/step (mean / worst)   one thread         RealityKit, 12-capsule tori (estimate)")
+print("ms/step, mean / worst. SDFCollisionKit: the default real-time preset, with sleeping, and the paper's settings,")
+print("multithreaded and on one thread. RealityKit: 12-capsule tori, estimated.")
+print("tori   real time           paper               paper, one thread   RealityKit")
 for count in counts {
+    let realTime = timeSDF(count: count, isMultithreaded: true, preset: .realTime)
     let sdf = timeSDF(count: count, isMultithreaded: true)
     let single = timeSDF(count: count, isMultithreaded: false)
     let realityKit = try await timeRealityKit(count: count)
-    print(String(format: "%4d   %7.2f / %7.2f                      %7.2f / %7.2f  %7.2f / %7.2f", count, sdf.mean, sdf.worst,
-                 single.mean, single.worst, realityKit.mean, realityKit.worst))
-    print("       after \(steps) steps: SDFCollisionKit \(sdf.check), RealityKit \(realityKit.check)")
+    print(String(format: "%4d   %6.2f / %6.2f     %6.2f / %6.2f     %6.2f / %6.2f     %6.2f / %6.2f", count,
+                 realTime.mean, realTime.worst, sdf.mean, sdf.worst, single.mean, single.worst, realityKit.mean, realityKit.worst))
+    print("       after \(steps) steps: real time \(realTime.check), paper \(sdf.check), RealityKit \(realityKit.check)")
 }
