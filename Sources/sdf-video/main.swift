@@ -1,14 +1,16 @@
 // Renders short videos of the demo scenes and the RealityKit samples offscreen, with a HUD stating
 // what runs.
 //
-//   swift run -c release sdf-video <output.mp4> [demos | tori | dice]
+//   swift run -c release sdf-video <output.mp4> [demos | tori | dice | compare]
 //
 // Every frame is one simulation step at 60 Hz, so the videos play in real time. `demos` is a reel
 // of the paper's scenes; `tori` and `dice` drive the samples' scenes as the app does, with the
-// RealityKit systems stepping the simulation and a scripted toss.
+// RealityKit systems stepping the simulation and a scripted toss. `compare` drops the same rings over
+// a peg with RealityKit's physics, which needs a convex hull for a moving body, and with SDF bodies.
 
 import AppKit
 import AVFoundation
+import CoreMedia
 import CoreText
 import Metal
 import RealityKit
@@ -20,9 +22,9 @@ let width = 1280, height = 720, framesPerSecond: Int32 = 60
 let paperCredit = "Giles & Andrews, Real-Time Collision Handling for SDFs via Caching and Importance Sampling (PG 2026)"
 
 let arguments = CommandLine.arguments.dropFirst()
-guard let output = arguments.first, arguments.count <= 2, ["demos", "tori", "dice"].contains(arguments.dropFirst().first ?? "demos")
+guard let output = arguments.first, arguments.count <= 2, ["demos", "tori", "dice", "compare"].contains(arguments.dropFirst().first ?? "demos")
 else {
-    print("usage: sdf-video <output.mp4> [demos | tori | dice]")
+    print("usage: sdf-video <output.mp4> [demos | tori | dice | compare]")
     exit(1)
 }
 let reel = arguments.dropFirst().first ?? "demos"
@@ -210,12 +212,126 @@ func renderDice(_ recorder: Recorder) async throws {
     }
 }
 
+/// A ring toss: three tori dropped over a peg, with RealityKit's physics (left), whose moving bodies
+/// need convex shapes, and with SDFCollisionKit (right). Same sizes, drops and simulated time.
+@MainActor
+func renderComparison(_ recorder: Recorder) async throws {
+    // In meters
+    let major: Float = 0.15, minor: Float = 0.04, pegHalfWidth: Float = 0.03, pegHeight: Float = 0.5
+    let drops: [(offset: SIMD3<Float>, height: Float, tilt: Float)] = [
+        ([0.03, 0, -0.02], 0.8, 0.15), ([-0.04, 0, 0.03], 1.1, -0.2), ([0.02, 0, 0.04], 1.4, 0.1),
+    ]
+    let ring = SDFShape.torus(majorRadius: major, minorRadius: minor)
+    let ringMesh = try MeshResource.generate(from: ring)
+    func material(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> PhysicallyBasedMaterial {
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: .init(red: red, green: green, blue: blue, alpha: 1))
+        material.roughness = 0.5
+        return material
+    }
+    let colors = [material(0.9, 0.35, 0.3), material(0.3, 0.7, 0.45), material(0.35, 0.5, 0.9)]
+    let pegMaterial = material(0.75, 0.72, 0.68)
+
+    // RealityKit, with its physics clock driven frame by frame
+    var timebase: CMTimebase?
+    CMTimebaseCreateWithSourceClock(allocator: nil, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &timebase)
+    guard let timebase else { return }
+    CMTimebaseSetRate(timebase, rate: 0)
+    CMTimebaseSetTime(timebase, time: .zero)
+    let left = Entity()
+    left.position = [-0.45, 0, 0]
+    var physics = PhysicsSimulationComponent()
+    physics.clock = timebase
+    left.components.set(physics)
+    let ground = Entity()
+    ground.position = [0, -0.5, 0]
+    ground.components.set(CollisionComponent(shapes: [.generateBox(size: [4, 1, 4])]))
+    ground.components.set(PhysicsBodyComponent(shapes: [.generateBox(size: [4, 1, 4])], mass: 1, mode: .static))
+    let leftPeg = ModelEntity(mesh: .generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth]), materials: [pegMaterial])
+    leftPeg.position = [0, pegHeight / 2, 0]
+    leftPeg.components.set(CollisionComponent(shapes: [.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])]))
+    leftPeg.components.set(PhysicsBodyComponent(shapes: [.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])],
+                                                mass: 1, mode: .static))
+    left.addChild(ground)
+    left.addChild(leftPeg)
+    // The best RealityKit offers a moving torus: its convex hull, a disk without the hole
+    let hull = try await ShapeResource.generateConvex(from: ringMesh)
+    var leftRings: [Entity] = []
+    for (index, drop) in drops.enumerated() {
+        let entity = ModelEntity(mesh: ringMesh, materials: [colors[index]])
+        entity.position = drop.offset + [0, drop.height, 0]
+        entity.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
+        entity.components.set(CollisionComponent(shapes: [hull]))
+        entity.components.set(PhysicsBodyComponent(shapes: [hull], density: 1000))
+        left.addChild(entity)
+        leftRings.append(entity)
+    }
+
+    // SDFCollisionKit, in a root of decimeters
+    let right = Entity()
+    right.position = [0.45, 0, 0]
+    right.scale = SIMD3(repeating: 0.1)
+    let simulation = SDFSimulation()
+    right.components.set(SDFSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
+    let sdfGround = Entity()
+    sdfGround.position = [0, -5, 0]
+    sdfGround.components.set(SDFBodyComponent(shape: .box(halfExtents: [20, 5, 20]), mode: .static))
+    let rightPeg = ModelEntity(mesh: .generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth]), materials: [pegMaterial])
+    rightPeg.scale = SIMD3(repeating: 10)
+    rightPeg.position = [0, 10 * pegHeight / 2, 0]
+    rightPeg.components.set(SDFBodyComponent(shape: .box(halfExtents: [pegHalfWidth, pegHeight / 2, pegHalfWidth]), mode: .static))
+    right.addChild(sdfGround)
+    right.addChild(rightPeg)
+    var rightRings: [Entity] = []
+    for (index, drop) in drops.enumerated() {
+        // Shape and mesh in meters, scaled to the root's decimeters
+        let entity = ModelEntity(mesh: ringMesh, materials: [colors[index]])
+        entity.scale = SIMD3(repeating: 10)
+        entity.position = 10 * (drop.offset + [0, drop.height, 0])
+        entity.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
+        entity.components.set(SDFBodyComponent(shape: ring))
+        right.addChild(entity)
+        rightRings.append(entity)
+    }
+
+    let renderer = try RealityRenderer()
+    let camera = PerspectiveCamera()
+    camera.camera.fieldOfViewInDegrees = 40
+    camera.look(at: [0, 0.3, 0], from: [0, 0.9, 1.9], relativeTo: nil)
+    renderer.entities.append(contentsOf: [left, right, DemoStage.makeFloor(), DemoStage.makeLight(), camera])
+    renderer.activeCamera = camera
+    renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.62, green: 0.70, blue: 0.80, alpha: 1))
+
+    /// Rings with the peg through their hole, below its top
+    func ringsOnPeg(_ rings: [Entity], in side: Entity) -> Int {
+        rings.filter { ring in
+            // In meters: the right side's root is scaled to decimeters
+            let position = ring.position(relativeTo: nil) - side.position(relativeTo: nil)
+            return simd_length(SIMD2(position.x, position.z)) < major - minor && position.y < pegHeight
+        }.count
+    }
+
+    let timeStep = TimeInterval(SDFSimulationComponent().timeStep)
+    for frame in 1...Int(6 * Double(framesPerSecond)) {
+        CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(frame), timescale: framesPerSecond))
+        try await recorder.render(renderer, deltaTime: timeStep)
+        try await recorder.append(lines: [
+            "Ring toss: three tori dropped over a peg, same sizes and drops",
+            "left   RealityKit physics: a moving body needs a convex hull (ShapeResource.generateConvex)",
+            "right  SDFCollisionKit: the torus itself",
+            "rings around the peg   RealityKit \(ringsOnPeg(leftRings, in: left))/3 · SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3",
+        ])
+    }
+    print("rings around the peg: RealityKit \(ringsOnPeg(leftRings, in: left))/3, SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3")
+}
+
 do {
     let url = URL(fileURLWithPath: output)
     let recorder = try Recorder(url: url)
     switch reel {
     case "tori": try await renderTori(recorder)
     case "dice": try await renderDice(recorder)
+    case "compare": try await renderComparison(recorder)
     default: try await renderDemos(recorder)
     }
     let frames = try await recorder.finish()
