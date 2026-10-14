@@ -15,11 +15,16 @@ struct PhysicsBodiesView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            RealityView { content in
-                scene.reset(shape: shape)
-                content.add(scene.content)
+            ZStack {
+                RealityView { content in
+                    scene.reset(shape: shape)
+                    content.add(scene.content)
+                }
+                // Gestures on a SwiftUI layer: on macOS, RealityView keeps the mouse events
+                Color.clear
+                    .contentShape(.rect)
+                    .gesture(forceDrag(in: geometry.size))
             }
-            .gesture(forceDrag(in: geometry.size))
         }
         .toolbar {
             Picker("Shape", selection: $shape) {

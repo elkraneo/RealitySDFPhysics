@@ -10,9 +10,11 @@
 //   contact margin and tolerances suit objects about 1 unit across; the spheres are 3 to 15 cm.
 //   Masses, forces and the sizes you see are the same as Apple's.
 // - The volume is a fixed 1 m cube viewed through a camera, since a macOS window is not a volume.
-//   Its faces are 5 cm thick rather than 1 mm, outside the volume.
-// - `Shape` swaps the spheres for concave tori or spiky wheels, which RealityKit's physics can't
-//   simulate as moving bodies.
+//   Its faces are 50 cm thick rather than 1 mm, outside the volume, so that fast bodies don't pass
+//   through them between two substeps.
+// - `Shape` swaps the spheres for concave tori or spiky wheels (the paper's, Fig. 9), which
+//   RealityKit's physics can't simulate as moving bodies. They are 8 to 15 cm across rather than 3
+//   to 15, so that their thin parts stay well above the collision tolerance.
 
 import RealityKit
 import SDFCollisionKit
@@ -53,6 +55,7 @@ final class PhysicsBodiesScene {
         content.addChild(light)
 
         camera.camera.fieldOfViewInDegrees = Self.fieldOfView
+        camera.camera.fieldOfViewOrientation = .vertical
         camera.look(at: .zero, from: Self.eye, relativeTo: nil)
         content.addChild(camera)
     }
@@ -72,7 +75,8 @@ final class PhysicsBodiesScene {
     // MARK: Bodies
 
     /// Port of Apple's `Entity.metallicSphere(_:)`, for any of the shapes
-    private static func makeBody(_ kind: Shape, radius: Float = 0.15 * .random(in: 0.2...1.0)) -> Entity {
+    private static func makeBody(_ kind: Shape) -> Entity {
+        let radius: Float = kind == .spheres ? 0.15 * .random(in: 0.2...1.0) : 0.15 * .random(in: 0.55...1.0)
         // Sizes in the root's decimeters
         let r = radius * 10
         let shape: SDFShape
@@ -85,8 +89,10 @@ final class PhysicsBodiesScene {
             shape = .torus(majorRadius: 0.7 * r, minorRadius: 0.3 * r)
             mesh = try! .generate(from: shape)
         case .spikyWheels:
-            shape = .spikyWheel(hubRadius: 0.45 * r, hubHalfWidth: 0.2 * r, spikeRadius: 0.12 * r, spikeLength: 0.55 * r,
-                                spikes: 8)
+            // The paper's wheel (hub 0.35, spikes 1.4 long), scaled to the radius
+            let k = r / 1.75
+            shape = .spikyWheel(hubRadius: 0.35 * k, hubHalfWidth: 0.48 * k, spikeRadius: 0.08 * k, spikeLength: 1.4 * k,
+                                spikes: 16)
             mesh = try! .generate(from: shape)
         }
         let entity = ModelEntity(mesh: mesh, materials: [metallicMaterial()])
@@ -120,7 +126,7 @@ final class PhysicsBodiesScene {
     /// Port of Apple's `ContainmentCollisionBox`: six static faces around the volume
     private func makeContainment() -> Entity {
         let box = Entity()
-        let half = 10 * Self.volumeSize / 2, thickness: Float = 0.5
+        let half = 10 * Self.volumeSize / 2, thickness: Float = 5
         for axis in 0..<3 {
             for side: Float in [-1, 1] {
                 var extents = SIMD3<Float>(repeating: half + thickness)

@@ -66,8 +66,9 @@ In `Samples/`, macOS apps built on the public API:
 - `SDFDemos`: the 11 scenes of the upstream demo, rebuilt in the `SDFDemoScenes` module with the
   paper's settings on one thread, so they play out as in the upstream demo, for comparison.
 - `RealityKitSamples`: Apple's RealityKit physics samples ported to SDF bodies, keeping Apple's
-  structure and values. So far, "Simulating physics with collisions", with a switch from spheres
-  to concave tori and spiky wheels.
+  structure and values so that the two can be compared. So far:
+  - [Simulating physics with collisions in your visionOS app](https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app),
+    with a switch from spheres to concave tori and spiky wheels.
 
 `sdf-snapshot` renders the demo scenes offscreen with timings, and `sdf-video` renders a showcase
 video.

@@ -24,9 +24,12 @@ private enum Sample: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
-    var source: String {
+    /// Apple's sample this one ports
+    var source: (title: String, url: URL) {
         switch self {
-        case .physicsBodies: "Simulating physics with collisions in your visionOS app"
+        case .physicsBodies:
+            ("Simulating physics with collisions in your visionOS app",
+             URL(string: "https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app")!)
         }
     }
 }
@@ -39,14 +42,25 @@ private struct SamplesView: View {
             List(Sample.allCases, selection: $selection) { sample in
                 VStack(alignment: .leading) {
                     Text(sample.rawValue)
-                    Text(sample.source).font(.caption).foregroundStyle(.secondary)
+                    Text(sample.source.title).font(.caption).foregroundStyle(.secondary)
                 }
             }
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
-            switch selection {
-            case .physicsBodies: PhysicsBodiesView()
-            case nil: Text("Select a sample")
+            if let selection {
+                Group {
+                    switch selection {
+                    case .physicsBodies: PhysicsBodiesView()
+                    }
+                }
+                .toolbar {
+                    Link(destination: selection.source.url) {
+                        Label("Apple's sample", systemImage: "arrow.up.right.square")
+                    }
+                    .help("Open \"\(selection.source.title)\", the sample this one ports")
+                }
+            } else {
+                Text("Select a sample")
             }
         }
     }
