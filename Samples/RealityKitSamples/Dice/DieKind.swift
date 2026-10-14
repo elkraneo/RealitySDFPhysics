@@ -17,6 +17,9 @@ enum DieKind: String, CaseIterable {
     case d12 = "D12"
     case d20 = "D20"
 
+    /// The die's name, with the custom D8's values
+    var label: String { self == .customD8 ? "D8 (1–35)" : rawValue }
+
     struct Face {
         var normal: SIMD3<Float>
         var value: Int

@@ -29,12 +29,18 @@ struct DiceView: View {
                 } else if !isLoaded {
                     ProgressView().controlSize(.small)
                     Text("Baking the dice…")
+                } else if let rolled = scene.rolled {
+                    Text(Self.describe(rolled)).monospacedDigit()
+                    if let predicted = scene.predicted {
+                        let matches = predicted.map(\.value) == rolled.map(\.value)
+                        Text(matches ? "as predicted" : "predicted \(Self.total(predicted))")
+                            .foregroundStyle(.secondary)
+                    }
                 } else if scene.isRolling {
-                    Text("Rolling…")
-                } else if let score = scene.lastRollScore {
-                    Text("Last roll score: \(score)").monospacedDigit()
-                    if let predicted = scene.predictedScore {
-                        Text("predicted \(predicted)").foregroundStyle(.secondary).monospacedDigit()
+                    if let predicted = scene.predicted {
+                        Text("Predicted \(Self.describe(predicted))…").monospacedDigit()
+                    } else {
+                        Text("Rolling…")
                     }
                 } else {
                     Text("Drag a die to pick it up, and release to toss it")
@@ -62,6 +68,16 @@ struct DiceView: View {
         }
     }
 
+    private static func total(_ rolls: [DiceScene.Roll]) -> Int {
+        rolls.map(\.value).reduce(0, +)
+    }
+
+    /// Each die and its value, and the total of several
+    private static func describe(_ rolls: [DiceScene.Roll]) -> String {
+        let dice = rolls.map { "\($0.kind.label) \($0.value)" }.joined(separator: " · ")
+        return rolls.count > 1 ? "\(dice) = \(total(rolls))" : dice
+    }
+
     private func pickUpAndToss(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
@@ -69,7 +85,7 @@ struct DiceView: View {
                 if !isHolding {
                     isHolding = scene.pickUp(at: value.startLocation, in: size, tossAll: tossAll)
                 }
-                if isHolding { scene.move(to: value.location, in: size, at: value.time) }
+                if isHolding { scene.move(to: value.location, in: size) }
             }
             .onEnded { _ in
                 if isHolding { scene.toss(maxScore: maxScoreToss) }
