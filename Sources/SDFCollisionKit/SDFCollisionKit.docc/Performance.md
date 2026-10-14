@@ -52,12 +52,9 @@ cheap to begin with.
   the broad phase and the collision detection are skipped.
 - Keep ``SDFSimulationComponent/isMultithreaded`` on. Besides the threads, it lets the broad phase
   test bounding spheres after the boxes, which rejects more than half of the pairs of a pile of
-  tori before the narrow phase. (The single-threaded path keeps the reference's pairs, since
-  there every pair draws from one random sequence.)
-- Curvature sampling (``SDFCollisionDetection/usesCurvatureSampling``) scans a shape's seed
-  points for every random sample. The package drops the seeds of shapes whose whole surface is
-  high curvature, such as tori and capsules, where they add nothing over uniform samples; shapes
-  with edges and corners keep theirs.
+  tori before the narrow phase, and it skips the scan of the curvature seeds for a pair of tori
+  or capsules, whose seeds cover the whole surface and add nothing over uniform samples. The
+  single-threaded path is the reference's, pair for pair and sample for sample.
 
 ## Limits
 

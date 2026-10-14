@@ -19,6 +19,7 @@ struct BodyRecord
     float3 center;      // Of the shape, see SDFShape in SDFCore.cpp
     float unitScale;
     float boundingRadius = 0; // World space, about the center of the body's local bounds
+    bool uniformCurvature = false; // The shape's curvature seeds point at nothing, see SDFCore.cpp
 
     float staticFriction = 0.5f, dynamicFriction = 0.5f, restitution = 0;
     float linearDamping = 0.05f, angularDamping = 0.3f;

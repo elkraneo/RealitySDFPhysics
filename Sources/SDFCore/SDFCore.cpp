@@ -22,6 +22,7 @@ struct SDFShape
     Mesh display; // In the caller's frame
     bool watertight = true;
     float boundingRadius = 0; // Engine frame, about the center of the shape's bounds; encloses the shape
+    bool uniformCurvature = false; // High curvature everywhere, so its seeds point at nothing
 };
 
 // The radius of a sphere about the center of the bounds that encloses the shape: exact for the
@@ -48,37 +49,24 @@ static void store(float out[3], float3 v)
 }
 
 // The curvature seeds (Sec. 3.5.2) point the random samples at the sharp features of a shape. A
-// shape whose whole surface is high curvature by the engine's threshold, such as a torus or a
-// capsule, has no features to point at: its seeds are a uniform sampling of its surface, and the
-// engine's fallback, a uniform sample of the overlap, finds contacts as well. Those seeds are
-// dropped, since every random sample scans all of them (a torus has 151): on a pile of 400 tori
-// the scan was half of collision detection. The surface is sampled with a fixed random sequence,
-// so the outcome is deterministic.
-static void dropUniformCurvatureSeeds(Shape &shape)
+// torus or a capsule is high curvature everywhere by the engine's threshold, so its seeds are a
+// uniform sampling of its surface, and the engine's fallback, a uniform sample of the overlap,
+// finds contacts as well. The multithreaded narrow phase skips the seeds of a pair of such
+// shapes, since every random sample scans all of them (a torus has 151): on a pile of 400 tori
+// the scan was half of collision detection. The shapes keep their seeds, so the reference path
+// is untouched.
+static bool uniformCurvature(const Shape &shape)
 {
-    if (shape.seeds.empty())
-        return;
-    const int samples = 512;
-    float L = maxComponent(size(shape.bounds));
-    float kappa = 4.0f / L, delta = 0.001f * L; // as in Shape::finalize
-    Random rng;
-    int high = 0;
-    for (int i = 0; i < samples; i++)
-    {
-        float3 p = shape.project(rng.inBox(shape.bounds));
-        high += fabsf(shape.laplacian(p, delta)) > kappa;
-    }
-    if (high >= samples * 19 / 20) // tori, capsules; a cone (92%) keeps its apex and rim
-        shape.seeds.clear();
+    return dynamic_cast<const Torus *>(&shape) || dynamic_cast<const Capsule *>(&shape);
 }
 
 static SDFShape *makeShape(Shape *shape)
 {
     shape->finalize();
-    dropUniformCurvatureSeeds(*shape);
     SDFShape *handle = new SDFShape();
     handle->shape = ShapePtr(shape);
     handle->boundingRadius = boundingRadius(*shape);
+    handle->uniformCurvature = uniformCurvature(*shape);
     handle->display = shape->mesh;
     return handle;
 }
@@ -181,7 +169,6 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     // VoxelSdf normalizes the mesh with the same center and scale
     auto voxel = std::make_shared<VoxelSdf>(mesh, "", std::max(8, resolution));
     voxel->finalize();
-    dropUniformCurvatureSeeds(*voxel);
     // Dents under 0.5% of the size, such as the tessellation of rounded edges, are well within
     // the contact margin and can't change a contact
     voxel->convex = voxel->watertight && isConvex(mesh, 5e-3f * extent);
@@ -444,6 +431,7 @@ SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pos
     BodyRecord record;
     record.body = body, record.mode = mode, record.center = shape->center, record.unitScale = shape->unitScale;
     record.boundingRadius = shape->boundingRadius * body->scale;
+    record.uniformCurvature = shape->uniformCurvature;
     world->records[id] = record;
     world->ids[body] = id;
     body->updateBounds();

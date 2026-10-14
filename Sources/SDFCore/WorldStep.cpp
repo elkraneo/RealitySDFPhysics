@@ -266,9 +266,15 @@ void SDFWorld::step()
             struct Job
             {
                 Manifold *manifold;
+                const CollisionParams *params;
                 Random rng;
                 CollisionStats stats;
             };
+            // A pair of shapes that are high curvature everywhere, such as two tori, skips the
+            // scan of their curvature seeds: those are a uniform sampling of the surfaces, and a
+            // uniform sample of the overlap, the fallback, finds the contacts as well
+            CollisionParams uniform = s.params;
+            uniform.curvatureSampling = false;
             uint64_t seed = (uint64_t)s.rng.next() << 32 | s.rng.next();
             std::vector<Job> jobs;
             jobs.reserve(s.manifolds.size());
@@ -276,14 +282,14 @@ void SDFWorld::step()
             {
                 if (!needsUpdate(entry.first))
                     continue;
-                Job job = {&entry.second};
+                bool skipSeeds = movers[entry.first.first].record->uniformCurvature && movers[entry.first.second].record->uniformCurvature;
+                Job job = {&entry.second, skipSeeds ? &uniform : &s.params};
                 job.rng.state = mix(seed ^ mix((uint64_t)bodyIDs[entry.first.first] << 32 | bodyIDs[entry.first.second]));
                 jobs.push_back(job);
             }
-            const CollisionParams &params = s.params;
             Job *data = jobs.data();
             dispatch_apply(jobs.size(), DISPATCH_APPLY_AUTO, ^(size_t i) {
-                data[i].manifold->update(params, h, data[i].rng, data[i].stats);
+                data[i].manifold->update(*data[i].params, h, data[i].rng, data[i].stats);
             });
             for (const Job &job : jobs)
             {
