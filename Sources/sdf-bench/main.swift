@@ -3,10 +3,15 @@
 //
 //   swift run -c release sdf-bench [steps]
 //   swift run -c release sdf-bench quality [steps]
+//   swift run -c release sdf-bench phases [steps]
 //
 // `quality` compares SDFCollisionKit's settings, from the paper's to RealityKit-like ones: step time,
 // deepest penetration, how still the pile ends, and bodies out of the box; and, for the default
 // real-time preset, the bodies asleep at the end and the step time over the last 30 steps.
+//
+// `phases` splits the step of the real-time preset, without sleeping so that every body keeps
+// moving, into collision detection (the narrow phase, on several threads and on one), the rest of
+// the engine (broad phase, solver and integration) and the Swift synchronization.
 //
 // The tori fall into a walled box. For RealityKit, each torus is the best it has for a moving torus:
 // a compound of 12 capsules (from a mesh it would generate a convex hull, which closes the hole).
@@ -23,8 +28,9 @@ import Metal
 import RealityKit
 import SDFCollisionKit
 
-let isQuality = CommandLine.arguments.dropFirst().first == "quality"
-let steps = CommandLine.arguments.dropFirst(isQuality ? 2 : 1).first.flatMap { Int($0) } ?? 300
+let mode = CommandLine.arguments.dropFirst().first.flatMap { ["quality", "phases"].contains($0) ? $0 : nil }
+let isQuality = mode == "quality"
+let steps = CommandLine.arguments.dropFirst(mode == nil ? 1 : 2).first.flatMap { Int($0) } ?? 300
 let counts = [25, 50, 100, 200, 400]
 let major: Float = 0.15, minor: Float = 0.04, segments = 12
 
@@ -198,6 +204,53 @@ func quality(count: Int, setting: Setting) -> String {
     return name + String(format: " %4d   %6.2f ms  %6.2f ms   %5.1f mm   %5.1f mm   %6.1f mm/s   %4d   ", count,
                          time / Double(steps), endTime, deepest * 1000, deepestAtRest * 1000, endSpeed * 1000,
                          simulation.statistics.sleepingBodies) + check(bodies)
+}
+
+/// Mean milliseconds per step of each phase of the real-time preset, without sleeping
+@MainActor
+func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, engine: Double, step: Double, contacts: Int) {
+    let root = Entity(), simulation = SDFSimulation()
+    var settings = SDFSimulationComponent(simulation: simulation)
+    settings.isSleepingEnabled = false
+    settings.isMultithreaded = isMultithreaded
+    root.components.set(settings)
+    for wall in walls {
+        let entity = Entity()
+        entity.position = wall.center
+        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
+        root.addChild(entity)
+    }
+    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
+    for placement in placements(count) {
+        let entity = Entity()
+        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
+        entity.components.set(SDFBodyComponent(shape: torus))
+        root.addChild(entity)
+    }
+    var collision = 0.0, engine = 0.0, step = 0.0, contacts = 0
+    for _ in 0..<steps {
+        let start = DispatchTime.now().uptimeNanoseconds
+        simulation.step(root: root)
+        step += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        let statistics = simulation.statistics
+        collision += statistics.collisionMilliseconds
+        engine += statistics.stepMilliseconds
+        contacts += statistics.contacts
+    }
+    let n = Double(steps)
+    return (collision / n, engine / n, step / n, contacts / steps)
+}
+
+if mode == "phases" {
+    print("ms/step, mean over \(steps) steps: real-time preset without sleeping. Collision is the narrow phase;")
+    print("the rest of the engine is the broad phase, solver and integration; Swift is the synchronization.")
+    print("tori   contacts   collision (threads / one)   rest of engine   Swift   step")
+    for count in [100, 400, 800] {
+        let multi = phases(count: count, isMultithreaded: true), single = phases(count: count, isMultithreaded: false)
+        print(String(format: "%4d   %8d   %8.2f / %8.2f          %8.2f   %6.2f   %6.2f", count, multi.contacts,
+                     multi.collision, single.collision, multi.engine - multi.collision, multi.step - multi.engine, multi.step))
+    }
+    exit(0)
 }
 
 if isQuality {
