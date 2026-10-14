@@ -178,6 +178,8 @@ void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID body, SDFPose pose);
 void sdf_world_body_velocity(const SDFWorld *world, SDFBodyID body, float linear[3], float angular[3]);
 // Whether a dynamic body is asleep, with zero velocities, until something touches or moves it
 bool sdf_world_body_is_asleep(const SDFWorld *world, SDFBodyID body);
+// Whether a body was asleep for the whole of the last step, so that it hasn't moved
+bool sdf_world_body_rested_through_step(const SDFWorld *world, SDFBodyID body);
 void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID body, const float linear[3], const float angular[3]);
 
 float sdf_world_body_mass(const SDFWorld *world, SDFBodyID body);

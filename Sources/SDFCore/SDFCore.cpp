@@ -315,7 +315,11 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
     setNonNegative(c.tolerance, p.tolerance);
     c.maxIterations = std::max(1, p.maxIterations);
     setNonNegative(c.stepSize, p.stepSize);
+    float margin = c.margin;
     setNonNegative(c.margin, p.margin);
+    // Sleeping pairs keep the contacts found with the old margin
+    if (c.margin != margin)
+        world->wakeAll();
     setNonNegative(c.allowedPenetration, p.allowedPenetration);
     solver.substeps = std::max(1, p.substeps);
     solver.iterations = std::max(1, p.velocityIterations);
@@ -468,6 +472,12 @@ bool sdf_world_body_is_asleep(const SDFWorld *world, SDFBodyID id)
 {
     const BodyRecord *record = world->find(id);
     return record && record->asleep;
+}
+
+bool sdf_world_body_rested_through_step(const SDFWorld *world, SDFBodyID id)
+{
+    const BodyRecord *record = world->find(id);
+    return record && record->restedThroughStep;
 }
 
 void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID id, const float linear[3], const float angular[3])

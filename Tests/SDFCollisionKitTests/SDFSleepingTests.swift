@@ -87,6 +87,65 @@ import simd
         #expect(box.position.x > 0.4, "carried to \(box.position.x)")
     }
 
+    @Test func aSupportThatJumpsAwayWakesWhatRestedOnIt() {
+        let platform = addBox(at: [0, 0.5, 0], mode: .kinematic)
+        let box = addBox(at: [0, 1.6, 0])
+        run(120)
+        #expect(simulation.isSleeping(box))
+        platform.position.x = 5
+        run(30)
+        #expect(!simulation.isSleeping(box))
+        #expect(box.position.y < 1.4)
+    }
+
+    @Test func bodiesFilteredOutDoNotWakeAPile() {
+        let box = addBox(at: [0, 0.6, 0])
+        let ghost = addBox(at: [0, 0.6, 0], mode: .static)
+        ghost.components[SDFBodyComponent.self]!.filter = CollisionFilter(group: .init(rawValue: 2), mask: .init(rawValue: 2))
+        run(120)
+        #expect(simulation.isSleeping(box))
+        for _ in 0..<30 {
+            ghost.position.x += 0.001
+            run(1)
+        }
+        #expect(simulation.isSleeping(box))
+    }
+
+    @Test func aSleepingContactReportsTheImpulseThatHoldsIt() {
+        let box = addBox(at: [0, 0.6, 0])
+        run(120)
+        #expect(simulation.isSleeping(box))
+        var impulse: Float = 0
+        let subscription = simulation.subscribe(to: SDFCollisionEvents.Updated.self, on: box) { impulse = $0.impulse }
+        run(1)
+        _ = subscription
+        // About the box's weight over a step: 1000 kg × 9.81 m/s² / 60
+        #expect(impulse > 100 && impulse < 250, "impulse \(impulse)")
+    }
+
+    @Test func aNewContactMarginWakesSleepers() {
+        let box = addBox(at: [0, 0.6, 0])
+        run(120)
+        #expect(simulation.isSleeping(box))
+        root.components[SDFSimulationComponent.self]!.collisionDetection.contactMargin = 0.01
+        run(1)
+        #expect(!simulation.isSleeping(box))
+    }
+
+    @Test func aBodyThatWakesAndSleepsInOneStepIsWrittenBack() {
+        var settings = SDFSimulationComponent(simulation: simulation)
+        settings.timeStep = 0.5
+        root.components.set(settings)
+        let box = addBox(at: [0, 0.6, 0])
+        run(20)
+        #expect(simulation.isSleeping(box))
+        let x = box.position.x
+        simulation.setMotion(SDFMotionComponent(linearVelocity: [0.04, 0, 0]), of: box)
+        run(1)
+        #expect(simulation.isSleeping(box))
+        #expect(box.position.x > x)
+    }
+
     @Test func thePaperPresetNeverSleeps() {
         root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))
         let box = addBox(at: [0, 0.6, 0])

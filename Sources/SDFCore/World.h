@@ -31,6 +31,7 @@ struct BodyRecord
     // each other or static bodies. Bodies put to sleep together share an island, and wake together.
     bool asleep = false;
     float stillTime = 0;               // Seconds the body has been nearly still
+    bool restedThroughStep = false;    // Asleep for the whole of the last step, so it hasn't moved
     uint32_t island = 0;
 
     bool locked() const { return min(min(linearMask.x, linearMask.y), min(linearMask.z, min(min(angularMask.x, angularMask.y), angularMask.z))) < 1; }

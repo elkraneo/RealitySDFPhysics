@@ -70,4 +70,4 @@ RealityKit physics bodies don't collide with each other, so give each entity one
   through others), sweeps of a shape along a path, and the simulation `clock`.
 - **Sleeping.** Bodies at rest fall asleep and wake when touched, moved or pushed. Turn it off
   with ``SDFSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``. While asleep, a pair in contact keeps reporting `Updated` with
-  the contacts it had when it fell asleep, and no impulse.
+  the contacts and impulses it had when it fell asleep.

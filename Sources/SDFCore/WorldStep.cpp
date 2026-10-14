@@ -150,6 +150,8 @@ void SDFWorld::step()
                 wake(r);
         }
     }
+    for (Mover &m : movers)
+        m.record->restedThroughStep = m.record->asleep;
 
     for (int substep = 0; substep < s.substeps; substep++)
     {
@@ -190,6 +192,19 @@ void SDFWorld::step()
             }
         }
         s.manifolds.swap(overlapping);
+        // Pairs whose bounds parted, such as a sleeper and a support that moved away in one frame,
+        // end their contacts here, before the narrow phase. Kept pairs were moved from, and are empty.
+        if (sleeping)
+        {
+            for (auto &entry : overlapping)
+            {
+                if (!touches(entry.second))
+                    continue;
+                for (Body *body : {entry.second.bodyA, entry.second.bodyB})
+                    if (BodyRecord &r = record(body); r.asleep)
+                        wake(r);
+            }
+        }
 
         // Narrow phase: Algorithm 1 for every pair with a body that can move. The others keep the
         // contacts they had when they fell asleep.
@@ -243,9 +258,18 @@ void SDFWorld::step()
         {
             if (needsUpdate(entry.first))
                 continue;
-            const auto &points = entry.second.points;
+            const Manifold &m = entry.second;
             s.stats.pairs++;
-            s.stats.contacts += (int)std::count_if(points.begin(), points.end(), [](const ContactPoint &p) { return p.active; });
+            s.stats.contacts += (int)std::count_if(m.points.begin(), m.points.end(), [](const ContactPoint &p) { return p.active; });
+            // Its events carry the impulses that held it when it fell asleep, as contacts() does
+            for (const ContactPoint &p : m.points)
+            {
+                if (!p.active)
+                    continue;
+                PairRecord &pair = touched[{ids.at(m.bodyA), ids.at(m.bodyB)}];
+                pair.impulse += p.normalImpulse;
+                pair.impulseVector += p.normal * p.normalImpulse;
+            }
         }
 
         // A sleeping body wakes, with its island, when a dynamic body or a moving kinematic one
@@ -534,13 +558,14 @@ void SDFWorld::sleep()
 void SDFWorld::wake(BodyRecord &r)
 {
     r.stillTime = 0;
+    r.restedThroughStep = false;
     if (!r.asleep)
         return;
     for (auto &entry : records)
     {
         BodyRecord &other = entry.second;
         if (other.asleep && other.island == r.island)
-            other.asleep = false, other.stillTime = 0;
+            other.asleep = other.restedThroughStep = false, other.stillTime = 0;
     }
 }
 
@@ -554,14 +579,19 @@ void SDFWorld::disturb(const Body *body)
         else if (entry.second.bodyB == body)
             wake(record(entry.second.bodyA));
     }
+    const BodyRecord &r = record(body);
     AABB bounds = expand(body->bounds, solver.params.margin);
     for (auto &other : solver.bodies)
-        if (other.get() != body && overlaps(bounds, expand(other->bounds, solver.params.margin)))
-            wake(record(other.get()));
+    {
+        BodyRecord &o = record(other.get());
+        if (other.get() != body && (r.group & o.mask) && (o.group & r.mask) &&
+            overlaps(bounds, expand(other->bounds, solver.params.margin)))
+            wake(o);
+    }
 }
 
 void SDFWorld::wakeAll()
 {
     for (auto &entry : records)
-        entry.second.asleep = false, entry.second.stillTime = 0;
+        entry.second.asleep = entry.second.restedThroughStep = false, entry.second.stillTime = 0;
 }
