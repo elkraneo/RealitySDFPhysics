@@ -131,6 +131,9 @@ typedef struct
 
 SDFWorld *sdf_world_create(void);
 void sdf_world_destroy(SDFWorld *world);
+// An independent copy that takes the same steps as the original would: bodies with the same IDs,
+// contact caches, forces, dragging and random state
+SDFWorld *sdf_world_copy(const SDFWorld *world);
 
 SDFParams sdf_default_params(void);
 SDFParams sdf_world_params(const SDFWorld *world);

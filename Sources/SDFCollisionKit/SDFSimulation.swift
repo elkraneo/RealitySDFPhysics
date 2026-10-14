@@ -270,6 +270,21 @@ public final class SDFSimulation {
         entities[id]
     }
 
+    /// The body IDs of the entities with bodies
+    var bodyIDs: [Entity.ID: SDFBodyID] {
+        bodies.mapValues(\.id)
+    }
+
+    /// Sets a dynamic body's velocities now, rather than on the next update as setting its
+    /// `SDFMotionComponent` does, and sets that component too. For example before a forecast.
+    public func setMotion(_ motion: SDFMotionComponent, of entity: Entity) {
+        entity.components.set(motion)
+        guard var body = bodies[entity.id] else { return }
+        setVelocity(of: body.id, motion)
+        body.motion = motion
+        bodies[entity.id] = body
+    }
+
     // MARK: Forces and impulses
 
     /// Runs work on an entity's body now, or once the body is created on the next update

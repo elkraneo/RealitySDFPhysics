@@ -10,17 +10,17 @@
 // - Invisible walls around the table keep the dice on it, as TabletopKit's table does.
 // - The dice are damped more than the engine's default, standing in for the rolling resistance
 //   that stops real dice within a second or two, which the engine doesn't model yet.
-// - The pointer drags a die physically, with the simulation's drag, and "Toss all" pulls the
-//   other dice into Apple's hexagon around it with spring forces. Released dice keep their
-//   velocity, plus a random spin.
-// - Every toss starts a new simulation, and a hidden copy of it runs ahead for a few milliseconds
-//   of each frame. The engine is deterministic, so the copy predicts the roll exactly, and the score is
-//   shown while the dice still roll.
+// - The pointer holds a die by the point it grabbed, with a critically damped spring that carries
+//   its weight, and "Toss all" pulls the other dice into Apple's hexagon around it the same way.
+//   Released dice keep their velocity, plus a random spin.
+// - When the dice are released, the simulation forecasts the roll: an exact copy of it steps
+//   ahead for a few milliseconds of each frame. The engine is deterministic, so the forecast is
+//   the roll, and the score shows while the dice still roll.
 // - "Max score toss": TabletopKit decides the outcome when a toss starts and makes the dice land
-//   on it. Here, once the copy knows how each die lands, the die's model is turned by one of its
-//   symmetries, so that its highest face is the one that lands on top. A die's shape is the same
-//   after the turn, so its flight doesn't change, and the turn is invisible while it spins. The
-//   real roll is never adjusted.
+//   on it. Here, once the forecast knows how each die lands, the die's model is turned by one of
+//   its symmetries, so that its highest face is the one that lands on top. A die's shape is the
+//   same after the turn, so its flight doesn't change, and the turn is invisible while it spins.
+//   The real roll is never adjusted.
 
 import Combine
 import RealityKit
@@ -160,8 +160,7 @@ final class DiceScene {
         return body
     }
 
-    /// Replaces the simulation with a new one, with the bodies at their current poses and the given
-    /// velocities (in centimeters per second)
+    /// Replaces the simulation with a new one, with the bodies at their current poses
     private func startSimulation(motions: [Int: SDFMotionComponent]) {
         let fixed = [table] + walls
         let bodies = fixed.map { ($0, $0.components[SDFBodyComponent.self]!, nil as SDFMotionComponent?) }
@@ -176,19 +175,22 @@ final class DiceScene {
     // MARK: Picking up and tossing
 
     private var simulation: SDFSimulation { root.components[SDFSimulationComponent.self]!.simulation }
-    /// The dragged die, and the others pulled around it with "Toss all"
+    private var gravity: SIMD3<Float> { root.components[SDFSimulationComponent.self]!.gravity }
+    /// The held die, and the others pulled around it with "Toss all"
     @ObservationIgnored private var held: [(index: Int, offset: SIMD3<Float>)] = []
-    @ObservationIgnored private var gather: AnyCancellable?
+    /// The grabbed point, in the held die's frame, and where the pointer wants it, in the root's
+    @ObservationIgnored private var grab: (anchor: SIMD3<Float>, target: SIMD3<Float>)?
+    @ObservationIgnored private var holding: AnyCancellable?
     /// The height the dice are held at, in centimeters
     private let holdHeight: Float = 6
 
-    /// Grabs the die under a point of the view with the simulation's drag, and with `tossAll` pulls
-    /// the others around it
+    /// Grabs the die under a point of the view, and with `tossAll` pulls the others around it
     func pickUp(at point: CGPoint, in size: CGSize, tossAll: Bool) -> Bool {
         let ray = camera.ray(through: point, in: size)
-        guard let (entity, _) = simulation.beginDrag(origin: root.convert(position: ray.origin, from: nil),
-                                                    direction: root.convert(direction: ray.direction, from: nil)),
-              let index = dice.firstIndex(where: { $0.entity == entity }) else { return false }
+        guard let hit = simulation.raycast(origin: root.convert(position: ray.origin, from: nil),
+                                           direction: root.convert(direction: ray.direction, from: nil), length: 1000,
+                                           query: .nearest, mask: .all.subtracting(Self.tableGroup)).first,
+              let index = dice.firstIndex(where: { $0.entity == hit.entity }) else { return false }
         held = [(index, .zero)]
         if tossAll {
             // Apple's hexagon of the other dice around the held one, 10 cm across
@@ -196,72 +198,66 @@ final class DiceScene {
                 let angle = Float(slot) * .pi / 3
                 held.append((other, [10 * cos(angle), 0, 10 * sin(angle)]))
             }
-            gather = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in pullTogether() }
         }
+        let entity = dice[index].entity
+        grab = (entity.convert(position: hit.position, from: root), hit.position)
+        holding = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
         stopWatchingRoll()
         return true
     }
 
-    /// Moves the drag target under a point of the view, at the hold height
+    /// Moves the grabbed point's target under a point of the view, at the hold height
     func move(to point: CGPoint, in size: CGSize) {
         let ray = camera.ray(through: point, in: size)
         let origin = root.convert(position: ray.origin, from: nil), direction = root.convert(direction: ray.direction, from: nil)
-        guard !held.isEmpty, abs(direction.y) > 1e-6 else { return }
-        simulation.drag(to: origin + direction * ((holdHeight - origin.y) / direction.y))
+        guard grab != nil, abs(direction.y) > 1e-6 else { return }
+        grab?.target = origin + direction * ((holdHeight - origin.y) / direction.y)
     }
 
-    /// Pulls the other dice towards their places around the dragged one with critically damped
-    /// springs that also hold up their weight
-    private func pullTogether() {
-        guard let center = held.first.map({ dice[$0.index].entity.position }) else { return }
-        let stiffness: Float = 400, damping = 2 * stiffness.squareRoot()
-        for (index, offset) in held.dropFirst() {
-            let entity = dice[index].entity
+    /// Before every step: pulls the grabbed point towards its target, and the other dice towards
+    /// their places around the held one, with critically damped springs that also carry the dice's
+    /// weight and calm their spin
+    private func hold() {
+        guard let grab, let (index, _) = held.first else { return }
+        let entity = dice[index].entity
+        guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFMotionComponent.self] else { return }
+        let frequency: Float = 15 // Radians per second: the die follows within about a tenth of a second
+        let anchor = entity.convert(position: grab.anchor, to: root)
+        let anchorVelocity = motion.linearVelocity + cross(motion.angularVelocity, anchor - entity.position)
+        let pull = frequency * frequency * (grab.target - anchor) - 2 * frequency * anchorVelocity
+        simulation.addForce(mass * pull, at: anchor, to: entity)
+        simulation.addForce(-mass * gravity, to: entity)
+        simulation.addTorque(-mass * 2 * motion.angularVelocity, to: entity)
+
+        let center = entity.position
+        for (other, offset) in held.dropFirst() {
+            let entity = dice[other].entity
             guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFMotionComponent.self] else { continue }
-            let settings = root.components[SDFSimulationComponent.self]!
-            let acceleration = stiffness * (center + offset - entity.position) - damping * motion.linearVelocity - settings.gravity
-            simulation.addForce(mass * acceleration, to: entity)
+            let pull = frequency * frequency * (center + offset - entity.position) - 2 * frequency * motion.linearVelocity
+            simulation.addForce(mass * (pull - gravity), to: entity)
         }
     }
 
-    /// Lets the held dice go with their velocities and a random spin, in a new simulation
+    /// Lets the held dice go with their velocities and a random spin, and forecasts the roll
     func toss(maxScore: Bool) {
         guard !held.isEmpty else { return }
-        simulation.endDrag()
-        gather = nil
-        var motions: [Int: SDFMotionComponent] = [:]
-        for index in dice.indices {
-            var motion = dice[index].entity.components[SDFMotionComponent.self] ?? SDFMotionComponent()
-            if held.contains(where: { $0.index == index }) {
-                // At most 2 m/s, so that 2 cm dice don't pass through each other between substeps
-                if length(motion.linearVelocity) > 200 { motion.linearVelocity = normalize(motion.linearVelocity) * 200 }
-                motion.angularVelocity += SIMD3<Float>.random(in: -15...15)
-            }
-            motions[index] = motion
+        holding = nil
+        grab = nil
+        for (index, _) in held {
+            let entity = dice[index].entity
+            var motion = entity.components[SDFMotionComponent.self] ?? SDFMotionComponent()
+            // At most 2 m/s, so that 2 cm dice don't pass through each other between substeps
+            if length(motion.linearVelocity) > 200 { motion.linearVelocity = normalize(motion.linearVelocity) * 200 }
+            motion.angularVelocity += SIMD3<Float>.random(in: -15...15)
+            simulation.setMotion(motion, of: entity)
         }
         let tossed = held.map(\.index).sorted()
         held = []
-
-        startSimulation(motions: motions)
-        watchRoll(tossed: tossed, prediction: makeHiddenCopy(motions: motions), maxScore: maxScore)
+        watchRoll(tossed: tossed, forecast: simulation.forecast(), maxScore: maxScore)
     }
 
-    /// A copy of the new simulation, not in the scene, with copies of the dice
-    private func makeHiddenCopy(motions: [Int: SDFMotionComponent]) -> (root: Entity, dice: [Entity]) {
-        func copy(_ entity: Entity) -> Entity {
-            let copy = Entity()
-            copy.transform = entity.transform
-            return copy
-        }
-        let copies = dice.map { copy($0.entity) }
-        let fixed = [table] + walls
-        let bodies = fixed.map { (copy($0), $0.components[SDFBodyComponent.self]!, nil as SDFMotionComponent?) }
-            + dice.indices.map { (copies[$0], dieBody(dice[$0]), motions[$0] ?? SDFMotionComponent()) }
-        return (makeRoot(bodies: bodies), copies)
-    }
-
-    private static func isAtRest(_ entity: Entity) -> Bool {
-        guard let motion = entity.components[SDFMotionComponent.self] else { return true }
+    private static func isAtRest(_ motion: SDFMotionComponent?) -> Bool {
+        guard let motion else { return true }
         return length(motion.linearVelocity) < 0.5 && length(motion.angularVelocity) < 0.05
     }
 
@@ -269,36 +265,34 @@ final class DiceScene {
 
     @ObservationIgnored private var rollSubscription: AnyCancellable?
 
-    /// After every step of the roll, advances the hidden copy until it comes to rest, then waits for
-    /// the real dice to rest and reads them
-    private func watchRoll(tossed: [Int], prediction: (root: Entity, dice: [Entity]), maxScore: Bool) {
+    /// After every step of the roll, advances the forecast for a few milliseconds until its dice
+    /// rest, then waits for the real dice to rest and reads them
+    private func watchRoll(tossed: [Int], forecast: SDFForecast, maxScore: Bool) {
         predicted = nil
         rolled = nil
         isRolling = true
-        let hidden = prediction.root.components[SDFSimulationComponent.self]!.simulation
-        var predictionSteps = 0, hiddenResting = 0, resting = 0
+        var forecastResting = 0, resting = 0
         rollSubscription = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { [unowned self] _ in
             if predicted == nil {
                 // A few milliseconds of each frame, so that the roll stays smooth
                 let budget = Date().addingTimeInterval(0.004)
-                while Date() < budget && hiddenResting < 30 && predictionSteps < 3600 {
-                    hidden.step(root: prediction.root)
-                    predictionSteps += 1
-                    hiddenResting = prediction.dice.allSatisfy(Self.isAtRest) ? hiddenResting + 1 : 0
+                while Date() < budget && forecastResting < 30 && forecast.stepCount < 3600 {
+                    forecast.step()
+                    forecastResting = dice.allSatisfy { Self.isAtRest(forecast.motion(of: $0.entity)) } ? forecastResting + 1 : 0
                 }
-                if hiddenResting >= 30 || predictionSteps >= 3600 {
-                    for index in tossed where maxScore {
+                if forecastResting >= 30 || forecast.stepCount >= 3600 {
+                    let landings = tossed.map { forecast.transform(of: dice[$0].entity)!.rotation }
+                    for (index, landing) in zip(tossed, landings) where maxScore {
                         let kind = dice[index].kind
-                        let landed = kind.face(for: prediction.dice[index].orientation)
                         if let top = kind.faces.max(by: { $0.value < $1.value }),
-                           let symmetry = kind.symmetry(mapping: top, to: landed) {
+                           let symmetry = kind.symmetry(mapping: top, to: kind.face(for: landing)) {
                             dice[index].model.orientation = symmetry
                         }
                     }
-                    predicted = tossed.map { read(index: $0, orientation: prediction.dice[$0].orientation) }
+                    predicted = zip(tossed, landings).map { read(index: $0, orientation: $1) }
                 }
             }
-            resting = dice.map(\.entity).allSatisfy(Self.isAtRest) ? resting + 1 : 0
+            resting = dice.allSatisfy { Self.isAtRest($0.entity.components[SDFMotionComponent.self]) } ? resting + 1 : 0
             guard predicted != nil, resting >= 30 else { return }
             rolled = tossed.map { read(index: $0, orientation: dice[$0].entity.orientation) }
             isRolling = false
@@ -319,7 +313,8 @@ final class DiceScene {
     /// Puts the dice back in their row, with their models unturned
     func reset() {
         held = []
-        gather = nil
+        holding = nil
+        grab = nil
         stopWatchingRoll()
         for (index, die) in dice.enumerated() {
             die.entity.transform = Transform(scale: SIMD3(repeating: 100), translation: [-15 + 6 * Float(index + 1), 1.5, 0])

@@ -35,8 +35,8 @@ private enum Sample: String, CaseIterable, Identifiable {
         ]
         case .dice: [
             "SDF bodies baked from Apple's dice models, in place of TabletopKit, which is visionOS only.",
-            "Max score toss runs the same toss in a hidden simulation first; the engine is deterministic, so each die is turned by a symmetry to land on its highest face, without adjusting the roll.",
-            "A rim and invisible walls keep the dice on the table; dice are picked up with the pointer and thrown with its velocity.",
+            "The roll is forecast from an exact copy of the simulation, which is deterministic; Max score toss turns each die by a symmetry to land on its highest face, without adjusting the roll.",
+            "Invisible walls keep the dice on the table; the pointer holds a die with a spring, and releases it with its velocity.",
         ]
         }
     }

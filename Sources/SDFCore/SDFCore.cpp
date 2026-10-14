@@ -244,6 +244,50 @@ SDFWorld *sdf_world_create(void) { return new SDFWorld(); }
 
 void sdf_world_destroy(SDFWorld *world) { delete world; }
 
+SDFWorld *sdf_world_copy(const SDFWorld *world)
+{
+    // Everything is copied by value but the bodies, which manifolds, records and dragging point
+    // to: they are copied and the pointers remapped to the copies
+    SDFWorld *copy = new SDFWorld();
+    const Solver &from = world->solver;
+    Solver &to = copy->solver;
+    std::unordered_map<const Body *, Body *> bodies;
+    for (const auto &body : from.bodies)
+    {
+        Body *clone = new Body(*body);
+        bodies[body.get()] = clone;
+        to.bodies.emplace_back(clone);
+    }
+    for (const auto &entry : from.manifolds)
+    {
+        Manifold manifold = entry.second;
+        manifold.bodyA = bodies.at(manifold.bodyA), manifold.bodyB = bodies.at(manifold.bodyB);
+        to.manifolds[entry.first] = manifold;
+    }
+    to.params = from.params, to.stats = from.stats, to.rng = from.rng;
+    to.dt = from.dt, to.gravity = from.gravity, to.substeps = from.substeps, to.iterations = from.iterations;
+    to.baumgarte = from.baumgarte, to.maxCorrection = from.maxCorrection;
+    to.dragBody = from.dragBody ? bodies.at(from.dragBody) : nullptr;
+    to.dragAnchor = from.dragAnchor, to.dragTarget = from.dragTarget;
+
+    copy->positionIterations = world->positionIterations;
+    copy->restitutionThreshold = world->restitutionThreshold;
+    copy->pairOptions = world->pairOptions;
+    copy->parallel = world->parallel;
+    copy->metersPerUnit = world->metersPerUnit;
+    copy->stepMilliseconds = world->stepMilliseconds;
+    copy->nextID = world->nextID;
+    copy->pairs = world->pairs;
+    for (const auto &entry : world->records)
+    {
+        BodyRecord record = entry.second;
+        record.body = bodies.at(record.body);
+        copy->records[entry.first] = record;
+        copy->ids[record.body] = entry.first;
+    }
+    return copy;
+}
+
 SDFParams sdf_default_params(void)
 {
     static const SDFWorld defaults;
