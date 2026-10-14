@@ -9,13 +9,16 @@
 // - The root is scaled to a tenth, so bodies are modeled in decimeters. SDFCollisionKit's default
 //   contact margin and tolerances suit objects about 1 unit across; the spheres are 3 to 15 cm.
 //   Masses, forces and the sizes you see are the same as Apple's.
+// - The drag force acts on every step toward the pointer's last position. On visionOS a hand sends
+//   drag events every frame; on macOS the pointer sends them only while it moves.
 // - The volume is a fixed 1 m cube viewed through a camera, since a macOS window is not a volume.
 //   Its faces are 50 cm thick rather than 1 mm, outside the volume, so that fast bodies don't pass
 //   through them between two substeps.
-// - `Shape` swaps the spheres for concave tori or spiky wheels (the paper's, Fig. 9), which
-//   RealityKit's physics can't simulate as moving bodies. They are 8 to 15 cm across rather than 3
-//   to 15, so that their thin parts stay well above the collision tolerance.
+// - `Shape` swaps the spheres for concave tori, which RealityKit's physics can't simulate as
+//   moving bodies. They are 8 to 15 cm across rather than 3 to 15, so that their rings stay well
+//   above the collision tolerance.
 
+import Combine
 import RealityKit
 import SDFCollisionKit
 import simd
@@ -26,7 +29,6 @@ final class PhysicsBodiesScene {
     enum Shape: String, CaseIterable, Identifiable {
         case spheres = "Spheres"
         case tori = "Tori"
-        case spikyWheels = "Spiky wheels"
 
         var id: Self { self }
     }
@@ -34,12 +36,18 @@ final class PhysicsBodiesScene {
     /// The edge of the cubic volume, in meters
     static let volumeSize: Float = 1
 
+    /// The walls' collision group, which the drag's raycast leaves out
+    static let walls = CollisionGroup(rawValue: 1 << 1)
+
     let content = Entity()
     /// The simulation root, scaled so that its units are decimeters
     let root = Entity()
     let camera = PerspectiveCamera()
     let simulation = SDFSimulation()
     private let bodies = Entity()
+    /// The body being dragged and the world space point it is pulled toward
+    private var drag: (entity: Entity, target: SIMD3<Float>)?
+    private var dragSubscription: AnyCancellable?
 
     init() {
         root.scale = SIMD3(repeating: 0.1)
@@ -58,6 +66,10 @@ final class PhysicsBodiesScene {
         camera.camera.fieldOfViewOrientation = .vertical
         camera.look(at: .zero, from: Self.eye, relativeTo: nil)
         content.addChild(camera)
+
+        dragSubscription = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in
+            if let drag { pull(drag.entity, towards: drag.target) }
+        }
     }
 
     /// Replaces the bodies with 16 new ones of a shape
@@ -87,12 +99,6 @@ final class PhysicsBodiesScene {
             mesh = .generateSphere(radius: r)
         case .tori:
             shape = .torus(majorRadius: 0.7 * r, minorRadius: 0.3 * r)
-            mesh = try! .generate(from: shape)
-        case .spikyWheels:
-            // The paper's wheel (hub 0.35, spikes 1.4 long), scaled to the radius
-            let k = r / 1.75
-            shape = .spikyWheel(hubRadius: 0.35 * k, hubHalfWidth: 0.48 * k, spikeRadius: 0.08 * k, spikeLength: 1.4 * k,
-                                spikes: 16)
             mesh = try! .generate(from: shape)
         }
         let entity = ModelEntity(mesh: mesh, materials: [metallicMaterial()])
@@ -135,7 +141,9 @@ final class PhysicsBodiesScene {
                 position[axis] = side * (half + thickness / 2)
                 let face = Entity()
                 face.position = position
-                face.components.set(SDFBodyComponent(shape: .box(halfExtents: extents), mode: .static))
+                var body = SDFBodyComponent(shape: .box(halfExtents: extents), mode: .static)
+                body.filter = CollisionFilter(group: Self.walls, mask: .all)
+                face.components.set(body)
                 box.addChild(face)
             }
         }
@@ -181,19 +189,36 @@ final class PhysicsBodiesScene {
         return (Self.eye, normalize(forward + right * (x * t * aspect) + up * (y * t)))
     }
 
+    /// Starts dragging the body under a point of the view. Returns its distance from the camera.
+    func beginDrag(at point: CGPoint, in size: CGSize) -> Float? {
+        guard let (entity, distance) = pick(at: point, in: size) else { return nil }
+        drag = (entity, entity.position(relativeTo: nil))
+        return distance
+    }
+
+    /// Moves the drag target to a world space point
+    func drag(to target: SIMD3<Float>) {
+        drag?.target = target
+    }
+
+    func endDrag() {
+        drag = nil
+    }
+
     /// The body under a point of the view, and its distance from the camera
-    func pick(at point: CGPoint, in size: CGSize) -> (entity: Entity, distance: Float)? {
+    private func pick(at point: CGPoint, in size: CGSize) -> (entity: Entity, distance: Float)? {
         let ray = ray(through: point, in: size)
         // The simulation's raycast works in the root's frame
         let origin = root.convert(position: ray.origin, from: nil)
         let direction = root.convert(direction: ray.direction, from: nil)
-        guard let hit = simulation.raycast(origin: origin, direction: direction, length: 1000, query: .nearest).first,
-              hit.entity.components.has(AttractionComponent.self) else { return nil }
+        // The camera is outside the volume, so leave out the walls
+        guard let hit = simulation.raycast(origin: origin, direction: direction, length: 1000, query: .nearest,
+                                           mask: .all.subtracting(Self.walls)).first else { return nil }
         return (hit.entity, simd_distance(root.convert(position: hit.position, to: nil), ray.origin))
     }
 
     /// Port of Apple's `ForceDragGesture`: a spring-like force towards the drag target
-    func pull(_ entity: Entity, towards target: SIMD3<Float>) {
+    private func pull(_ entity: Entity, towards target: SIMD3<Float>) {
         let direction = target - entity.position(relativeTo: nil)
         var strength = length(direction)
         guard strength > 1e-6 else { return }
@@ -204,3 +229,4 @@ final class PhysicsBodiesScene {
         entity.sdfPhysics.addForce(forceFactor * strength * normalize(direction), relativeTo: nil)
     }
 }
+

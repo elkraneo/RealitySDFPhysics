@@ -24,6 +24,17 @@ private enum Sample: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    /// How this port differs from Apple's sample
+    var differences: [String] {
+        switch self {
+        case .physicsBodies: [
+            "SDF bodies in place of PhysicsBodyComponent and CollisionComponent; the same sizes, masses and forces.",
+            "Shape swaps the spheres for concave tori, which RealityKit's physics can't move.",
+            "A fixed 1 m volume on macOS. Dragging picks with the simulation's raycast and pulls on every step.",
+        ]
+        }
+    }
+
     /// Apple's sample this one ports
     var source: (title: String, url: URL) {
         switch self {
@@ -48,20 +59,44 @@ private struct SamplesView: View {
             .navigationSplitViewColumnWidth(min: 220, ideal: 260)
         } detail: {
             if let selection {
-                Group {
+                VStack(spacing: 0) {
                     switch selection {
                     case .physicsBodies: PhysicsBodiesView()
                     }
-                }
-                .toolbar {
-                    Link(destination: selection.source.url) {
-                        Label("Apple's sample", systemImage: "arrow.up.right.square")
-                    }
-                    .help("Open \"\(selection.source.title)\", the sample this one ports")
+                    Divider()
+                    SampleReference(sample: selection)
                 }
             } else {
                 Text("Select a sample")
             }
         }
+    }
+}
+
+/// A bar naming the Apple sample a port reimplements, with a link to it and its differences
+private struct SampleReference: View {
+    let sample: Sample
+    @State private var showsDifferences = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text("Port of Apple's sample").foregroundStyle(.secondary)
+            Text(sample.source.title).fontWeight(.semibold)
+            Spacer()
+            Button("Differences", systemImage: "arrow.triangle.branch") { showsDifferences.toggle() }
+                .popover(isPresented: $showsDifferences, arrowEdge: .top) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(sample.differences, id: \.self) { Label($0, systemImage: "arrow.triangle.branch") }
+                    }
+                    .padding()
+                    .frame(width: 420)
+                }
+            Link(destination: sample.source.url) {
+                Label("Open Apple's Sample", systemImage: "arrow.up.right.square")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 }

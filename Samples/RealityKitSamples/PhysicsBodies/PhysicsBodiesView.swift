@@ -2,7 +2,8 @@
 // https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app
 //
 // Apple's sample drags with entity-targeted gestures, which hit-test RealityKit collision shapes.
-// SDF bodies have none, so the drag picks with the simulation's own raycast.
+// SDF bodies have none, so the drag picks with the simulation's own raycast, leaving out the
+// walls: the camera is outside the volume.
 
 import RealityKit
 import SDFCollisionKit
@@ -11,20 +12,16 @@ import SwiftUI
 struct PhysicsBodiesView: View {
     @State private var scene = PhysicsBodiesScene()
     @State private var shape = PhysicsBodiesScene.Shape.spheres
-    @State private var drag: (entity: Entity, distance: Float)?
+    /// Distance from the camera of the dragged body when the drag began
+    @State private var dragDistance: Float?
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack {
-                RealityView { content in
-                    scene.reset(shape: shape)
-                    content.add(scene.content)
-                }
-                // Gestures on a SwiftUI layer: on macOS, RealityView keeps the mouse events
-                Color.clear
-                    .contentShape(.rect)
-                    .gesture(forceDrag(in: geometry.size))
+            RealityView { content in
+                scene.reset(shape: shape)
+                content.add(scene.content)
             }
+            .gesture(forceDrag(in: geometry.size))
         }
         .toolbar {
             Picker("Shape", selection: $shape) {
@@ -40,11 +37,14 @@ struct PhysicsBodiesView: View {
     private func forceDrag(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                if drag == nil { drag = scene.pick(at: value.startLocation, in: size) }
-                guard let drag else { return }
+                if dragDistance == nil { dragDistance = scene.beginDrag(at: value.startLocation, in: size) }
+                guard let dragDistance else { return }
                 let ray = scene.ray(through: value.location, in: size)
-                scene.pull(drag.entity, towards: ray.origin + ray.direction * drag.distance)
+                scene.drag(to: ray.origin + ray.direction * dragDistance)
             }
-            .onEnded { _ in drag = nil }
+            .onEnded { _ in
+                dragDistance = nil
+                scene.endDrag()
+            }
     }
 }
