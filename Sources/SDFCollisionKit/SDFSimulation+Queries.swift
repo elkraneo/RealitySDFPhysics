@@ -17,8 +17,13 @@ extension SDFSimulation {
     /// Casts a ray (in the root's frame) against the bodies whose group is in the mask: triggers,
     /// static and kinematic ones included. A ray that starts inside a body hits it at distance 0.
     ///
-    /// - Parameter query: `.nearest` and `.any` return one hit at most, `.all` every body's first
-    ///   hit, sorted by distance.
+    /// - Parameters:
+    ///   - origin: Start of the ray
+    ///   - direction: Direction of the ray, of any length
+    ///   - length: Length of the ray
+    ///   - query: `.nearest` and `.any` return one hit at most, `.all` every body's first hit,
+    ///     sorted by distance.
+    ///   - mask: The groups of the bodies to test
     public func raycast(origin: SIMD3<Float>, direction: SIMD3<Float>, length: Float = 100,
                         query: CollisionCastQueryType = .all, mask: CollisionGroup = .all) -> [RaycastHit] {
         // At most one hit per body
