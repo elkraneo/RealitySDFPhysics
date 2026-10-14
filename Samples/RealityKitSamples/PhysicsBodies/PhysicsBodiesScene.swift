@@ -7,7 +7,8 @@
 // - Bodies are `SDFBodyComponent`s in an `SDFSimulationComponent` root, in place of
 //   `PhysicsBodyComponent` and `CollisionComponent`.
 // - The root is scaled to a tenth, so bodies are modeled in decimeters. SDFCollisionKit's default
-//   contact margin and tolerances suit objects about 1 unit across; the spheres are 3 to 15 cm.
+//   contact margin and tolerances suit objects about 1 unit across; the spheres are 6 to 30 cm
+//   across.
 //   Masses, forces and the sizes you see are the same as Apple's.
 // - The drag force acts on every step toward the pointer's last position. On visionOS a hand sends
 //   drag events every frame; on macOS the pointer sends them only while it moves.
@@ -16,8 +17,8 @@
 //   through them between two substeps.
 // - `Shape` swaps the spheres for concave tori, which RealityKit's physics can't simulate as
 //   moving bodies. They appear one at a time where the overlap query finds room, so that none
-//   start threaded through another. They are 8 to 15 cm across rather than 3 to 15, so that their rings stay well
-//   above the collision tolerance.
+//   start threaded through another. They are 16.5 to 30 cm across rather than 6 to 30, so that
+//   their rings stay well above the collision tolerance.
 
 import Combine
 import RealityKit

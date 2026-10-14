@@ -154,4 +154,57 @@ import simd
         let full = spin(rootScale: 1), tenth = spin(rootScale: 0.1)
         #expect(abs(full - tenth) < 1e-3 * abs(full), "full \(full), tenth \(tenth)")
     }
+
+    @Test func forcesAddedEveryFrameDoNotDependOnTheFrameRate() {
+        // At 120 frames per second, every other update takes no 60 Hz step
+        let ball = floatingBall()
+        let mass = simulation.mass(of: ball)!
+        for _ in 0..<120 {
+            ball.sdfPhysics.addForce([mass, 0, 0], relativeTo: nil) // 1 unit/s²
+            simulation.update(root: root, deltaTime: 1.0 / 120)
+        }
+        let velocity = ball.components[SDFMotionComponent.self]!.linearVelocity.x
+        #expect(abs(velocity - 1) < 0.05, "velocity \(velocity)")
+    }
+
+    @Test func forcesDoNotPileUpWhilePaused() {
+        let ball = floatingBall()
+        let mass = simulation.mass(of: ball)!
+        root.components[SDFSimulationComponent.self]!.isPaused = true
+        for _ in 0..<100 {
+            ball.sdfPhysics.addForce([mass * 60, 0, 0], relativeTo: nil)
+            simulation.update(root: root, deltaTime: 1.0 / 60)
+        }
+        simulation.step(root: root) // One step of the latest frame's force: 1 unit/s
+        let velocity = ball.components[SDFMotionComponent.self]!.linearVelocity.x
+        #expect(abs(velocity - 1) < 0.01, "velocity \(velocity)")
+    }
+
+    @Test func aZeroTimeStepPausesUntilFixed() {
+        let ball = addBody(at: [0, 2, 0])
+        root.components[SDFSimulationComponent.self]!.timeStep = 0
+        for _ in 0..<10 { simulation.update(root: root, deltaTime: 1.0 / 60) }
+        #expect(simulation.stepCount == 0)
+        root.components[SDFSimulationComponent.self]!.timeStep = 1.0 / 60
+        for _ in 0..<10 { simulation.update(root: root, deltaTime: 1.0 / 60) }
+        #expect(simulation.stepCount > 5)
+        #expect(ball.position.y < 2)
+    }
+
+    @Test func handlersOfEndedContactsCannotStep() {
+        _ = addBody(.box(halfExtents: [2, 0.5, 2]), mode: .static, at: [0, -0.5, 0])
+        let ball = addBody(at: [0, 0.3, 0])
+        for _ in 0..<30 { simulation.step(root: root) }
+        var stepsInHandler = 0
+        let subscription = simulation.subscribe(to: SDFCollisionEvents.Ended.self) { [simulation, root] _ in
+            let steps = simulation.stepCount
+            simulation.step(root: root)
+            stepsInHandler += simulation.stepCount - steps
+        }
+        withExtendedLifetime(subscription) {
+            ball.removeFromParent()
+            simulation.update(root: root, deltaTime: 1.0 / 60)
+        }
+        #expect(stepsInHandler == 0)
+    }
 }

@@ -9,7 +9,8 @@ import simd
 @MainActor
 @Observable
 final class DemoModel {
-    @ObservationIgnored let simulation = SDFSimulation()
+    /// A new one for every scene load, so that a scene always starts from the same random state
+    private(set) var simulation: SDFSimulation
     /// Parent of the bodies, which `SDFSimulationSystem` advances every frame
     @ObservationIgnored let root = Entity()
     @ObservationIgnored let cameraEntity = DemoStage.makeCamera()
@@ -40,12 +41,14 @@ final class DemoModel {
     var sceneDescription: String { DemoScene.all[sceneIndex].description }
 
     init() {
+        let simulation = SDFSimulation()
+        self.simulation = simulation
         settings = Self.paperSettings(simulation)
         root.components.set(settings)
         camera.place(cameraEntity)
     }
 
-    /// The paper's settings on one thread, so that the scenes play out exactly as in the upstream demo
+    /// The paper's settings on one thread, as in the upstream demo
     private static func paperSettings(_ simulation: SDFSimulation) -> SDFSimulationComponent {
         var settings = SDFSimulationComponent(simulation: simulation)
         settings.isMultithreaded = false
@@ -56,12 +59,17 @@ final class DemoModel {
         sceneIndex = index
         isLoading = true
         defer { isLoading = false }
+        // No simulation while the scene is built, then a new one with the same settings, so that
+        // loading a scene, or resetting it, always plays out the same
+        root.components.remove(SDFSimulationComponent.self)
         do {
             try await DemoScene.all[index].load(into: root)
             errorMessage = nil
         } catch {
             errorMessage = "Could not load \(DemoScene.all[index].name): \(error.localizedDescription)"
         }
+        simulation = SDFSimulation()
+        settings = settings.with(simulation)
         camera = OrbitCamera(for: DemoScene.all[index])
         camera.place(cameraEntity)
     }
@@ -105,5 +113,24 @@ final class DemoModel {
 
     func ray(through point: CGPoint, in size: CGSize) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
         camera.ray(through: point, in: size)
+    }
+}
+
+private extension SDFSimulationComponent {
+    /// The same settings for another simulation
+    @MainActor
+    func with(_ simulation: SDFSimulation) -> SDFSimulationComponent {
+        var copy = SDFSimulationComponent(simulation: simulation, metersPerUnit: metersPerUnit)
+        copy.gravity = gravity
+        copy.solverIterations = solverIterations
+        copy.collisionOptions = collisionOptions
+        copy.timeStep = timeStep
+        copy.substeps = substeps
+        copy.maximumStepsPerFrame = maximumStepsPerFrame
+        copy.isPaused = isPaused
+        copy.restitutionThreshold = restitutionThreshold
+        copy.collisionDetection = collisionDetection
+        copy.isMultithreaded = isMultithreaded
+        return copy
     }
 }

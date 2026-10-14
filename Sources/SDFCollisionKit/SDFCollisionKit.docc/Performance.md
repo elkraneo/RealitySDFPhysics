@@ -11,7 +11,7 @@ contact solver runs on the main actor. Baking runs in the background.
 The engine seeds its random sampling with fixed values, so the same bodies and inputs give
 bit-identical results on every run. Multithreaded, every pair of bodies draws from its own seeded
 sequence, so results don't depend on the number of threads either. They do differ from a single
-thread's, which reproduces the paper's engine exactly.
+thread's, which follows upstream's single random sequence.
 
 ## Measurements
 

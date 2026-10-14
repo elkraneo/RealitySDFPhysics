@@ -67,8 +67,11 @@ baking, tuning the paper's parameters, and performance. Build it with Xcode's
 
 In `Samples/`, macOS apps built on the public API:
 
-- `SDFDemos`: the 11 scenes of the upstream demo, rebuilt in the `SDFDemoScenes` module with the
-  paper's settings on one thread, so they play out as in the upstream demo, for comparison.
+- `SDFDemos`: the 11 scenes of the upstream demo, rebuilt in the `SDFDemoScenes` module with
+  their shapes, sizes and the paper's settings, on one thread, for comparison. They are not
+  bit-identical runs of upstream's: bodies have the density of water rather than upstream's unit
+  density, and random placements come from another generator. Loading or resetting a scene
+  always plays out the same.
 - `RealityKitSamples`: Apple's RealityKit physics samples ported to SDF bodies, keeping Apple's
   structure and values so that the two can be compared. So far:
   - [Simulating physics with collisions in your visionOS app](https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app),
@@ -107,7 +110,8 @@ Apple M1, release, 240 steps at 60 Hz with 4 substeps. Times vary by up to about
 
 - **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, so the same bodies
   and inputs give bit-identical results whatever the number of threads. Turn
-  `isMultithreaded` off to reproduce the paper's engine exactly.
+  `isMultithreaded` off for upstream's single random sequence; at default settings our solver
+  then takes the same steps as upstream's (`SolverReferenceTests`).
 - **Threads.** The simulation steps on the main actor; its collision detection runs on several
   threads, and baking in the background.
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies do not collide with each

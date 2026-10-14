@@ -53,8 +53,8 @@ public struct SDFSimulationComponent: Component {
     /// Runs the collision detection of different pairs on several threads, which makes scenes of
     /// many concave bodies several times faster. Each pair then draws its random samples from its
     /// own seeded sequence, so results stay deterministic whatever the number of threads, but
-    /// differ from those of a single thread. On by default; turn it off to reproduce the paper's
-    /// engine exactly.
+    /// differ from those of a single thread. On by default; turn it off for upstream's single random
+    /// sequence.
     public var isMultithreaded: Bool
 
     /// A simulation with the paper's parameters: 60 steps per second of 4 substeps each, with 20

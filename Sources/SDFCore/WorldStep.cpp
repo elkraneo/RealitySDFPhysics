@@ -1,6 +1,6 @@
 // Our solver: upstream's Solver::step (upstream/solver.cpp, MIT, Chris Giles) with the per body
 // options of BodyRecord, collision filtering and contact totals for events. With every option at
-// its default it takes exactly the same steps, which SDFSimulationTests checks against
+// its default it takes exactly the same steps, which SolverReferenceTests checks against
 // sdf_world_step_reference.
 
 #include <algorithm>

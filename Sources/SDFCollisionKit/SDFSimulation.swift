@@ -24,8 +24,11 @@ public final class SDFSimulation {
     private var accumulator: TimeInterval = 0
     /// Impulses for bodies that are created on the next update
     private var pending: [Entity.ID: [(SDFBodyID) -> Void]] = [:]
-    /// Forces added outside the steps, which act during every step of the next update that steps
+    /// Forces added outside the steps since the last update
     private var updatePushes: [Entity.ID: [Push]] = [:]
+    /// The forces that act during every step of an update: per entity, those of the latest update
+    /// they were added before. Kept through updates that take no step, without adding up.
+    private var activePushes: [Entity.ID: [Push]] = [:]
     /// Forces added by event handlers during a step, which act during the next step
     private var stepPushes: [Entity.ID: [Push]] = [:]
     /// Bodies whose forces are set in the engine
@@ -56,12 +59,13 @@ public final class SDFSimulation {
     /// handler of this simulation.
     public func update(root: Entity, deltaTime: TimeInterval) {
         guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
-        sdf_world_set_params(world, settings.engine)
-        metersPerUnit = settings.metersPerUnit
-        let dynamic = synchronize(root: root, deltaTime: deltaTime)
-        guard !settings.isPaused else { return }
+        // Event handlers, including those of contacts that end when bodies are removed, can't step
+        isStepping = true
+        defer { isStepping = false }
+        let dynamic = prepare(root: root, settings: settings, deltaTime: deltaTime)
         let timeStep = TimeInterval(settings.timeStep)
-        accumulator += min(deltaTime, 0.25)
+        guard !settings.isPaused, timeStep > 0, timeStep.isFinite else { return }
+        accumulator += min(max(deltaTime, 0), 0.25)
         var steps = 0
         while accumulator >= timeStep && steps < max(settings.maximumStepsPerFrame, 1) {
             step(root: root, dynamic: dynamic, timeStep: timeStep)
@@ -70,27 +74,40 @@ public final class SDFSimulation {
         }
         // Drop the whole steps a slow frame could not catch up on, keep the fraction
         accumulator = accumulator.truncatingRemainder(dividingBy: timeStep)
-        if steps > 0 { updatePushes = [:] }
+        if steps > 0 { activePushes = [:] }
     }
 
     /// Synchronizes and takes exactly one step, also while paused. Does nothing when called from an
-    /// event handler of this simulation.
+    /// event handler of this simulation, or when the time step isn't positive.
     public func step(root: Entity) {
         guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
-        sdf_world_set_params(world, settings.engine)
-        metersPerUnit = settings.metersPerUnit
-        let timeStep = TimeInterval(settings.timeStep)
-        step(root: root, dynamic: synchronize(root: root, deltaTime: timeStep), timeStep: timeStep)
-        updatePushes = [:]
-    }
-
-    private func step(root: Entity, dynamic: [Entity], timeStep: TimeInterval) {
         isStepping = true
         defer { isStepping = false }
+        let timeStep = TimeInterval(settings.timeStep)
+        let dynamic = prepare(root: root, settings: settings, deltaTime: timeStep)
+        guard timeStep > 0, timeStep.isFinite else { return }
+        step(root: root, dynamic: dynamic, timeStep: timeStep)
+        activePushes = [:]
+    }
+
+    /// Applies the settings, synchronizes the bodies, and takes the forces added since the last
+    /// update. Returns the entities of dynamic bodies.
+    private func prepare(root: Entity, settings: SDFSimulationComponent, deltaTime: TimeInterval) -> [Entity] {
+        sdf_world_set_params(world, settings.engine)
+        metersPerUnit = settings.metersPerUnit
+        let dynamic = synchronize(root: root, deltaTime: deltaTime)
+        // A force added every frame stays the same at any frame rate, or while paused
+        activePushes.merge(updatePushes) { _, new in new }
+        updatePushes = [:]
+        return dynamic
+    }
+
+    /// Takes one step; `isStepping` is set
+    private func step(root: Entity, dynamic: [Entity], timeStep: TimeInterval) {
         send(SDFSimulationEvents.WillSimulate(deltaTime: timeStep, simulationEntity: root))
         let pushes = stepPushes
         stepPushes = [:]
-        applyForces(updatePushes, pushes)
+        applyForces(activePushes, pushes)
         sdf_world_step(world)
         stepCount += 1
         writeBack(dynamic, root: root)
@@ -345,6 +362,7 @@ public final class SDFSimulation {
     /// Removes the forces and torques that have not acted yet
     public func clearForcesAndTorques(of entity: Entity) {
         updatePushes[entity.id] = nil
+        activePushes[entity.id] = nil
         stepPushes[entity.id] = nil
     }
 

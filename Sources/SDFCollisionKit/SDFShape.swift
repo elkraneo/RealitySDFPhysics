@@ -100,8 +100,8 @@ public final class SDFShape: @unchecked Sendable {
     /// a flat face still.
     public var isConvex: Bool { sdf_shape_is_convex(handle) }
 
-    /// Enclosed volume. A dynamic body's default mass is that of this volume of water (1000 per
-    /// unit volume) at its entity's scale.
+    /// Enclosed volume. A dynamic body's default mass is that of this volume of water at its
+    /// entity's scale: 1000 kg per cubic meter, converted with the simulation's `metersPerUnit`.
     public var volume: Float { sdf_shape_volume(handle) }
 
     // MARK: Queries

@@ -14,7 +14,7 @@
 //   its weight, and "Toss all" pulls the other dice into Apple's hexagon around it the same way.
 //   Released dice keep their velocity, plus a random spin.
 // - When the dice are released, the simulation forecasts the roll: an exact copy of it steps
-//   ahead for a few milliseconds of each frame. The engine is deterministic, so the forecast is
+//   ahead for a few milliseconds of each step. The engine is deterministic, so the forecast is
 //   the roll, and the score shows while the dice still roll.
 // - "Max score toss": TabletopKit decides the outcome when a toss starts and makes the dice land
 //   on it. Here, once the forecast knows how each die lands, the die's model is turned by one of
@@ -274,7 +274,7 @@ final class DiceScene {
         var forecastResting = 0, resting = 0
         rollSubscription = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { [unowned self] _ in
             if predicted == nil {
-                // A few milliseconds of each frame, so that the roll stays smooth
+                // A few milliseconds of each step, so that the roll stays smooth
                 let budget = Date().addingTimeInterval(0.004)
                 while Date() < budget && forecastResting < 30 && forecast.stepCount < 3600 {
                     forecast.step()
