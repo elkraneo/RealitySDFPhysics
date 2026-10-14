@@ -96,7 +96,8 @@ public final class SDFSimulation {
 
     private struct Body {
         var id: SDFBodyID
-        var shape: ObjectIdentifier
+        /// Kept alive, so a new shape at the same address is not mistaken for it
+        var shape: SDFShape
         var mode: SDFBodyComponent.Mode
         var scale: Float
         var defaultMass: Float
@@ -133,7 +134,7 @@ public final class SDFSimulation {
         let pose = Pose(of: entity, relativeTo: root)
         let scale = entity.scale(relativeTo: root).x
         let motion = entity.components[SDFMotionComponent.self]
-        guard var body = bodies[entity.id], body.shape == ObjectIdentifier(component.shape), body.mode == component.mode,
+        guard var body = bodies[entity.id], body.shape === component.shape, body.mode == component.mode,
               abs(body.scale - scale) <= 1e-5 * scale
         else {
             removeBody(of: entity.id)
@@ -179,7 +180,7 @@ public final class SDFSimulation {
         if let mass = component.mass { sdf_world_set_body_mass(world, id, mass) }
         sdf_world_set_body_friction(world, id, component.friction)
         if let motion { setVelocity(of: id, motion) }
-        bodies[entity.id] = Body(id: id, shape: ObjectIdentifier(component.shape), mode: component.mode, scale: scale,
+        bodies[entity.id] = Body(id: id, shape: component.shape, mode: component.mode, scale: scale,
                                  defaultMass: defaultMass, mass: component.mass, friction: component.friction,
                                  pose: pose, motion: motion)
         entityIDs[id] = entity.id
