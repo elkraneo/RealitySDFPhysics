@@ -32,25 +32,25 @@ public:
     // threads counts the caller; one means no workers
     explicit WorkerPool(int threads) : count(std::max(1, threads)), arrived(0), generation(0), jobGeneration(0), quit(false)
     {
-        for (int i = 1; i < count; i++)
-            workers.emplace_back([this, i] { work(i); });
+        try
+        {
+            for (int i = 1; i < count; i++)
+                workers.emplace_back([this, i] { work(i); });
+        }
+        catch (...)
+        {
+            stop(); // the threads already started must be joined, or their destructor terminates
+            throw;
+        }
     }
 
-    ~WorkerPool()
-    {
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            quit = true;
-        }
-        wake.notify_all();
-        for (std::thread &worker : workers)
-            worker.join();
-    }
+    ~WorkerPool() { stop(); }
 
     int threads() const { return count; }
 
     // Runs job(thread, threads) on the caller (thread 0) and on every worker, and returns once all
-    // have finished. Jobs can call barrier(), each the same number of times.
+    // have finished. Jobs can call barrier(), each the same number of times, and must not throw:
+    // a throw on one thread leaves the others at the barrier.
     void run(const std::function<void(int, int)> &job)
     {
         if (count == 1)
@@ -99,6 +99,18 @@ private:
     std::atomic<unsigned> generation;
     unsigned jobGeneration;
     bool quit;
+
+    void stop()
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            quit = true;
+        }
+        wake.notify_all();
+        for (std::thread &worker : workers)
+            worker.join();
+        workers.clear();
+    }
 
     // Busy for a while, then gives the core up, in case the thread being waited for was preempted
     static void spin(int spins)

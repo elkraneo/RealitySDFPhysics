@@ -573,7 +573,7 @@ void SDFWorld::step()
             static bool trace = getenv("SDF_SOLVER_TRACE") != nullptr;
             if (trace)
             {
-                static int printed = 0;
+                static std::atomic<int> printed{0};
                 if (printed++ % 120 == 0)
                 {
                     fprintf(stderr, "solver: %zu contacts in %zu groups, %zu in overflow; groups per color:", contacts.size(), groups.size(), overflowGroups);
@@ -583,12 +583,15 @@ void SDFWorld::step()
                 }
             }
 
-            // One thread is enough for a few contacts; the order, and so the result, is the same
+            // One thread is enough for a few contacts; the order, and so the result, is the same.
+            // SDF_SOLVER_THREADS overrides the pool's size, for measurements.
             if (!solverPool)
-                solverPool = std::make_unique<WorkerPool>(WorkerPool::defaultThreads());
+            {
+                static int forcedThreads = getenv("SDF_SOLVER_THREADS") ? atoi(getenv("SDF_SOLVER_THREADS")) : 0;
+                solverPool = std::make_unique<WorkerPool>(forcedThreads > 0 ? forcedThreads : WorkerPool::defaultThreads());
+            }
             WorkerPool &pool = *solverPool;
-            static int forcedThreads = getenv("SDF_SOLVER_THREADS") ? atoi(getenv("SDF_SOLVER_THREADS")) : 0;
-            int threads = contacts.size() < 256 ? 1 : (forcedThreads > 0 ? std::min(forcedThreads, pool.threads()) : pool.threads());
+            int threads = contacts.size() < 256 ? 1 : pool.threads();
             auto job = [&](int thread, int threadCount) {
                 auto forEach = [&](auto &pass) {
                     if (thread == 0)
