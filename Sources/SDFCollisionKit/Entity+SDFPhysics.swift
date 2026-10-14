@@ -29,6 +29,13 @@ public struct SDFPhysics {
         return (component.simulation, root)
     }
 
+    /// Converts a torque or angular impulse, a force times a length, which scales twice: once as a
+    /// direction and once more for the length
+    private func convert(moment: SIMD3<Float>, from referenceEntity: Entity?, to root: Entity) -> SIMD3<Float> {
+        let scale = length(root.convert(direction: [1, 0, 0], from: referenceEntity))
+        return root.convert(direction: moment, from: referenceEntity) * scale
+    }
+
     public func addForce(_ force: SIMD3<Float>, relativeTo referenceEntity: Entity?) {
         guard let (simulation, root) = simulation else { return }
         simulation.addForce(root.convert(direction: force, from: referenceEntity), to: entity)
@@ -42,7 +49,7 @@ public struct SDFPhysics {
 
     public func addTorque(_ torque: SIMD3<Float>, relativeTo referenceEntity: Entity?) {
         guard let (simulation, root) = simulation else { return }
-        simulation.addTorque(root.convert(direction: torque, from: referenceEntity), to: entity)
+        simulation.addTorque(convert(moment: torque, from: referenceEntity, to: root), to: entity)
     }
 
     public func clearForcesAndTorques() {
@@ -56,7 +63,7 @@ public struct SDFPhysics {
 
     public func applyAngularImpulse(_ impulse: SIMD3<Float>, relativeTo referenceEntity: Entity?) {
         guard let (simulation, root) = simulation else { return }
-        simulation.applyAngularImpulse(root.convert(direction: impulse, from: referenceEntity), to: entity)
+        simulation.applyAngularImpulse(convert(moment: impulse, from: referenceEntity, to: root), to: entity)
     }
 
     public func applyImpulse(_ impulse: SIMD3<Float>, at position: SIMD3<Float>, relativeTo referenceEntity: Entity?) {

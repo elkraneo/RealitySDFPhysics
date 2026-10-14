@@ -129,4 +129,29 @@ import simd
         #expect(hit?.entity == box)
         #expect(abs((hit?.distance ?? 0) - 1) < 0.01)
     }
+
+    @Test func angularImpulsesDoNotDependOnTheRootScale() {
+        // The same ball and world space impulse in a root at full scale and at a tenth
+        func spin(rootScale: Float) -> Float {
+            let world = Entity(), root = Entity(), simulation = SDFSimulation()
+            world.addChild(root)
+            root.scale = SIMD3(repeating: rootScale)
+            root.components.set(SDFSimulationComponent(simulation: simulation))
+            let ball = Entity()
+            ball.position = [0, 2, 0]
+            var body = SDFBodyComponent(shape: .sphere(radius: 0.5), massProperties: .init(mass: 1))
+            body.isAffectedByGravity = false
+            ball.components.set(body)
+            ball.components.set(SDFMotionComponent())
+            root.addChild(ball)
+            simulation.step(root: root)
+            // A world space impulse: the ball is 10 times larger in world units at full scale
+            let worldScale = pow(rootScale, 2) // Inertia of a fixed mass grows with the square of size
+            ball.sdfPhysics.applyAngularImpulse([0, worldScale, 0], relativeTo: nil)
+            simulation.step(root: root)
+            return ball.components[SDFMotionComponent.self]!.angularVelocity.y
+        }
+        let full = spin(rootScale: 1), tenth = spin(rootScale: 0.1)
+        #expect(abs(full - tenth) < 1e-3 * abs(full), "full \(full), tenth \(tenth)")
+    }
 }
