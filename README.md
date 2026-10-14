@@ -124,5 +124,7 @@ The reference port of the upstream demo, without the component API, is
 
 ## License
 
-MIT for the upstream engine (see `Sources/SDFCore/upstream/LICENSE`). Please cite the paper when
-using this work.
+MIT (see [LICENSE](LICENSE)). The vendored engine is MIT too, by Chris Giles (see
+`Sources/SDFCore/upstream/LICENSE`), and the dice models of the dice sample are Apple's, under the
+license in `Samples/RealityKitSamples/Dice/Models/LICENSE.txt`. Please cite the paper when using
+this work.
