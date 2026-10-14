@@ -21,7 +21,24 @@ struct SDFShape
     float unitScale = 1;
     Mesh display; // In the caller's frame
     bool watertight = true;
+    float boundingRadius = 0; // Engine frame, about the center of the shape's bounds; encloses the shape
 };
+
+// The radius of a sphere about the center of the bounds that encloses the shape: exact for the
+// round primitives, the half diagonal of the bounds otherwise. The broad phase tests the spheres
+// after the boxes, which rejects pairs that overlap only at the corners of their boxes.
+static float boundingRadius(const Shape &shape)
+{
+    if (auto s = dynamic_cast<const Sphere *>(&shape))
+        return s->radius;
+    if (auto t = dynamic_cast<const Torus *>(&shape))
+        return t->majorRadius + t->minorRadius;
+    if (auto c = dynamic_cast<const Capsule *>(&shape))
+        return c->radius + c->halfLength;
+    if (auto c = dynamic_cast<const Cylinder *>(&shape))
+        return sqrtf(c->radius * c->radius + c->halfHeight * c->halfHeight);
+    return 0.5f * length(size(shape.bounds));
+}
 
 static float3 toFloat3(const float v[3]) { return {v[0], v[1], v[2]}; }
 
@@ -61,6 +78,7 @@ static SDFShape *makeShape(Shape *shape)
     dropUniformCurvatureSeeds(*shape);
     SDFShape *handle = new SDFShape();
     handle->shape = ShapePtr(shape);
+    handle->boundingRadius = boundingRadius(*shape);
     handle->display = shape->mesh;
     return handle;
 }
@@ -169,6 +187,7 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     voxel->convex = voxel->watertight && isConvex(mesh, 5e-3f * extent);
     SDFShape *handle = new SDFShape();
     handle->shape = voxel;
+    handle->boundingRadius = boundingRadius(*voxel);
     handle->center = center(box);
     handle->unitScale = 1.0f / extent;
     handle->watertight = voxel->watertight;
@@ -424,6 +443,7 @@ SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pos
     SDFBodyID id = world->nextID++;
     BodyRecord record;
     record.body = body, record.mode = mode, record.center = shape->center, record.unitScale = shape->unitScale;
+    record.boundingRadius = shape->boundingRadius * body->scale;
     world->records[id] = record;
     world->ids[body] = id;
     body->updateBounds();

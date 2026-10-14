@@ -69,6 +69,12 @@ func applyEnvironment(to settings: inout SDFSimulationComponent) {
     if let samples = environment["SDF_BENCH_SAMPLES"].flatMap({ Int($0) }) {
         settings.collisionDetection.randomSamples = samples
     }
+    if let iterations = environment["SDF_BENCH_ITERATIONS"].flatMap({ Int($0) }) {
+        settings.collisionDetection.maxIterations = iterations
+    }
+    if let cache = environment["SDF_BENCH_CACHE"].flatMap({ Int($0) }) {
+        settings.collisionDetection.cachedSamples = cache
+    }
 }
 
 @MainActor
@@ -316,7 +322,8 @@ if mode == "soak" {
 
 /// Mean milliseconds per step of each phase of the real-time preset, without sleeping
 @MainActor
-func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, solver: Double, engine: Double, step: Double, contacts: Int) {
+func phases(count: Int, isMultithreaded: Bool)
+    -> (collision: Double, solver: Double, engine: Double, step: Double, contacts: Int, pairs: Int, iterations: Int) {
     let root = Entity(), simulation = SDFSimulation()
     var settings = SDFSimulationComponent(simulation: simulation)
     settings.isSleepingEnabled = false
@@ -336,7 +343,7 @@ func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, solver: Do
         entity.components.set(SDFBodyComponent(shape: torus))
         root.addChild(entity)
     }
-    var collision = 0.0, solver = 0.0, engine = 0.0, step = 0.0, contacts = 0
+    var collision = 0.0, solver = 0.0, engine = 0.0, step = 0.0, contacts = 0, pairs = 0, iterations = 0
     for _ in 0..<steps {
         let start = DispatchTime.now().uptimeNanoseconds
         simulation.step(root: root)
@@ -346,18 +353,23 @@ func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, solver: Do
         solver += statistics.solverMilliseconds
         engine += statistics.stepMilliseconds
         contacts += statistics.contacts
+        pairs += statistics.pairs
+        iterations += statistics.optimizerIterations
     }
     let n = Double(steps)
-    return (collision / n, solver / n, engine / n, step / n, contacts / steps)
+    return (collision / n, solver / n, engine / n, step / n, contacts / steps, pairs / steps, iterations / steps)
 }
 
 if mode == "phases" {
     print("ms/step, mean over \(steps) steps: real-time preset without sleeping. Collision is the narrow phase, solver the")
     print("contact solver; the rest of the engine is the broad phase and integration; Swift is the synchronization.")
-    print("tori   contacts   collision (threads / one)   solver   rest of engine   Swift   step")
+    print("Pairs and contacts are those of the last substep; iterations are the optimizer's, per pair and substep.")
+    print("tori   pairs   contacts   iterations   collision (threads / one)   solver   rest of engine   Swift   step")
     for count in countArguments.isEmpty ? [100, 400, 800] : countArguments {
         let multi = phases(count: count, isMultithreaded: true), single = phases(count: count, isMultithreaded: false)
-        print(String(format: "%4d   %8d   %8.2f / %8.2f   %6.2f   %8.2f   %6.2f   %6.2f", count, multi.contacts,
+        let substeps = Double(SDFSimulationComponent().substeps)
+        print(String(format: "%4d   %5d   %8d   %10.1f   %8.2f / %8.2f   %6.2f   %8.2f   %6.2f   %6.2f", count,
+                     multi.pairs, multi.contacts, Double(multi.iterations) / Double(max(1, multi.pairs)) / substeps,
                      multi.collision, single.collision, multi.solver, multi.engine - multi.collision - multi.solver,
                      multi.step - multi.engine, multi.step))
     }

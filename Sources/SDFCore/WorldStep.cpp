@@ -141,6 +141,20 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](int a, int b) { return s.bodies[a]->bounds.min.x < s.bodies[b]->bounds.min.x; });
 
+    // Bounding spheres, tested after the boxes: a box and a sphere each enclose the shape, and a
+    // pair must pass both. The spheres reject pairs whose boxes overlap only at their corners.
+    // Only with threads: there every pair draws its own random samples, so a pair fewer changes
+    // nothing for the others, whereas the reference path draws them from one sequence.
+    std::vector<float3> sphereCenter(world.parallel ? s.bodies.size() : 0);
+    for (size_t i = 0; i < sphereCenter.size(); i++)
+        sphereCenter[i] = s.bodies[i]->toWorld(center(s.bodies[i]->shape->bounds));
+    auto spheresOverlap = [&](int a, int b) {
+        if (sphereCenter.empty())
+            return true;
+        float reach = movers[a].record->boundingRadius + movers[b].record->boundingRadius + 2 * r;
+        return lengthSq(sphereCenter[a] - sphereCenter[b]) <= reach * reach;
+    };
+
     std::vector<std::pair<int, int>> overlapping;
     for (size_t i = 0; i < order.size(); i++)
     {
@@ -151,7 +165,8 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
 
             std::pair<int, int> key = std::minmax(order[i], order[j]);
             if (shouldCollide(*movers[key.first].record, *movers[key.second].record, world.pairOptions) &&
-                overlaps(expand(s.bodies[key.first]->bounds, r), expand(s.bodies[key.second]->bounds, r)))
+                overlaps(expand(s.bodies[key.first]->bounds, r), expand(s.bodies[key.second]->bounds, r)) &&
+                spheresOverlap(key.first, key.second))
                 overlapping.push_back(key);
         }
     }

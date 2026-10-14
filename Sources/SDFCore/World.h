@@ -18,6 +18,7 @@ struct BodyRecord
     SDFBodyMode mode;
     float3 center;      // Of the shape, see SDFShape in SDFCore.cpp
     float unitScale;
+    float boundingRadius = 0; // World space, about the center of the body's local bounds
 
     float staticFriction = 0.5f, dynamicFriction = 0.5f, restitution = 0;
     float linearDamping = 0.05f, angularDamping = 0.3f;

@@ -48,8 +48,12 @@ cheap to begin with.
 - Lower ``SDFSimulationComponent/substeps`` and the solver iterations for scenes that don't stack.
 - Bake each mesh once and share the shape.
 - Keep ``SDFSimulationComponent/isSleepingEnabled`` on. In a box of tori, a pile of 400 asleep
-  takes 1.7 ms a step on an M1, against about 15 ms awake. While every body is asleep or static,
+  takes 1.7 ms a step on an M1, against about 10 ms awake. While every body is asleep or static,
   the broad phase and the collision detection are skipped.
+- Keep ``SDFSimulationComponent/isMultithreaded`` on. Besides the threads, it lets the broad phase
+  test bounding spheres after the boxes, which rejects more than half of the pairs of a pile of
+  tori before the narrow phase. (The single-threaded path keeps the reference's pairs, since
+  there every pair draws from one random sequence.)
 - Curvature sampling (``SDFCollisionDetection/usesCurvatureSampling``) scans a shape's seed
   points for every random sample. The package drops the seeds of shapes whose whole surface is
   high curvature, such as tori and capsules, where they add nothing over uniform samples; shapes
