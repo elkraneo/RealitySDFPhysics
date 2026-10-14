@@ -116,7 +116,7 @@ func renderDemos(_ recorder: Recorder) async throws {
         let scene = DemoScene.all[item.scene]
         let simulation = SDFSimulation()
         let root = Entity()
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))
         try await scene.load(into: root)
         if item.contacts { root.addChild(ContactMarkers.makeEntity()) }
 

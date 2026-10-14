@@ -40,7 +40,7 @@ do {
         let scene = DemoScene.all[index]
         let simulation = SDFSimulation()
         let root = Entity()
-        var settings = SDFSimulationComponent(simulation: simulation)
+        var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
         settings.isMultithreaded = isMultithreaded
         root.components.set(settings)
 

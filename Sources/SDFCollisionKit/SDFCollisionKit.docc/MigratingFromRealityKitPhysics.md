@@ -51,8 +51,9 @@ RealityKit physics bodies don't collide with each other, so give each entity one
 - **Object size.** RealityKit's physics works for objects of any size in meters. Here the
   collision tolerances suit objects about 1 unit across: model small or large objects at about
   that size in a scaled root, and set ``SDFSimulationComponent/metersPerUnit``.
-- **Defaults.** The defaults are the paper's: 60 steps per second of 4 substeps each, 20 velocity
-  and 20 position iterations, friction 0.5, no restitution, linear damping 0.05 and angular
+- **Defaults.** 60 steps per second of 2 substeps each, 10 velocity and 4 position iterations
+  (``SDFSimulationComponent/Preset/realTime``; ``SDFSimulationComponent/Preset/paper`` has the
+  paper's 4 substeps and 20 and 20 iterations), friction 0.5, no restitution, linear damping 0.05 and angular
   damping 0.3 per second, and the mass of the shape's volume of water.
 - **Material combination.** A contact's friction is the geometric mean of the two bodies'
   coefficients, and its restitution the larger of the two. Contacts approaching slower than

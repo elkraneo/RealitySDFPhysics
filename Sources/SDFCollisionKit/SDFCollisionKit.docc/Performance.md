@@ -16,7 +16,9 @@ thread's, which follows upstream's single random sequence.
 ## Measurements
 
 The demo scenes of the paper, rebuilt on this package, on an Apple M1 (4 performance and 4
-efficiency cores) in a release build: 240 steps at 60 steps per second with 4 substeps each. Times
+efficiency cores) in a release build: 240 steps at 60 steps per second with the paper's settings
+(``SDFSimulationComponent/Preset/paper``: 4 substeps of 20 and 20 iterations). The default
+``SDFSimulationComponent/Preset/realTime`` costs about half as much. Times
 vary by up to about 20% from run to run on the same machine; run
 `swift run -c release sdf-snapshot out/` to measure yours, and add `--single-threaded` for the
 other column.

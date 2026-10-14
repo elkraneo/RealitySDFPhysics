@@ -48,7 +48,7 @@ let walls: [(center: SIMD3<Float>, halfExtents: SIMD3<Float>)] = [
 @MainActor
 func timeSDF(count: Int, isMultithreaded: Bool) -> (mean: Double, worst: Double, check: String) {
     let root = Entity(), simulation = SDFSimulation()
-    var settings = SDFSimulationComponent(simulation: simulation)
+    var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
     settings.isMultithreaded = isMultithreaded
     root.components.set(settings)
     for wall in walls {

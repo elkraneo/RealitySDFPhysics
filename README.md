@@ -93,7 +93,10 @@ swift test
 
 Use release builds: debug builds of the engine are several times slower.
 
-Apple M1, release, 240 steps at 60 Hz with 4 substeps. Times vary by up to about 20% between runs.
+Apple M1, release, 240 steps at 60 Hz with the paper's settings (`preset: .paper`: 4 substeps of
+20 velocity and 20 position iterations). The default, `.realTime` (2 substeps of 10 and 4), costs
+about half as much and still settles piles of 400 tori without overlap (`sdf-bench quality`). Times
+vary by up to about 20% between runs.
 
 | Scene | Bodies | Step ms, multithreaded | Step ms, one thread |
 | --- | ---: | ---: | ---: |

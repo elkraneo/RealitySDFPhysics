@@ -50,7 +50,7 @@ final class DemoModel {
 
     /// The paper's settings on one thread, as in the upstream demo
     private static func paperSettings(_ simulation: SDFSimulation) -> SDFSimulationComponent {
-        var settings = SDFSimulationComponent(simulation: simulation)
+        var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
         settings.isMultithreaded = false
         return settings
     }

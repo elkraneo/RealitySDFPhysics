@@ -57,24 +57,40 @@ public struct SDFSimulationComponent: Component {
     /// sequence.
     public var isMultithreaded: Bool
 
-    /// A simulation with the paper's parameters: 60 steps per second of 4 substeps each, with 20
-    /// velocity and 20 position iterations, and Earth's gravity. Collision detection is
-    /// multithreaded.
+    /// The substeps and solver iterations a simulation starts from
+    public enum Preset: Sendable {
+        /// 2 substeps of 10 velocity and 4 position iterations: piles of hundreds of concave
+        /// bodies settle without overlap, at about half the paper's cost. The default.
+        case realTime
+        /// The paper's: 4 substeps of 20 velocity and 20 position iterations, to reproduce its
+        /// results, and for small, fast bodies that need more substeps
+        case paper
+    }
+
+    /// A simulation of 60 steps per second, with the preset's substeps and solver iterations, the
+    /// paper's collision detection, and Earth's gravity. Collision detection is multithreaded.
     ///
     /// - Parameters:
     ///   - simulation: The simulation, for example one you keep to query and subscribe to
     ///   - metersPerUnit: The length of a unit of the root, in meters
+    ///   - preset: The substeps and solver iterations
     @MainActor
-    public init(simulation: SDFSimulation = SDFSimulation(), metersPerUnit: Float = 1) {
+    public init(simulation: SDFSimulation = SDFSimulation(), metersPerUnit: Float = 1, preset: Preset = .realTime) {
         _ = registration
         self.simulation = simulation
         self.metersPerUnit = metersPerUnit > 0 && metersPerUnit.isFinite ? metersPerUnit : 1
         let p = sdf_default_params()
         gravity = SIMD3(p.gravity.0, p.gravity.1, p.gravity.2) / self.metersPerUnit
-        solverIterations = .init(positionIterations: Int(p.positionIterations), velocityIterations: Int(p.velocityIterations))
+        switch preset {
+        case .realTime:
+            solverIterations = .init(positionIterations: 4, velocityIterations: 10)
+            substeps = 2
+        case .paper:
+            solverIterations = .init(positionIterations: Int(p.positionIterations), velocityIterations: Int(p.velocityIterations))
+            substeps = Int(p.substeps)
+        }
         collisionOptions = .none
         timeStep = p.timeStep
-        substeps = Int(p.substeps)
         maximumStepsPerFrame = 4
         isPaused = false
         restitutionThreshold = p.restitutionThreshold / self.metersPerUnit
