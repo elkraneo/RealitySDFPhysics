@@ -10,9 +10,10 @@ public protocol SDFSimulationEvent {
     @MainActor func involves(_ entity: Entity) -> Bool
 }
 
-/// Contact events between bodies, sent after the step that made them. The counterparts of
-/// `CollisionEvents`. Pairs without a dynamic body get them only when the simulation's
-/// `collisionOptions` include them.
+/// Contact events between bodies, sent after the step that made them. A pair is in contact for a
+/// step when it touched in any of the step's substeps. The counterparts of `CollisionEvents`.
+/// Pairs without a dynamic body get them only when the simulation's `collisionOptions` include
+/// them.
 public enum SDFCollisionEvents {
     /// Two bodies came into contact
     public struct Began: SDFSimulationEvent {
@@ -85,6 +86,7 @@ extension SDFSimulation {
     public func subscribe<Event: SDFSimulationEvent>(to event: Event.Type, on entity: Entity? = nil,
                                                     _ handler: @escaping @MainActor (Event) -> Void) -> AnyCancellable {
         let subscription = EventRouter.Subscription()
+        events.removeCancelled()
         events.add(Event.self, subscription) { event in
             guard let event = event as? Event, entity.map({ event.involves($0) }) ?? true else { return }
             handler(event)
@@ -94,6 +96,7 @@ extension SDFSimulation {
 
     /// Sends an event to its handlers, which may subscribe and cancel while it is sent
     func send<Event: SDFSimulationEvent>(_ event: Event) {
+        events.removeCancelled(Event.self)
         let router = events
         router.send(event)
     }
@@ -108,8 +111,10 @@ extension SDFSimulation {
             || events.hasHandlers(for: SDFCollisionEvents.Updated.self)
         let contactsByPair = wantsContacts ? Dictionary(grouping: self.contacts()) { PairKey($0.entityA, $0.entityB) } : [:]
 
+        // The new state is in place before any handler runs
         var previous = touching
-        touching = [:]
+        var current: [PairKey: (entityA: Entity, entityB: Entity)] = [:]
+        var updates: [any SDFSimulationEvent] = []
         for pair in pairs {
             guard let a = entity(of: pair.bodyA), let b = entity(of: pair.bodyB) else { continue }
             let key = PairKey(a.id, b.id)
@@ -117,15 +122,19 @@ extension SDFSimulation {
             let direction = SIMD3(pair.impulseDirection.0, pair.impulseDirection.1, pair.impulseDirection.2)
             let pairContacts = contactsByPair[key] ?? []
             if previous.removeValue(forKey: key) != nil {
-                send(SDFCollisionEvents.Updated(entityA: a, entityB: b, position: position, impulse: pair.impulse,
-                                                       impulseDirection: direction, penetrationDistance: pair.penetration,
-                                                       contacts: pairContacts))
+                updates.append(SDFCollisionEvents.Updated(entityA: a, entityB: b, position: position, impulse: pair.impulse,
+                                                          impulseDirection: direction, penetrationDistance: pair.penetration,
+                                                          contacts: pairContacts))
             } else {
-                send(SDFCollisionEvents.Began(entityA: a, entityB: b, position: position, impulse: pair.impulse,
-                                                     impulseDirection: direction, penetrationDistance: pair.penetration,
-                                                     contacts: pairContacts))
+                updates.append(SDFCollisionEvents.Began(entityA: a, entityB: b, position: position, impulse: pair.impulse,
+                                                        impulseDirection: direction, penetrationDistance: pair.penetration,
+                                                        contacts: pairContacts))
             }
-            touching[key] = (a, b)
+            current[key] = (a, b)
+        }
+        touching = current
+        for event in updates {
+            send(event)
         }
         for (a, b) in previous.values {
             send(SDFCollisionEvents.Ended(entityA: a, entityB: b))
@@ -172,8 +181,19 @@ struct EventRouter {
     }
 
     mutating func hasHandlers<Event: SDFSimulationEvent>(for type: Event.Type) -> Bool {
-        handlers[ObjectIdentifier(type)]?.removeAll { !$0.subscription.isActive }
+        removeCancelled(type)
         return handlers[ObjectIdentifier(type)]?.isEmpty == false
+    }
+
+    /// Releases the handlers of cancelled subscriptions to events of a type, or of all types
+    mutating func removeCancelled<Event: SDFSimulationEvent>(_ type: Event.Type) {
+        handlers[ObjectIdentifier(type)]?.removeAll { !$0.subscription.isActive }
+    }
+
+    mutating func removeCancelled() {
+        for key in handlers.keys {
+            handlers[key]?.removeAll { !$0.subscription.isActive }
+        }
     }
 
     func send<Event: SDFSimulationEvent>(_ event: Event) {

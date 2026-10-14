@@ -525,11 +525,18 @@ int32_t sdf_world_raycast(SDFWorld *world, const float origin[3], const float di
     {
         if (!(world->record(body.get()).group & mask))
             continue;
-        // Clip the ray against the bounding box, then sphere trace the SDF, as upstream's picking
+        // Clip the ray against the bounding box, then sphere trace the SDF, like upstream's picking
         body->updateBounds();
         float t0 = 0, t1 = length;
         for (int i = 0; i < 3; i++)
         {
+            if (d[i] == 0)
+            {
+                // Parallel to the slab: inside it all along, or never
+                if (o[i] < body->bounds.min[i] || o[i] > body->bounds.max[i])
+                    t1 = -1;
+                continue;
+            }
             float inv = 1.0f / d[i];
             float a = (body->bounds.min[i] - o[i]) * inv, b = (body->bounds.max[i] - o[i]) * inv;
             t0 = max(t0, min(a, b)), t1 = min(t1, max(a, b));

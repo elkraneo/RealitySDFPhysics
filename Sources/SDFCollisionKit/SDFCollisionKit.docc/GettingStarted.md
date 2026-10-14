@@ -78,8 +78,10 @@ ball.sdfPhysics.applyLinearImpulse([0, 3, 0], relativeTo: nil)
 wheel.sdfPhysics.addTorque([0, 0, -20], relativeTo: wheel)
 ```
 
-Forces act during the next simulation update and are then cleared, so add them every frame for a
-continuous push, for example from a handler of ``SDFSimulationEvents/WillSimulate``.
+A force added from your own code acts during every step of the next simulation update, and is
+then cleared. A force added from a handler of the simulation's events acts during the next step,
+so for a continuous push, add it before every step from a handler of
+``SDFSimulationEvents/WillSimulate``.
 
 ## React to contacts
 

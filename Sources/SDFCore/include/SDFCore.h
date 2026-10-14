@@ -215,17 +215,17 @@ typedef struct
 // Writes min(capacity, count) active contacts of the last substep, returns their count
 int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t capacity);
 
-// A pair of bodies in contact after the last step
+// A pair of bodies in contact in any substep of the last step
 typedef struct
 {
     SDFBodyID bodyA, bodyB;
-    float position[3];           // Deepest contact point
-    float penetration;           // Of the deepest contact, negative while within the margin
+    float position[3];           // Deepest contact point, in the last substep with contacts
+    float penetration;           // Of that contact, negative while within the margin
     float impulse;               // Normal impulse over the step, from A to B
     float impulseDirection[3];
 } SDFPair;
 
-// Writes min(capacity, count) touching pairs of the last step, returns their count
+// Writes min(capacity, count) pairs of the last step, ordered by body, returns their count
 int32_t sdf_world_pairs(const SDFWorld *world, SDFPair *pairs, int32_t capacity);
 
 // MARK: Queries

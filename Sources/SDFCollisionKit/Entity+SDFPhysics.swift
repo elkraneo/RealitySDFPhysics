@@ -14,9 +14,10 @@ extension Entity {
 /// The forces and impulses of an entity's SDF body. Vectors and points are in the space of
 /// `referenceEntity`, or world space when it is nil, as in RealityKit.
 ///
-/// Forces and torques act during the next simulation update and are then cleared. Impulses change
-/// the velocities immediately. Both apply to dynamic bodies only, and are kept for a body that
-/// is created on the next update.
+/// A force or torque added from your own code acts during every step of the next simulation
+/// update; one added from a handler of the simulation's events acts during the next step. Forces
+/// are then cleared. Impulses change the velocities immediately, or on the next update for a body
+/// that is created then. Both apply to dynamic bodies only.
 @MainActor
 public struct SDFPhysics {
     public let entity: Entity

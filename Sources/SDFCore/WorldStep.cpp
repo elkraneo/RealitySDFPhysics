@@ -123,8 +123,8 @@ void SDFWorld::step()
     for (size_t i = 0; i < s.bodies.size(); i++)
         movers[i] = {s.bodies[i].get(), &record(s.bodies[i].get())};
 
-    // Impulse totals of the pairs over the substeps, by body index
-    std::map<std::pair<int, int>, std::pair<float, float3>> impulses;
+    // Pairs in contact in any substep, with their impulses over the step
+    std::map<std::pair<SDFBodyID, SDFBodyID>, PairRecord> touched;
 
     for (int substep = 0; substep < s.substeps; substep++)
     {
@@ -208,6 +208,26 @@ void SDFWorld::step()
         }
         s.stats.milliseconds += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
+        // Record the pairs in contact, with their deepest point in the latest substep they touched
+        for (auto &entry : s.manifolds)
+        {
+            const Manifold &m = entry.second;
+            PairRecord *pair = nullptr;
+            for (const ContactPoint &p : m.points)
+            {
+                if (!p.active)
+                    continue;
+                if (!pair)
+                {
+                    pair = &touched[{ids.at(m.bodyA), ids.at(m.bodyB)}];
+                    pair->bodyA = ids.at(m.bodyA), pair->bodyB = ids.at(m.bodyB);
+                    pair->penetration = -p.separation, pair->position = p.x;
+                }
+                else if (-p.separation > pair->penetration)
+                    pair->penetration = -p.separation, pair->position = p.x;
+            }
+        }
+
         // External forces
         for (Mover &m : movers)
         {
@@ -272,7 +292,6 @@ void SDFWorld::step()
                 c.staticFriction = sqrtf(a.record->staticFriction * b.record->staticFriction);
                 c.dynamicFriction = sqrtf(a.record->dynamicFriction * b.record->dynamicFriction);
                 c.restitution = max(a.record->restitution, b.record->restitution);
-                c.relativeVelocity = dot(m.bodyB->pointVelocity(p.x) - m.bodyA->pointVelocity(p.x), c.normal);
 
                 // The contact margin is a skin that keeps the bodies apart. Its penetration is
                 // measured with the separation, the full gap (or overlap) of the surfaces. Within
@@ -285,11 +304,19 @@ void SDFWorld::step()
                 c.normalImpulse = p.normalImpulse;
                 c.tangentImpulse[0] = dot(p.frictionImpulse, c.tangent[0]);
                 c.tangentImpulse[1] = dot(p.frictionImpulse, c.tangent[1]);
-                float3 impulse = c.normal * c.normalImpulse + c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
-                a.applyImpulse(c.rA, -impulse);
-                b.applyImpulse(c.rB, impulse);
                 contacts.push_back(c);
             }
+        }
+
+        // Approach velocities before any warm start, for restitution
+        for (Contact &c : contacts)
+            c.relativeVelocity = dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
+
+        for (Contact &c : contacts)
+        {
+            float3 impulse = c.normal * c.normalImpulse + c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
+            c.a->applyImpulse(c.rA, -impulse);
+            c.b->applyImpulse(c.rB, impulse);
         }
 
         // Sequential impulses (projected Gauss-Seidel)
@@ -343,9 +370,9 @@ void SDFWorld::step()
         {
             c.point->normalImpulse = c.normalImpulse;
             c.point->frictionImpulse = c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
-            auto &total = impulses[{(int)(c.a - movers.data()), (int)(c.b - movers.data())}];
-            total.first += c.normalImpulse;
-            total.second += c.normal * c.normalImpulse;
+            PairRecord &pair = touched[{ids.at(c.bodyA), ids.at(c.bodyB)}];
+            pair.impulse += c.normalImpulse;
+            pair.impulseVector += c.normal * c.normalImpulse;
         }
 
         // Baumgarte stabilization with split impulses: v_n + bias >= 0 is solved for pseudo
@@ -380,26 +407,7 @@ void SDFWorld::step()
         }
     }
 
-    // Pairs touching after the last substep, with their impulses over the step
     pairs.clear();
-    for (auto &entry : s.manifolds)
-    {
-        const Manifold &m = entry.second;
-        PairRecord pair = {ids.at(m.bodyA), ids.at(m.bodyB)};
-        bool touching = false;
-        for (const ContactPoint &p : m.points)
-        {
-            if (!p.active)
-                continue;
-            if (!touching || -p.separation > pair.penetration)
-                pair.penetration = -p.separation, pair.position = p.x;
-            touching = true;
-        }
-        if (!touching)
-            continue;
-        auto total = impulses.find(entry.first);
-        if (total != impulses.end())
-            pair.impulse = total->second.first, pair.impulseVector = total->second.second;
-        pairs.push_back(pair);
-    }
+    for (auto &entry : touched)
+        pairs.push_back(entry.second);
 }

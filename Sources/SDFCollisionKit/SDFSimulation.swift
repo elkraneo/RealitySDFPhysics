@@ -22,10 +22,15 @@ public final class SDFSimulation {
     private var bodies: [Entity.ID: Body] = [:]
     private var entities: [SDFBodyID: Entity] = [:]
     private var accumulator: TimeInterval = 0
-    /// Work for bodies that are created on the next update
+    /// Impulses for bodies that are created on the next update
     private var pending: [Entity.ID: [(SDFBodyID) -> Void]] = [:]
-    /// Bodies with forces, which are cleared after the next update that steps
+    /// Forces added outside the steps, which act during every step of the next update that steps
+    private var updatePushes: [Entity.ID: [Push]] = [:]
+    /// Forces added by event handlers during a step, which act during the next step
+    private var stepPushes: [Entity.ID: [Push]] = [:]
+    /// Bodies whose forces are set in the engine
     private var forced: Set<SDFBodyID> = []
+    private var isStepping = false
     var events = EventRouter()
     /// Pairs touching after the last step
     var touching: [PairKey: (entityA: Entity, entityB: Entity)] = [:]
@@ -45,9 +50,10 @@ public final class SDFSimulation {
     // MARK: Stepping
 
     /// Synchronizes the bodies with the root's descendants and advances by real time in fixed
-    /// steps. `SDFSimulationSystem` calls this every frame.
+    /// steps. `SDFSimulationSystem` calls this every frame. Does nothing when called from an event
+    /// handler of this simulation.
     public func update(root: Entity, deltaTime: TimeInterval) {
-        guard let settings = root.components[SDFSimulationComponent.self] else { return }
+        guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
         sdf_world_set_params(world, settings.engine)
         let dynamic = synchronize(root: root, deltaTime: deltaTime)
         guard !settings.isPaused else { return }
@@ -61,20 +67,26 @@ public final class SDFSimulation {
         }
         // Drop the whole steps a slow frame could not catch up on, keep the fraction
         accumulator = accumulator.truncatingRemainder(dividingBy: timeStep)
-        if steps > 0 { clearForces() }
+        if steps > 0 { updatePushes = [:] }
     }
 
-    /// Synchronizes and takes exactly one step, also while paused
+    /// Synchronizes and takes exactly one step, also while paused. Does nothing when called from an
+    /// event handler of this simulation.
     public func step(root: Entity) {
-        guard let settings = root.components[SDFSimulationComponent.self] else { return }
+        guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
         sdf_world_set_params(world, settings.engine)
         let timeStep = TimeInterval(settings.timeStep)
         step(root: root, dynamic: synchronize(root: root, deltaTime: timeStep), timeStep: timeStep)
-        clearForces()
+        updatePushes = [:]
     }
 
     private func step(root: Entity, dynamic: [Entity], timeStep: TimeInterval) {
+        isStepping = true
+        defer { isStepping = false }
         send(SDFSimulationEvents.WillSimulate(deltaTime: timeStep, simulationEntity: root))
+        let pushes = stepPushes
+        stepPushes = [:]
+        applyForces(updatePushes, pushes)
         sdf_world_step(world)
         stepCount += 1
         writeBack(dynamic, root: root)
@@ -141,11 +153,11 @@ public final class SDFSimulation {
         for entityID in bodies.keys where !attached.contains(entityID) {
             removeBody(of: entityID)
         }
+        // Work for bodies that were to be created now; that of entities without a body is dropped
         for (entityID, work) in pending {
-            guard let id = bodies[entityID]?.id else { continue }
-            work.forEach { $0(id) }
-            pending[entityID] = nil
+            if let id = bodies[entityID]?.id { work.forEach { $0(id) } }
         }
+        pending.removeAll()
         return dynamic
     }
 
@@ -265,36 +277,56 @@ public final class SDFSimulation {
         }
     }
 
-    /// Adds a force (in the root's frame) at the center of mass, or at a point, which acts during
-    /// the next update. Forces add up until then.
-    public func addForce(_ force: SIMD3<Float>, at point: SIMD3<Float>? = nil, to entity: Entity) {
-        withBody(of: entity) { [unowned self] id in
-            if let point {
-                sdf_world_add_body_force(world, id, [force.x, force.y, force.z], [point.x, point.y, point.z])
-            } else {
-                sdf_world_add_body_force(world, id, [force.x, force.y, force.z], nil)
+    /// A force at the center of mass or at a point, or a torque, in the root's frame
+    private struct Push {
+        var force: SIMD3<Float> = .zero
+        var point: SIMD3<Float>?
+        var torque: SIMD3<Float> = .zero
+    }
+
+    private func add(_ push: Push, to entity: Entity) {
+        if isStepping {
+            stepPushes[entity.id, default: []].append(push)
+        } else {
+            updatePushes[entity.id, default: []].append(push)
+        }
+    }
+
+    /// Sets the engine's forces for the next step
+    private func applyForces(_ pushes: [Entity.ID: [Push]]...) {
+        for id in forced { sdf_world_clear_body_forces(world, id) }
+        forced.removeAll()
+        for (entityID, list) in pushes.joined() {
+            guard let id = bodies[entityID]?.id else { continue }
+            for push in list {
+                let f = push.force, t = push.torque
+                if let p = push.point {
+                    sdf_world_add_body_force(world, id, [f.x, f.y, f.z], [p.x, p.y, p.z])
+                } else {
+                    sdf_world_add_body_force(world, id, [f.x, f.y, f.z], nil)
+                }
+                sdf_world_add_body_torque(world, id, [t.x, t.y, t.z])
             }
             forced.insert(id)
         }
     }
 
-    /// Adds a torque (in the root's frame), which acts during the next update
+    /// Adds a force (in the root's frame) at the center of mass, or at a point. A force added from
+    /// an event handler of this simulation acts during the next step; otherwise during every step
+    /// of the next update. Forces add up.
+    public func addForce(_ force: SIMD3<Float>, at point: SIMD3<Float>? = nil, to entity: Entity) {
+        add(Push(force: force, point: point), to: entity)
+    }
+
+    /// Adds a torque (in the root's frame), which acts like a force added at the same time
     public func addTorque(_ torque: SIMD3<Float>, to entity: Entity) {
-        withBody(of: entity) { [unowned self] id in
-            sdf_world_add_body_torque(world, id, [torque.x, torque.y, torque.z])
-            forced.insert(id)
-        }
+        add(Push(torque: torque), to: entity)
     }
 
-    /// Removes the forces and torques added since the last update
+    /// Removes the forces and torques that have not acted yet
     public func clearForcesAndTorques(of entity: Entity) {
-        pending[entity.id] = nil
-        if let id = bodies[entity.id]?.id { sdf_world_clear_body_forces(world, id) }
-    }
-
-    private func clearForces() {
-        for id in forced { sdf_world_clear_body_forces(world, id) }
-        forced.removeAll()
+        updatePushes[entity.id] = nil
+        stepPushes[entity.id] = nil
     }
 
     /// Changes a dynamic body's velocity by an impulse (in the root's frame) at its center of mass,

@@ -30,7 +30,7 @@ struct BodyRecord
     bool locked() const { return min(min(linearMask.x, linearMask.y), min(linearMask.z, min(min(angularMask.x, angularMask.y), angularMask.z))) < 1; }
 };
 
-// Contact totals of a touching pair over the last step, for collision events
+// A pair in contact in any substep of the last step, with totals for collision events
 struct PairRecord
 {
     SDFBodyID bodyA, bodyB;

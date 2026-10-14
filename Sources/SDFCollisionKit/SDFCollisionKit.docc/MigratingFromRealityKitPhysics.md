@@ -58,7 +58,9 @@ RealityKit physics bodies don't collide with each other, so give each entity one
   density; you set the mass or the density.
 - **Scale.** Bodies scale with their entities, but the scale must be uniform.
 - **Events.** Events are delivered while the simulation steps, after the entities have their new
-  poses. `Began` and `Updated` carry the step's total normal impulse and the contacts; `impulse`
-  is a sum over the substeps of the step.
+  poses. A pair is in contact for a step when it touched in any of the step's substeps. `Began`
+  and `Updated` carry the step's total normal impulse, summed over the substeps, and the contacts
+  of the last substep. Handlers can't step the simulation: `update` and `step` do nothing when
+  called from them.
 - **Not yet available:** joints, continuous collision detection (fast thin bodies can pass
   through others), sleeping, sweeps of a shape along a path, and the simulation `clock`.
