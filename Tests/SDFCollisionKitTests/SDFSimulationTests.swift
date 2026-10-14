@@ -129,6 +129,17 @@ import simd
         #expect(simulation.mass(of: box) == 5)
     }
 
+    @Test func presetsSetSubstepsAndIterations() {
+        let realTime = SDFSimulationComponent()
+        #expect(realTime.substeps == 2)
+        #expect(realTime.solverIterations.velocityIterations == 10)
+        #expect(realTime.solverIterations.positionIterations == 4)
+        let paper = SDFSimulationComponent(preset: .paper)
+        #expect(paper.substeps == 4)
+        #expect(paper.solverIterations.velocityIterations == 20)
+        #expect(paper.solverIterations.positionIterations == 20)
+    }
+
     @Test(arguments: [false, true])
     func simulationIsDeterministic(isMultithreaded: Bool) {
         func pile() -> [SIMD3<Float>] {

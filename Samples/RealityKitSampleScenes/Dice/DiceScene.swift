@@ -141,7 +141,7 @@ package final class DiceScene {
     private func makeRoot(bodies: [(entity: Entity, component: SDFBodyComponent, motion: SDFMotionComponent?)]) -> Entity {
         let root = Entity()
         root.scale = SIMD3(repeating: 0.01)
-        var settings = SDFSimulationComponent(metersPerUnit: 0.01)
+        var settings = SDFSimulationComponent(metersPerUnit: 0.01, preset: .paper)
         // Dice bounce from slower approaches than the default 1 m/s
         settings.restitutionThreshold = 10
         root.components.set(settings)

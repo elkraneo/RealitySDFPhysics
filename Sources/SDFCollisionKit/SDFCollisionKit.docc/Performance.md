@@ -16,7 +16,9 @@ thread's, which follows upstream's single random sequence.
 ## Measurements
 
 The demo scenes of the paper, rebuilt on this package, on an Apple M1 (4 performance and 4
-efficiency cores) in a release build: 240 steps at 60 steps per second with 4 substeps each. Times
+efficiency cores) in a release build: 240 steps at 60 steps per second with the paper's settings
+(``SDFSimulationComponent/Preset/paper``: 4 substeps of 20 and 20 iterations). The default
+``SDFSimulationComponent/Preset/realTime`` costs about half as much. Times
 vary by up to about 20% from run to run on the same machine; run
 `swift run -c release sdf-snapshot out/` to measure yours, and add `--single-threaded` for the
 other column.
@@ -42,12 +44,14 @@ cheap to begin with.
 - Separate bodies that never touch with collision filters, so their pairs are skipped.
 - Lower ``SDFSimulationComponent/substeps`` and the solver iterations for scenes that don't stack.
 - Bake each mesh once and share the shape.
+- Keep ``SDFSimulationComponent/isSleepingEnabled`` on. In a box of tori, a pile of 400 asleep
+  takes 1.7 ms a step on an M1, against 22 ms awake. While every body is asleep or static, the
+  broad phase and the collision detection are skipped.
 
 ## Limits
 
 - **Discrete collision detection.** Contacts are found at each substep, so a fast, thin body can
   pass through another between two substeps. Raise the substeps, or keep such bodies thicker.
-- **No sleeping yet.** Bodies at rest are simulated like moving ones.
 - **Solver on the main actor.** The contact solver is sequential; with many contacts, it becomes
   the larger part of a multithreaded step.
 - **No joints yet.**

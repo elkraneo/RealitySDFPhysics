@@ -7,7 +7,12 @@ Move entities from RealityKit's physics to SDF bodies, and know what differs.
 SDFCollisionKit mirrors the names and shapes of RealityKit's physics API, and reuses its
 `PhysicsBodyMode`, `CollisionFilter`, `CollisionGroup`, `CollisionCastQueryType` and
 `PhysicsSimulationComponent` option types. The two simulations are separate: SDF bodies and
-RealityKit physics bodies don't collide with each other, so give each entity one or the other.
+RealityKit physics bodies don't push each other, so give each moving entity one or the other.
+For the static and kinematic colliders a scene already has, such as floors, walls and tables,
+`addSDFColliders(mode:material:resolution:)` adds SDF bodies for an entity's `CollisionComponent`
+shapes, so that SDF bodies collide with them too. Axis-aligned boxes, spheres and capsules become
+exact analytical shapes; other shapes are baked from their meshes with
+``SDFShape/make(from:scale:resolution:)``.
 
 ## Counterparts
 
@@ -51,8 +56,9 @@ RealityKit physics bodies don't collide with each other, so give each entity one
 - **Object size.** RealityKit's physics works for objects of any size in meters. Here the
   collision tolerances suit objects about 1 unit across: model small or large objects at about
   that size in a scaled root, and set ``SDFSimulationComponent/metersPerUnit``.
-- **Defaults.** The defaults are the paper's: 60 steps per second of 4 substeps each, 20 velocity
-  and 20 position iterations, friction 0.5, no restitution, linear damping 0.05 and angular
+- **Defaults.** 60 steps per second of 2 substeps each, 10 velocity and 4 position iterations
+  (``SDFSimulationComponent/Preset/realTime``; ``SDFSimulationComponent/Preset/paper`` has the
+  paper's 4 substeps and 20 and 20 iterations), friction 0.5, no restitution, linear damping 0.05 and angular
   damping 0.3 per second, and the mass of the shape's volume of water.
 - **Material combination.** A contact's friction is the geometric mean of the two bodies'
   coefficients, and its restitution the larger of the two. Contacts approaching slower than
@@ -66,4 +72,8 @@ RealityKit physics bodies don't collide with each other, so give each entity one
   of the last substep. Handlers can't step the simulation: `update` and `step` do nothing when
   called from them.
 - **Not yet available:** joints, continuous collision detection (fast thin bodies can pass
-  through others), sleeping, sweeps of a shape along a path, and the simulation `clock`.
+  through others), sweeps of a shape along a path, and the simulation `clock`.
+- **Sleeping.** Bodies at rest fall asleep and wake when touched, moved or pushed. Turn it off
+  with ``SDFSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``.
+  While asleep, a pair in contact keeps reporting `Updated` with the contacts and impulses it had
+  when it fell asleep.

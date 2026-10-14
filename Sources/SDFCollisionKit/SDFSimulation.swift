@@ -251,7 +251,7 @@ public final class SDFSimulation {
 
     private func writeBack(_ dynamic: [Entity], root: Entity) {
         for entity in dynamic {
-            guard var body = bodies[entity.id] else { continue }
+            guard var body = bodies[entity.id], !sdf_world_body_rested_through_step(world, body.id) else { continue }
             let pose = Pose(sdf_world_body_pose(world, body.id))
             entity.setPosition(pose.position, relativeTo: root)
             entity.setOrientation(pose.orientation, relativeTo: root)
@@ -290,6 +290,12 @@ public final class SDFSimulation {
     /// The body IDs of the entities with bodies
     var bodyIDs: [Entity.ID: SDFBodyID] {
         bodies.mapValues(\.id)
+    }
+
+    /// Whether an entity's dynamic body is asleep (see ``SDFSimulationComponent/isSleepingEnabled``)
+    public func isSleeping(_ entity: Entity) -> Bool {
+        guard let id = bodies[entity.id]?.id else { return false }
+        return sdf_world_body_is_asleep(world, id)
     }
 
     /// Sets a dynamic body's velocities now, rather than on the next update as setting its
@@ -404,13 +410,16 @@ public final class SDFSimulation {
         /// Narrow phase time, summed over the substeps
         public var collisionMilliseconds: Double
         public var stepMilliseconds: Double
+        /// Dynamic bodies asleep after the step
+        public var sleepingBodies: Int
     }
 
     public var statistics: Statistics {
         let s = sdf_world_stats(world)
         return Statistics(bodies: Int(s.bodies), pairs: Int(s.pairs), contacts: Int(s.contacts),
                           optimizerIterations: Int(s.iterations), queries: Int(s.queries),
-                          collisionMilliseconds: s.collisionMilliseconds, stepMilliseconds: s.stepMilliseconds)
+                          collisionMilliseconds: s.collisionMilliseconds, stepMilliseconds: s.stepMilliseconds,
+                          sleepingBodies: Int(s.sleepingBodies))
     }
 
     /// A contact point between two bodies

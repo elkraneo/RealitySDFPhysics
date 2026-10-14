@@ -11,6 +11,7 @@
 #include <dispatch/dispatch.h>
 #include <map>
 #include <numeric>
+#include <unordered_map>
 
 #include "World.h"
 
@@ -72,6 +73,7 @@ struct Contact
     Mover *a, *b;
     Body *bodyA, *bodyB; // Of a and b, for the hot loops
     ContactPoint *point;
+    PairRecord *pair; // Totals of the contact's pair over the step
     float3 rA, rB, normal, tangent[2];
     float normalMass, tangentMass[2];
     float bias, staticFriction, dynamicFriction, restitution;
@@ -89,6 +91,16 @@ float effectiveMass(const Mover &a, const Mover &b, float3 rA, float3 rB, float3
 }
 
 bool isDynamic(const BodyRecord &r) { return r.mode == SDFBodyDynamic; }
+
+// Whether a body can move this substep: kinematic, or dynamic and awake
+bool canMove(const BodyRecord &r) { return r.mode == SDFBodyKinematic || (isDynamic(r) && !r.asleep); }
+
+bool isMoving(const Body &b) { return lengthSq(b.velocity) > 0 || lengthSq(b.angularVelocity) > 0; }
+
+bool touches(const Manifold &m)
+{
+    return std::any_of(m.points.begin(), m.points.end(), [](const ContactPoint &p) { return p.active; });
+}
 
 // SplitMix64, to derive independent random streams from a seed
 uint64_t mix(uint64_t x)
@@ -114,6 +126,56 @@ bool shouldCollide(const BodyRecord &a, const BodyRecord &b, uint32_t options)
     return (a.group & b.mask) && (b.group & a.mask);
 }
 
+// Finds the pairs whose bounds overlap and merges them into the manifolds
+void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
+{
+    Solver &s = world.solver;
+    float r = 0.5f * s.params.margin;
+    std::vector<int> order(s.bodies.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](int a, int b) { return s.bodies[a]->bounds.min.x < s.bodies[b]->bounds.min.x; });
+
+    std::vector<std::pair<int, int>> overlapping;
+    for (size_t i = 0; i < order.size(); i++)
+    {
+        for (size_t j = i + 1; j < order.size(); j++)
+        {
+            if (s.bodies[order[j]]->bounds.min.x - r > s.bodies[order[i]]->bounds.max.x + r)
+                break;
+
+            std::pair<int, int> key = std::minmax(order[i], order[j]);
+            if (shouldCollide(*movers[key.first].record, *movers[key.second].record, world.pairOptions) &&
+                overlaps(expand(s.bodies[key.first]->bounds, r), expand(s.bodies[key.second]->bounds, r)))
+                overlapping.push_back(key);
+        }
+    }
+    std::sort(overlapping.begin(), overlapping.end());
+
+    // Merge them into the manifolds, in place: pairs that still overlap keep their manifold, and
+    // with it their cache. Pairs whose bounds parted, such as a sleeper and a support that moved
+    // away in one frame, end their contacts here, before the narrow phase.
+    auto drop = [&](auto it) {
+        if (world.sleeping && touches(it->second))
+            for (int i : {it->first.first, it->first.second})
+                if (movers[i].record->asleep)
+                    world.wake(*movers[i].record);
+        return s.manifolds.erase(it);
+    };
+    auto it = s.manifolds.begin();
+    for (const std::pair<int, int> &key : overlapping)
+    {
+        while (it != s.manifolds.end() && it->first < key)
+            it = drop(it);
+        if (it == s.manifolds.end() || it->first != key)
+            it = s.manifolds.emplace_hint(it, key, Manifold());
+        it->second.bodyA = s.bodies[key.first].get(), it->second.bodyB = s.bodies[key.second].get();
+        ++it;
+    }
+    while (it != s.manifolds.end())
+        it = drop(it);
+    world.broadPhaseCurrent = true;
+}
+
 } // namespace
 
 void SDFWorld::step()
@@ -125,9 +187,26 @@ void SDFWorld::step()
     std::vector<Mover> movers(s.bodies.size());
     for (size_t i = 0; i < s.bodies.size(); i++)
         movers[i] = {s.bodies[i].get(), &record(s.bodies[i].get())};
+    std::vector<SDFBodyID> bodyIDs(s.bodies.size());
+    for (size_t i = 0; i < s.bodies.size(); i++)
+        bodyIDs[i] = ids.at(s.bodies[i].get());
 
     // Pairs in contact in any substep, with their impulses over the step
-    std::map<std::pair<SDFBodyID, SDFBodyID>, PairRecord> touched;
+    std::unordered_map<uint64_t, PairRecord> touched;
+
+    // Sleeping bodies keep zero velocities and no forces; any of them, set since the last step,
+    // wakes the body
+    if (sleeping)
+    {
+        for (Mover &m : movers)
+        {
+            BodyRecord &r = *m.record;
+            if (r.asleep && (isMoving(*m.body) || lengthSq(r.force) > 0 || lengthSq(r.torque) > 0 || m.body == s.dragBody))
+                wake(r);
+        }
+    }
+    for (Mover &m : movers)
+        m.record->restedThroughStep = m.record->asleep;
 
     for (int substep = 0; substep < s.substeps; substep++)
     {
@@ -139,42 +218,23 @@ void SDFWorld::step()
         for (Mover &m : movers)
             m.prepare();
 
-        // Broad phase: sort and sweep along x over the bounding boxes grown by half the margin.
-        // Pairs that already had a manifold keep it, and with it their cache.
-        float r = 0.5f * s.params.margin;
-        std::vector<int> order(s.bodies.size());
-        std::iota(order.begin(), order.end(), 0);
-        std::sort(order.begin(), order.end(), [&](int a, int b) { return s.bodies[a]->bounds.min.x < s.bodies[b]->bounds.min.x; });
+        // Broad phase: sort and sweep along x over the bounding boxes grown by half the margin. While
+        // nothing can move, the overlapping pairs stay those it found last.
+        bool anyCanMove = std::any_of(movers.begin(), movers.end(), [](const Mover &m) { return canMove(*m.record); });
+        if (anyCanMove || !broadPhaseCurrent)
+            broadPhase(*this, movers);
 
-        std::map<std::pair<int, int>, Manifold> overlapping;
-        for (size_t i = 0; i < order.size(); i++)
-        {
-            for (size_t j = i + 1; j < order.size(); j++)
-            {
-                if (s.bodies[order[j]]->bounds.min.x - r > s.bodies[order[i]]->bounds.max.x + r)
-                    break;
-
-                std::pair<int, int> key = std::minmax(order[i], order[j]);
-                Body *a = s.bodies[key.first].get(), *b = s.bodies[key.second].get();
-                if (!shouldCollide(*movers[key.first].record, *movers[key.second].record, pairOptions) ||
-                    !overlaps(expand(a->bounds, r), expand(b->bounds, r)))
-                    continue;
-
-                Manifold &manifold = overlapping[key];
-                auto previous = s.manifolds.find(key);
-                if (previous != s.manifolds.end())
-                    manifold = std::move(previous->second);
-                manifold.bodyA = a, manifold.bodyB = b;
-            }
-        }
-        s.manifolds.swap(overlapping);
-
-        // Narrow phase: Algorithm 1 for every pair
+        // Narrow phase: Algorithm 1 for every pair with a body that can move. The others keep the
+        // contacts they had when they fell asleep.
         auto start = std::chrono::steady_clock::now();
+        auto needsUpdate = [&](const std::pair<int, int> &key) {
+            return canMove(*movers[key.first].record) || canMove(*movers[key.second].record);
+        };
         if (!parallel)
         {
             for (auto &entry : s.manifolds)
-                entry.second.update(s.params, h, s.rng, s.stats);
+                if (needsUpdate(entry.first))
+                    entry.second.update(s.params, h, s.rng, s.stats);
         }
         else
         {
@@ -192,8 +252,10 @@ void SDFWorld::step()
             jobs.reserve(s.manifolds.size());
             for (auto &entry : s.manifolds)
             {
+                if (!needsUpdate(entry.first))
+                    continue;
                 Job job = {&entry.second};
-                job.rng.state = mix(seed ^ mix((uint64_t)ids.at(entry.second.bodyA) << 32 | ids.at(entry.second.bodyB)));
+                job.rng.state = mix(seed ^ mix((uint64_t)bodyIDs[entry.first.first] << 32 | bodyIDs[entry.first.second]));
                 jobs.push_back(job);
             }
             const CollisionParams &params = s.params;
@@ -210,11 +272,15 @@ void SDFWorld::step()
             }
         }
         s.stats.milliseconds += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-
-        // Record the pairs in contact, with their deepest point in the latest substep they touched
+        // Record the pairs in contact, with their deepest point in the latest substep they touched.
+        // Pairs that weren't updated count in the stats, and their events carry the impulses that
+        // held them when they fell asleep, as contacts() does.
+        std::vector<PairRecord *> pairRecords;
+        pairRecords.reserve(s.manifolds.size());
         for (auto &entry : s.manifolds)
         {
             const Manifold &m = entry.second;
+            bool resting = !needsUpdate(entry.first);
             PairRecord *pair = nullptr;
             for (const ContactPoint &p : m.points)
             {
@@ -222,12 +288,36 @@ void SDFWorld::step()
                     continue;
                 if (!pair)
                 {
-                    pair = &touched[{ids.at(m.bodyA), ids.at(m.bodyB)}];
-                    pair->bodyA = ids.at(m.bodyA), pair->bodyB = ids.at(m.bodyB);
+                    pair = &touched[(uint64_t)bodyIDs[entry.first.first] << 32 | bodyIDs[entry.first.second]];
+                    pair->bodyA = bodyIDs[entry.first.first], pair->bodyB = bodyIDs[entry.first.second];
                     pair->penetration = -p.separation, pair->position = p.x;
                 }
                 else if (-p.separation > pair->penetration)
                     pair->penetration = -p.separation, pair->position = p.x;
+                if (resting)
+                {
+                    s.stats.contacts++;
+                    pair->impulse += p.normalImpulse;
+                    pair->impulseVector += p.normal * p.normalImpulse;
+                }
+            }
+            if (resting)
+                s.stats.pairs++;
+            pairRecords.push_back(pair);
+        }
+
+        // A sleeping body wakes, with its island, when a dynamic body or a moving kinematic one
+        // touches it
+        if (sleeping)
+        {
+            for (auto &entry : s.manifolds)
+            {
+                BodyRecord &a = *movers[entry.first.first].record, &b = *movers[entry.first.second].record;
+                if (a.asleep == b.asleep || a.trigger || b.trigger || !touches(entry.second))
+                    continue;
+                BodyRecord &sleeper = a.asleep ? a : b, &other = a.asleep ? b : a;
+                if (isDynamic(other) || (other.mode == SDFBodyKinematic && isMoving(*other.body)))
+                    wake(sleeper);
             }
         }
 
@@ -235,7 +325,7 @@ void SDFWorld::step()
         for (Mover &m : movers)
         {
             Body *body = m.body;
-            if (body->invMass > 0)
+            if (body->invMass > 0 && !m.record->asleep)
             {
                 if (m.record->affectedByGravity)
                     body->velocity += s.gravity * h;
@@ -269,10 +359,16 @@ void SDFWorld::step()
 
         // Build the contact constraints and warm start them with the impulses cached in the manifold
         std::vector<Contact> contacts;
+        size_t index = 0;
         for (auto &entry : s.manifolds)
         {
             Manifold &m = entry.second;
+            PairRecord *pair = pairRecords[index++];
             Mover &a = movers[entry.first.first], &b = movers[entry.first.second];
+            // A sleeping body's pairs here touch nothing that pushes it, and keep their impulses
+            // to warm start the solver when it wakes
+            if (a.record->asleep || b.record->asleep)
+                continue;
             // Triggers and pairs without a dynamic body only report their contacts
             bool responds = !a.record->trigger && !b.record->trigger && (a.body->invMass > 0 || b.body->invMass > 0);
             for (ContactPoint &p : m.points)
@@ -284,7 +380,7 @@ void SDFWorld::step()
                 }
 
                 Contact c;
-                c.a = &a, c.b = &b, c.point = &p;
+                c.a = &a, c.b = &b, c.point = &p, c.pair = pair;
                 c.bodyA = a.body, c.bodyB = b.body;
                 c.rA = p.x - m.bodyA->position;
                 c.rB = p.x - m.bodyB->position;
@@ -374,9 +470,8 @@ void SDFWorld::step()
         {
             c.point->normalImpulse = c.normalImpulse;
             c.point->frictionImpulse = c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
-            PairRecord &pair = touched[{ids.at(c.bodyA), ids.at(c.bodyB)}];
-            pair.impulse += c.normalImpulse;
-            pair.impulseVector += c.normal * c.normalImpulse;
+            c.pair->impulse += c.normalImpulse;
+            c.pair->impulseVector += c.normal * c.normalImpulse;
         }
 
         // Baumgarte stabilization with split impulses: v_n + bias >= 0 is solved for pseudo
@@ -398,10 +493,12 @@ void SDFWorld::step()
         }
 
         // Integrate positions, with damping
+        if (std::any_of(movers.begin(), movers.end(), [](const Mover &m) { return canMove(*m.record); }))
+            broadPhaseCurrent = false;
         for (Mover &m : movers)
         {
             Body *body = m.body;
-            if (body->isStatic)
+            if (body->isStatic || m.record->asleep)
                 continue;
             body->velocity *= expf(-m.record->linearDamping * h);
             body->angularVelocity *= expf(-m.record->angularDamping * h);
@@ -414,4 +511,109 @@ void SDFWorld::step()
     pairs.clear();
     for (auto &entry : touched)
         pairs.push_back(entry.second);
+    std::sort(pairs.begin(), pairs.end(), [](const PairRecord &a, const PairRecord &b) {
+        return std::pair(a.bodyA, a.bodyB) < std::pair(b.bodyA, b.bodyB);
+    });
+
+    if (sleeping)
+        sleep();
+}
+
+void SDFWorld::sleep()
+{
+    // Nearly still: below 0.05 units and 0.05 radians per second, for half a second. Units suit
+    // objects about 1 unit across, as the collision tolerances do.
+    const float linearTolerance = 0.05f, angularTolerance = 0.05f, timeToSleep = 0.5f;
+    Solver &s = solver;
+    size_t count = s.bodies.size();
+    std::vector<BodyRecord *> bodies(count);
+    for (size_t i = 0; i < count; i++)
+    {
+        BodyRecord &r = *(bodies[i] = &record(s.bodies[i].get()));
+        if (!isDynamic(r) || r.asleep)
+            continue;
+        const Body &b = *r.body;
+        bool still = lengthSq(b.velocity) < linearTolerance * linearTolerance &&
+                     lengthSq(b.angularVelocity) < angularTolerance * angularTolerance && lengthSq(r.force) == 0 &&
+                     lengthSq(r.torque) == 0 && &b != s.dragBody;
+        r.stillTime = still ? r.stillTime + s.dt : 0;
+    }
+
+    // Islands: awake dynamic bodies joined by their contacts. None touches a sleeping body, which
+    // would have woken.
+    std::vector<int> parent(count);
+    std::iota(parent.begin(), parent.end(), 0);
+    auto root = [&](int i) {
+        while (parent[i] != i)
+            i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    for (auto &entry : s.manifolds)
+    {
+        auto [a, b] = entry.first;
+        if (isDynamic(*bodies[a]) && isDynamic(*bodies[b]) && !bodies[a]->trigger && !bodies[b]->trigger &&
+            touches(entry.second))
+            parent[root(a)] = root(b);
+    }
+
+    // An island sleeps when every body in it has been still long enough
+    std::vector<float> stillTime(count, INFINITY);
+    for (size_t i = 0; i < count; i++)
+        if (isDynamic(*bodies[i]) && !bodies[i]->asleep)
+            stillTime[root((int)i)] = std::min(stillTime[root((int)i)], bodies[i]->stillTime);
+    std::vector<uint32_t> islands(count, 0);
+    for (size_t i = 0; i < count; i++)
+    {
+        BodyRecord &r = *bodies[i];
+        int island = root((int)i);
+        if (!isDynamic(r) || r.asleep || stillTime[island] < timeToSleep)
+            continue;
+        if (!islands[island])
+            islands[island] = nextIsland++;
+        r.asleep = true, r.island = islands[island];
+        r.body->velocity = r.body->angularVelocity = {0, 0, 0};
+    }
+}
+
+void SDFWorld::wake(BodyRecord &r)
+{
+    r.stillTime = 0;
+    r.restedThroughStep = false;
+    if (!r.asleep)
+        return;
+    for (auto &entry : records)
+    {
+        BodyRecord &other = entry.second;
+        if (other.asleep && other.island == r.island)
+            other.asleep = other.restedThroughStep = false, other.stillTime = 0;
+    }
+}
+
+void SDFWorld::disturb(const Body *body)
+{
+    broadPhaseCurrent = false;
+    wake(record(body));
+    for (auto &entry : solver.manifolds)
+    {
+        if (entry.second.bodyA == body)
+            wake(record(entry.second.bodyB));
+        else if (entry.second.bodyB == body)
+            wake(record(entry.second.bodyA));
+    }
+    const BodyRecord &r = record(body);
+    AABB bounds = expand(body->bounds, solver.params.margin);
+    for (auto &other : solver.bodies)
+    {
+        BodyRecord &o = record(other.get());
+        if (other.get() != body && (r.group & o.mask) && (o.group & r.mask) &&
+            overlaps(bounds, expand(other->bounds, solver.params.margin)))
+            wake(o);
+    }
+}
+
+void SDFWorld::wakeAll()
+{
+    broadPhaseCurrent = false;
+    for (auto &entry : records)
+        entry.second.asleep = entry.second.restedThroughStep = false, entry.second.stillTime = 0;
 }

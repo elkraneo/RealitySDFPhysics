@@ -93,7 +93,10 @@ swift test
 
 Use release builds: debug builds of the engine are several times slower.
 
-Apple M1, release, 240 steps at 60 Hz with 4 substeps. Times vary by up to about 20% between runs.
+Apple M1, release, 240 steps at 60 Hz with the paper's settings (`preset: .paper`: 4 substeps of
+20 velocity and 20 position iterations). The default, `.realTime` (2 substeps of 10 and 4), costs
+about half as much and still settles piles of 400 tori without overlap (`sdf-bench quality`). Times
+vary by up to about 20% between runs.
 
 | Scene | Bodies | Step ms, multithreaded | Step ms, one thread |
 | --- | ---: | ---: | ---: |
@@ -110,14 +113,18 @@ Apple M1, release, 240 steps at 60 Hz with 4 substeps. Times vary by up to about
 
 - **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, so the same bodies
   and inputs give bit-identical results whatever the number of threads. Turn
-  `isMultithreaded` off for upstream's single random sequence; at default settings our solver
+  `isMultithreaded` off for upstream's single random sequence; with `preset: .paper` our solver
   then takes the same steps as upstream's (`SolverReferenceTests`).
 - **Threads.** The simulation steps on the main actor; its collision detection runs on several
   threads, and baking in the background.
-- **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies do not collide with each
-  other. Give an entity one or the other.
+- **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies don't push each other;
+  give a moving entity one or the other. `entity.addSDFColliders()` gives an entity's RealityKit
+  collision shapes to the SDF simulation as static or kinematic bodies, so SDF bodies land on the
+  floors and tables a scene already has.
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.
-- **Not yet available:** joints, continuous collision detection, sleeping and shape sweeps.
+- **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
+  pushed (`isSleepingEnabled`).
+- **Not yet available:** joints, continuous collision detection and shape sweeps.
 
 ## License
 

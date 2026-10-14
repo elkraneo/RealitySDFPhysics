@@ -55,6 +55,11 @@ let package = Package(
             name: "sdf-snapshot",
             dependencies: ["SDFDemoScenes"]
         ),
+        // The same pile of tori timed with SDFCollisionKit and with RealityKit's physics
+        .executableTarget(
+            name: "sdf-bench",
+            dependencies: ["SDFCollisionKit"]
+        ),
         // Showcase video of the demo scenes, rendered offscreen
         .executableTarget(
             name: "sdf-video",

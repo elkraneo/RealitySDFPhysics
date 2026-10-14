@@ -229,8 +229,9 @@ import simd
         simulation.step(root: root)
         #expect(abs(simulation.mass(of: cube)! - 1000) < 30) // Water, integrated over a voxelization
         for _ in 0..<23 { simulation.step(root: root) } // 0.4 s in all
-        // Falls 0.5 g t² = 78 cm, less a little for the damping
+        // Falls 0.5 g t² = 78 cm, plus up to 2 cm for the integration in 48 substeps, less a little
+        // for the damping
         let fallen = 500 - cube.position.y
-        #expect(fallen > 74 && fallen < 79, "fell \(fallen) cm")
+        #expect(fallen > 74 && fallen < 81, "fell \(fallen) cm")
     }
 }
