@@ -113,12 +113,17 @@ final class DiceScene {
             walls.append(wall)
         }
 
-        for (index, kind) in DieKind.allCases.enumerated() {
+        var models: [Entity] = []
+        for kind in DieKind.allCases {
             guard let url = Bundle.module.url(forResource: kind.rawValue, withExtension: "usdz", subdirectory: "Models") else {
                 throw CocoaError(.fileNoSuchFile)
             }
-            let model = try await Entity(contentsOf: url)
-            let shape = try await SDFShape.bake(from: model, resolution: 96)
+            models.append(try await Entity(contentsOf: url))
+        }
+        // Convex, so 48 cells across a die are plenty
+        let shapes = try await SDFShape.bake(from: models, resolution: 48)
+        for (index, (kind, model)) in zip(DieKind.allCases, models).enumerated() {
+            let shape = shapes[index]
             let entity = Entity()
             entity.name = kind.rawValue
             // The model is in meters, the simulation in centimeters
@@ -325,3 +330,4 @@ final class DiceScene {
         startSimulation(motions: [:])
     }
 }
+
