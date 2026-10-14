@@ -106,6 +106,11 @@ func timeSDF(count: Int, isMultithreaded: Bool, preset: SDFSimulationComponent.P
         simulation.step(root: root)
         times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
     }
+    if ProcessInfo.processInfo.environment["SDF_BENCH_TRACE"] != nil {
+        let slowest = times.enumerated().sorted { $0.element > $1.element }.prefix(5)
+        print("       slowest steps (\(preset), \(isMultithreaded ? "threads" : "one thread")): "
+              + slowest.map { String(format: "#%d %.1f ms", $0.offset, $0.element) }.joined(separator: ", "))
+    }
     return (times.reduce(0, +) / Double(times.count), times.max() ?? 0, check(bodies))
 }
 
