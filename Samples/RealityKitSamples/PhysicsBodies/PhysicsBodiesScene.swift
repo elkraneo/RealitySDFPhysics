@@ -15,7 +15,8 @@
 //   Its faces are 50 cm thick rather than 1 mm, outside the volume, so that fast bodies don't pass
 //   through them between two substeps.
 // - `Shape` swaps the spheres for concave tori, which RealityKit's physics can't simulate as
-//   moving bodies. They are 8 to 15 cm across rather than 3 to 15, so that their rings stay well
+//   moving bodies. They appear one at a time where the overlap query finds room, so that none
+//   start threaded through another. They are 8 to 15 cm across rather than 3 to 15, so that their rings stay well
 //   above the collision tolerance.
 
 import Combine
@@ -71,15 +72,41 @@ final class PhysicsBodiesScene {
 
     /// Replaces the bodies with 16 new ones of a shape
     func reset(shape: Shape) {
+        spawning?.cancel()
         bodies.children.removeAll()
-        for index in 0..<16 {
-            let body = Self.makeBody(shape)
-            body.name = "\(shape.rawValue)_\(index)"
-            bodies.addChild(body)
-            // Place the body in a semi-random place in the scene
-            body.setPosition(SIMD3<Float>.random(in: -0.2...0.2), relativeTo: nil)
+        guard shape == .tori else {
+            // Apple's spheres appear at once in semi-random places, overlapping ones pushing apart
+            for index in 0..<16 {
+                let body = Self.makeBody(shape)
+                body.name = "\(shape.rawValue)_\(index)"
+                bodies.addChild(body)
+                body.setPosition(SIMD3<Float>.random(in: -0.2...0.2), relativeTo: nil)
+            }
+            return
+        }
+        // Tori placed overlapping can be threaded through each other, links that no motion can
+        // undo. They appear one at a time, each where the simulation's overlap query finds room.
+        spawning = Task {
+            for index in 0..<16 {
+                let body = Self.makeBody(shape)
+                body.name = "\(shape.rawValue)_\(index)"
+                guard let component = body.components[SDFBodyComponent.self] else { return }
+                for _ in 0..<50 {
+                    let position = root.convert(position: SIMD3<Float>.random(in: -0.3...0.3), from: nil)
+                    let place = Transform(rotation: body.orientation, translation: position)
+                    if simulation.overlaps(of: component.shape, at: place, margin: 0.2).isEmpty {
+                        body.transform = place
+                        bodies.addChild(body)
+                        break
+                    }
+                }
+                try? await Task.sleep(for: .seconds(0.2))
+                if Task.isCancelled { return }
+            }
         }
     }
+
+    private var spawning: Task<Void, Never>?
 
     // MARK: Bodies
 

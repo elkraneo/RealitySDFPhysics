@@ -7,14 +7,14 @@
 //
 // - The dice are SDF bodies baked from Apple's models, on an SDF table, in a simulation whose root
 //   is scaled to centimeters. TabletopKit's `TossableRepresentation` is visionOS only.
-// - A rim and invisible walls above it keep the dice on the table, as TabletopKit's table does.
+// - Invisible walls around the table keep the dice on it, as TabletopKit's table does.
 // - The dice are damped more than the engine's default, standing in for the rolling resistance
 //   that stops real dice within a second or two, which the engine doesn't model yet.
 // - The pointer drags a die physically, with the simulation's drag, and "Toss all" pulls the
 //   other dice into Apple's hexagon around it with spring forces. Released dice keep their
 //   velocity, plus a random spin.
-// - Every toss starts a new simulation, and a hidden copy of it runs a few dozen steps ahead each
-//   frame. The engine is deterministic, so the copy predicts the roll exactly, and the score is
+// - Every toss starts a new simulation, and a hidden copy of it runs ahead for a few milliseconds
+//   of each frame. The engine is deterministic, so the copy predicts the roll exactly, and the score is
 //   shown while the dice still roll.
 // - "Max score toss": TabletopKit decides the outcome when a toss starts and makes the dice land
 //   on it. Here, once the copy knows how each die lands, the die's model is turned by one of its
@@ -41,7 +41,7 @@ final class DiceScene {
     }
 
     @ObservationIgnored let content = Entity()
-    @ObservationIgnored let camera = SampleCamera(eye: [0.09, 0.24, 0.3], target: [0.09, 0, 0], fieldOfView: 40)
+    @ObservationIgnored let camera = SampleCamera(eye: [0.09, 0.3, 0.4], target: [0.09, 0, 0], fieldOfView: 40)
     @ObservationIgnored private var root = Entity()
     @ObservationIgnored private var dice: [Die] = []
     @ObservationIgnored private let table = Entity()
@@ -91,13 +91,13 @@ final class DiceScene {
         top.position = [0, 4.5, 0]
         table.addChild(top)
 
+        // The rim is only seen: the walls hold the dice, and a torus as large as the table would be
+        // in collision detection with every die
         let rimShape = SDFShape.torus(majorRadius: Self.tableRadius, minorRadius: 1.2)
-        var rimBody = SDFBodyComponent(shape: rimShape, mode: .static)
-        rimBody.filter = tableBody.filter
-        rimBody.material = tableBody.material
-        rim.components.set(rimBody)
         rim.addChild(ModelEntity(mesh: try .generate(from: rimShape),
                                  materials: [SimpleMaterial(color: .init(white: 0.25, alpha: 1), roughness: 0.6, isMetallic: false)]))
+        rim.position = [0, 5, 0] // On the table's top face
+        table.addChild(rim)
 
         // 32 panels, 15 cm high, around the rim
         let panels = 32, wallShape = SDFShape.box(halfExtents: [5.2, 7.5, 1])
@@ -118,7 +118,7 @@ final class DiceScene {
                 throw CocoaError(.fileNoSuchFile)
             }
             let model = try await Entity(contentsOf: url)
-            let shape = try await SDFShape.bake(from: model, resolution: 48)
+            let shape = try await SDFShape.bake(from: model, resolution: 96)
             let entity = Entity()
             entity.name = kind.rawValue
             // The model is in meters, the simulation in centimeters
@@ -131,13 +131,12 @@ final class DiceScene {
         startSimulation(motions: [:])
     }
 
-    /// The bodies of a simulation: the table, its rim, the walls and the dice, always in this order, so that
+    /// The bodies of a simulation: the table, the walls and the dice, always in this order, so that
     /// two simulations built from the same poses and velocities run identically
     private func makeRoot(bodies: [(entity: Entity, component: SDFBodyComponent, motion: SDFMotionComponent?)]) -> Entity {
         let root = Entity()
         root.scale = SIMD3(repeating: 0.01)
         var settings = SDFSimulationComponent(metersPerUnit: 0.01)
-        settings.substeps = 8 // Small fast dice
         // Dice bounce from slower approaches than the default 1 m/s
         settings.restitutionThreshold = 10
         root.components.set(settings)
@@ -164,7 +163,7 @@ final class DiceScene {
     /// Replaces the simulation with a new one, with the bodies at their current poses and the given
     /// velocities (in centimeters per second)
     private func startSimulation(motions: [Int: SDFMotionComponent]) {
-        let fixed = [table, rim] + walls
+        let fixed = [table] + walls
         let bodies = fixed.map { ($0, $0.components[SDFBodyComponent.self]!, nil as SDFMotionComponent?) }
             + dice.enumerated().map { index, die in
                 (die.entity, dieBody(die), motions[index] ?? SDFMotionComponent())
@@ -255,7 +254,7 @@ final class DiceScene {
             return copy
         }
         let copies = dice.map { copy($0.entity) }
-        let fixed = [table, rim] + walls
+        let fixed = [table] + walls
         let bodies = fixed.map { (copy($0), $0.components[SDFBodyComponent.self]!, nil as SDFMotionComponent?) }
             + dice.indices.map { (copies[$0], dieBody(dice[$0]), motions[$0] ?? SDFMotionComponent()) }
         return (makeRoot(bodies: bodies), copies)
@@ -280,7 +279,9 @@ final class DiceScene {
         var predictionSteps = 0, hiddenResting = 0, resting = 0
         rollSubscription = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { [unowned self] _ in
             if predicted == nil {
-                for _ in 0..<20 where hiddenResting < 30 && predictionSteps < 3600 {
+                // A few milliseconds of each frame, so that the roll stays smooth
+                let budget = Date().addingTimeInterval(0.004)
+                while Date() < budget && hiddenResting < 30 && predictionSteps < 3600 {
                     hidden.step(root: prediction.root)
                     predictionSteps += 1
                     hiddenResting = prediction.dice.allSatisfy(Self.isAtRest) ? hiddenResting + 1 : 0
