@@ -18,8 +18,8 @@ for file in maths.h mesh.h mesh.cpp shapes.h shapes.cpp voxel.cpp body.h collide
 done
 cp "$work/upstream/LICENSE" "$root/Sources/SDFCore/upstream/LICENSE"
 # Replace the asset set as a whole, so assets removed upstream do not linger
-rm -f "$root/Sources/SDFDemoScenes/Resources/assets/"*.obj
-cp "$work/upstream/assets/"*.obj "$root/Sources/SDFDemoScenes/Resources/assets/"
+rm -f "$root/Samples/SDFDemoScenes/Resources/assets/"*.obj
+cp "$work/upstream/assets/"*.obj "$root/Samples/SDFDemoScenes/Resources/assets/"
 
 sed -i '' "s/^Commit: \`.*\`$/Commit: \`$(git -C "$work/upstream" rev-parse HEAD)\`/" "$root/UPSTREAM.md"
 echo "Vendored $(git -C "$work/upstream" rev-parse --short HEAD). Now: git diff, swift test, swift run -c release sdf-snapshot <dir>"

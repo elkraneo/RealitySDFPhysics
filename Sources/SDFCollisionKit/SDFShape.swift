@@ -94,8 +94,14 @@ public final class SDFShape: @unchecked Sendable {
     /// False for baked meshes with open edges, whose inside and outside may be ambiguous
     public var isWatertight: Bool { sdf_shape_is_watertight(handle) }
 
-    /// Enclosed volume. A dynamic body's default mass is that of this volume of water (1000 per
-    /// unit volume) at its entity's scale.
+    /// True for the convex analytical shapes, and for meshes baked from a closed convex mesh. Two
+    /// convex bodies touch in a single region, so their collision detection skips the random
+    /// samples that look for others while their contact is tracked, which keeps bodies resting on
+    /// a flat face still.
+    public var isConvex: Bool { sdf_shape_is_convex(handle) }
+
+    /// Enclosed volume. A dynamic body's default mass is that of this volume of water at its
+    /// entity's scale: 1000 kg per cubic meter, converted with the simulation's `metersPerUnit`.
     public var volume: Float { sdf_shape_volume(handle) }
 
     // MARK: Queries

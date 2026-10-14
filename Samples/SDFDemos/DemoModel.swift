@@ -9,7 +9,8 @@ import simd
 @MainActor
 @Observable
 final class DemoModel {
-    @ObservationIgnored let simulation = SDFSimulation()
+    /// A new one for every scene load, so that a scene always starts from the same random state
+    private(set) var simulation: SDFSimulation
     /// Parent of the bodies, which `SDFSimulationSystem` advances every frame
     @ObservationIgnored let root = Entity()
     @ObservationIgnored let cameraEntity = DemoStage.makeCamera()
@@ -21,39 +22,54 @@ final class DemoModel {
     private(set) var isLoading = false
     private(set) var errorMessage: String?
 
-    var isPaused = false {
-        didSet { simulation.isPaused = isPaused }
+    /// The root's simulation settings, applied on change
+    var settings: SDFSimulationComponent {
+        didSet { root.components.set(settings) }
+    }
+
+    var isPaused: Bool {
+        get { settings.isPaused }
+        set { settings.isPaused = newValue }
     }
 
     var showsContacts = false {
         didSet { showsContacts ? root.addChild(contactMarkers) : contactMarkers.removeFromParent() }
     }
 
-    var showsRealityKitStatistics = false
-
     var dropShape = "Box"
-
-    var parameters = SDFSimulation.Parameters() {
-        didSet { simulation.parameters = parameters }
-    }
 
     var sceneDescription: String { DemoScene.all[sceneIndex].description }
 
     init() {
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        let simulation = SDFSimulation()
+        self.simulation = simulation
+        settings = Self.paperSettings(simulation)
+        root.components.set(settings)
         camera.place(cameraEntity)
+    }
+
+    /// The paper's settings on one thread, as in the upstream demo
+    private static func paperSettings(_ simulation: SDFSimulation) -> SDFSimulationComponent {
+        var settings = SDFSimulationComponent(simulation: simulation)
+        settings.isMultithreaded = false
+        return settings
     }
 
     func loadScene(_ index: Int) async {
         sceneIndex = index
         isLoading = true
         defer { isLoading = false }
+        // No simulation while the scene is built, then a new one with the same settings, so that
+        // loading a scene, or resetting it, always plays out the same
+        root.components.remove(SDFSimulationComponent.self)
         do {
             try await DemoScene.all[index].load(into: root)
             errorMessage = nil
         } catch {
             errorMessage = "Could not load \(DemoScene.all[index].name): \(error.localizedDescription)"
         }
+        simulation = SDFSimulation()
+        settings = settings.with(simulation)
         camera = OrbitCamera(for: DemoScene.all[index])
         camera.place(cameraEntity)
     }
@@ -63,7 +79,9 @@ final class DemoModel {
     }
 
     func resetParameters() {
-        parameters = SDFSimulation.Parameters()
+        let isPaused = isPaused
+        settings = Self.paperSettings(simulation)
+        settings.isPaused = isPaused
     }
 
     func step() {
@@ -77,22 +95,6 @@ final class DemoModel {
             try await dropper.drop(dropShape, above: camera.target)
         } catch {
             errorMessage = "Could not drop \(dropShape): \(error.localizedDescription)"
-        }
-    }
-
-    /// Cycles through scenes with a slowly orbiting camera, for recording the app
-    func runShowcase() async {
-        showsRealityKitStatistics = true
-        let reel = [(scene: 7, contacts: false), (8, false), (6, false), (1, true), (3, false)]
-        while !Task.isCancelled {
-            for (scene, contacts) in reel {
-                showsContacts = contacts
-                await loadScene(scene)
-                for _ in 0..<300 { // About 5 s
-                    orbit(by: CGSize(width: -0.4, height: 0))
-                    try? await Task.sleep(for: .milliseconds(16))
-                }
-            }
         }
     }
 
@@ -111,5 +113,24 @@ final class DemoModel {
 
     func ray(through point: CGPoint, in size: CGSize) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
         camera.ray(through: point, in: size)
+    }
+}
+
+private extension SDFSimulationComponent {
+    /// The same settings for another simulation
+    @MainActor
+    func with(_ simulation: SDFSimulation) -> SDFSimulationComponent {
+        var copy = SDFSimulationComponent(simulation: simulation, metersPerUnit: metersPerUnit)
+        copy.gravity = gravity
+        copy.solverIterations = solverIterations
+        copy.collisionOptions = collisionOptions
+        copy.timeStep = timeStep
+        copy.substeps = substeps
+        copy.maximumStepsPerFrame = maximumStepsPerFrame
+        copy.isPaused = isPaused
+        copy.restitutionThreshold = restitutionThreshold
+        copy.collisionDetection = collisionDetection
+        copy.isMultithreaded = isMultithreaded
+        return copy
     }
 }

@@ -8,7 +8,7 @@
 #include <unordered_map>
 
 #include "SDFCore.h"
-#include "solver.h"
+#include "World.h"
 
 // MARK: Shapes
 
@@ -64,6 +64,37 @@ SDFShape *sdf_shape_warped_box(SDFWarp warp, float halfX, float halfY, float hal
     return makeShape(new WarpedBox((WarpedBox::Type)std::clamp((int)warp, 0, 2), {halfX, halfY, halfZ}, k));
 }
 
+} // extern "C"
+
+// Whether every triangle's plane leaves the whole mesh on the side of its centroid, within a
+// tolerance. Upstream marks only analytical shapes convex, which lets convex pairs skip the random
+// samples of the narrow phase while the temporal cache tracks their contact (Sec. 3.5.2). Without
+// it, those samples keep nudging bodies that rest on a flat face, such as dice.
+static bool isConvex(const Mesh &mesh, float tolerance)
+{
+    // Quadratic in the mesh size: large meshes are left concave, which is always safe
+    if ((double)mesh.triangleCount() * mesh.positions.size() > 5e7)
+        return false;
+    float3 centroid = {0, 0, 0};
+    for (float3 p : mesh.positions)
+        centroid += p;
+    centroid = centroid / (float)mesh.positions.size();
+    for (int t = 0; t < mesh.triangleCount(); t++)
+    {
+        float3 a = mesh.vertex(t, 0), n = cross(mesh.vertex(t, 1) - a, mesh.vertex(t, 2) - a);
+        if (lengthSq(n) < 1e-20f)
+            continue;
+        n = normalize(n);
+        float inside = dot(n, centroid - a) < 0 ? 1.0f : -1.0f; // Sign of the outward side
+        for (float3 p : mesh.positions)
+            if (inside * dot(n, p - a) > tolerance)
+                return false;
+    }
+    return true;
+}
+
+extern "C" {
+
 SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint32_t *indices, int32_t indexCount,
                          int32_t resolution)
 {
@@ -106,6 +137,9 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     // VoxelSdf normalizes the mesh with the same center and scale
     auto voxel = std::make_shared<VoxelSdf>(mesh, "", std::max(8, resolution));
     voxel->finalize();
+    // Dents under 0.5% of the size, such as the tessellation of rounded edges, are well within
+    // the contact margin and can't change a contact
+    voxel->convex = voxel->watertight && isConvex(mesh, 5e-3f * extent);
     SDFShape *handle = new SDFShape();
     handle->shape = voxel;
     handle->center = center(box);
@@ -120,6 +154,8 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
 void sdf_shape_release(SDFShape *shape) { delete shape; }
 
 bool sdf_shape_is_watertight(const SDFShape *shape) { return shape->watertight; }
+
+bool sdf_shape_is_convex(const SDFShape *shape) { return shape->shape->convex; }
 
 float sdf_shape_volume(const SDFShape *shape) { return shape->shape->volume / powf(shape->unitScale, 3); }
 
@@ -149,45 +185,17 @@ SDFShapeMesh sdf_shape_mesh(const SDFShape *shape)
 
 // MARK: Worlds
 
-struct BodyRecord
-{
-    Body *body;
-    SDFBodyMode mode;
-    float3 center;   // Of the shape, see SDFShape
-    float unitScale;
-};
-
-struct SDFWorld
-{
-    Solver solver;
-    double stepMilliseconds = 0;
-    SDFBodyID nextID = 1;
-    std::unordered_map<SDFBodyID, BodyRecord> records;
-    std::unordered_map<const Body *, SDFBodyID> ids;
-
-    BodyRecord *find(SDFBodyID id)
-    {
-        auto it = records.find(id);
-        return it != records.end() ? &it->second : nullptr;
-    }
-
-    const BodyRecord *find(SDFBodyID id) const
-    {
-        auto it = records.find(id);
-        return it != records.end() ? &it->second : nullptr;
-    }
-};
-
 // World position of the shape's origin for a pose of the caller's frame
-static float3 shapeOrigin(const BodyRecord &r, SDFPose pose, quat q)
+static float3 shapeOrigin(float3 center, SDFPose pose, quat q)
 {
-    return toFloat3(pose.position) + rotate(q, r.center * pose.scale);
+    return toFloat3(pose.position) + rotate(q, center * pose.scale);
 }
 
 static quat toQuat(const float q[4]) { return normalize(quat{q[0], q[1], q[2], q[3]}); }
 
-static SDFParams paramsOf(const Solver &solver)
+static SDFParams paramsOf(const SDFWorld &world)
 {
+    const Solver &solver = world.solver;
     const CollisionParams &c = solver.params;
     SDFParams p;
     p.optimizer = (int32_t)c.optimizer;
@@ -205,9 +213,14 @@ static SDFParams paramsOf(const Solver &solver)
     p.margin = c.margin;
     p.allowedPenetration = c.allowedPenetration;
     p.substeps = solver.substeps;
-    p.solverIterations = solver.iterations;
+    p.velocityIterations = solver.iterations;
+    p.positionIterations = world.positionIterations;
     p.timeStep = solver.dt;
     store(p.gravity, solver.gravity);
+    p.restitutionThreshold = world.restitutionThreshold;
+    p.pairOptions = world.pairOptions;
+    p.parallel = world.parallel;
+    p.metersPerUnit = world.metersPerUnit;
     return p;
 }
 
@@ -218,19 +231,70 @@ static void setNonNegative(float &field, float value)
         field = value;
 }
 
+// Inverse inertia with the locked rotation axes removed
+static float3x3 lockedInverseInertia(const BodyRecord &r)
+{
+    float3x3 mask = diagonal(r.angularMask);
+    return mask * r.body->invInertiaWorld * mask;
+}
+
 extern "C" {
 
 SDFWorld *sdf_world_create(void) { return new SDFWorld(); }
 
 void sdf_world_destroy(SDFWorld *world) { delete world; }
 
+SDFWorld *sdf_world_copy(const SDFWorld *world)
+{
+    // Everything is copied by value but the bodies, which manifolds, records and dragging point
+    // to: they are copied and the pointers remapped to the copies
+    SDFWorld *copy = new SDFWorld();
+    const Solver &from = world->solver;
+    Solver &to = copy->solver;
+    std::unordered_map<const Body *, Body *> bodies;
+    for (const auto &body : from.bodies)
+    {
+        Body *clone = new Body(*body);
+        bodies[body.get()] = clone;
+        to.bodies.emplace_back(clone);
+    }
+    for (const auto &entry : from.manifolds)
+    {
+        Manifold manifold = entry.second;
+        manifold.bodyA = bodies.at(manifold.bodyA), manifold.bodyB = bodies.at(manifold.bodyB);
+        to.manifolds[entry.first] = manifold;
+    }
+    to.params = from.params, to.stats = from.stats, to.rng = from.rng;
+    to.dt = from.dt, to.gravity = from.gravity, to.substeps = from.substeps, to.iterations = from.iterations;
+    to.baumgarte = from.baumgarte, to.maxCorrection = from.maxCorrection;
+    to.dragBody = from.dragBody ? bodies.at(from.dragBody) : nullptr;
+    to.dragAnchor = from.dragAnchor, to.dragTarget = from.dragTarget;
+
+    copy->positionIterations = world->positionIterations;
+    copy->restitutionThreshold = world->restitutionThreshold;
+    copy->pairOptions = world->pairOptions;
+    copy->parallel = world->parallel;
+    copy->metersPerUnit = world->metersPerUnit;
+    copy->stepMilliseconds = world->stepMilliseconds;
+    copy->nextID = world->nextID;
+    copy->pairs = world->pairs;
+    for (const auto &entry : world->records)
+    {
+        BodyRecord record = entry.second;
+        record.body = bodies.at(record.body);
+        copy->records[entry.first] = record;
+        copy->ids[record.body] = entry.first;
+    }
+    return copy;
+}
+
 SDFParams sdf_default_params(void)
 {
-    static const Solver defaults;
+    static const SDFWorld defaults;
     return paramsOf(defaults);
 }
 
-SDFParams sdf_world_params(const SDFWorld *world) { return paramsOf(world->solver); }
+SDFParams sdf_world_params(const SDFWorld *world) { return paramsOf(*world); }
 
 void sdf_world_set_params(SDFWorld *world, SDFParams p)
 {
@@ -251,20 +315,28 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
     setNonNegative(c.margin, p.margin);
     setNonNegative(c.allowedPenetration, p.allowedPenetration);
     solver.substeps = std::max(1, p.substeps);
-    solver.iterations = std::max(1, p.solverIterations);
+    solver.iterations = std::max(1, p.velocityIterations);
+    world->positionIterations = std::max(0, p.positionIterations);
     if (p.timeStep > 0)
         setNonNegative(solver.dt, p.timeStep);
     float3 gravity = toFloat3(p.gravity);
     if (std::isfinite(gravity.x) && std::isfinite(gravity.y) && std::isfinite(gravity.z))
         solver.gravity = gravity;
+    setNonNegative(world->restitutionThreshold, p.restitutionThreshold);
+    world->pairOptions = p.pairOptions;
+    world->parallel = p.parallel;
+    if (std::isfinite(p.metersPerUnit) && p.metersPerUnit > 0)
+        world->metersPerUnit = p.metersPerUnit;
 }
 
 void sdf_world_step(SDFWorld *world)
 {
     auto start = std::chrono::steady_clock::now();
-    world->solver.step();
+    world->step();
     world->stepMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
+
+void sdf_world_step_reference(SDFWorld *world) { world->solver.step(); }
 
 SDFStats sdf_world_stats(const SDFWorld *world)
 {
@@ -286,20 +358,22 @@ SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pos
 {
     if (!shape || !(pose.scale > 0))
         return 0;
-    BodyRecord record = {nullptr, mode, shape->center, shape->unitScale};
     quat q = toQuat(pose.orientation);
     // shape = (caller - center) * unitScale, so the body scales the shape by scale / unitScale
-    Body *body = new Body(shape->shape, shapeOrigin(record, pose, q), q, pose.scale / shape->unitScale, mode != SDFBodyDynamic);
+    Body *body = new Body(shape->shape, shapeOrigin(shape->center, pose, q), q, pose.scale / shape->unitScale,
+                          mode != SDFBodyDynamic);
     if (mode == SDFBodyDynamic)
     {
-        // Upstream bodies have unit density, ours that of water
-        body->mass *= 1000, body->inertia = body->inertia * 1000;
+        // Upstream bodies have unit density, ours that of water: 1000 kg per cubic meter
+        float density = 1000 * powf(world->metersPerUnit, 3);
+        body->mass *= density, body->inertia = body->inertia * density;
         body->updateInertia();
     }
     world->solver.add(body);
 
-    record.body = body;
     SDFBodyID id = world->nextID++;
+    BodyRecord record;
+    record.body = body, record.mode = mode, record.center = shape->center, record.unitScale = shape->unitScale;
     world->records[id] = record;
     world->ids[body] = id;
     return id;
@@ -329,6 +403,9 @@ void sdf_world_remove_body(SDFWorld *world, SDFBodyID id)
 
     if (solver.dragBody == body)
         solver.dragBody = nullptr;
+    auto &pairs = world->pairs;
+    pairs.erase(std::remove_if(pairs.begin(), pairs.end(), [&](const PairRecord &p) { return p.bodyA == id || p.bodyB == id; }),
+                pairs.end());
     world->ids.erase(body);
     world->records.erase(id);
     solver.bodies.erase(solver.bodies.begin() + index);
@@ -358,7 +435,7 @@ void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID id, SDFPose pose)
     Body &body = *record->body;
     pose.scale = body.scale * record->unitScale;
     body.orientation = toQuat(pose.orientation);
-    body.position = shapeOrigin(*record, pose, body.orientation) + rotate(body.orientation, body.shape->centerOfMass * body.scale);
+    body.position = shapeOrigin(record->center, pose, body.orientation) + rotate(body.orientation, body.shape->centerOfMass * body.scale);
     body.updateInertia();
     body.updateBounds();
 }
@@ -396,10 +473,62 @@ void sdf_world_set_body_mass(SDFWorld *world, SDFBodyID id, float mass)
     body.updateInertia();
 }
 
-void sdf_world_set_body_friction(SDFWorld *world, SDFBodyID id, float friction)
+SDFBodyOptions sdf_default_body_options(void)
+{
+    BodyRecord r;
+    SDFBodyOptions o = {};
+    o.staticFriction = r.staticFriction, o.dynamicFriction = r.dynamicFriction, o.restitution = r.restitution;
+    o.linearDamping = r.linearDamping, o.angularDamping = r.angularDamping;
+    o.affectedByGravity = r.affectedByGravity, o.trigger = r.trigger;
+    o.group = r.group, o.mask = r.mask;
+    return o;
+}
+
+void sdf_world_set_body_options(SDFWorld *world, SDFBodyID id, SDFBodyOptions o)
+{
+    BodyRecord *record = world->find(id);
+    if (!record)
+        return;
+    BodyRecord &r = *record;
+    setNonNegative(r.staticFriction, o.staticFriction);
+    setNonNegative(r.dynamicFriction, o.dynamicFriction);
+    setNonNegative(r.restitution, o.restitution);
+    setNonNegative(r.linearDamping, o.linearDamping);
+    setNonNegative(r.angularDamping, o.angularDamping);
+    r.affectedByGravity = o.affectedByGravity;
+    r.trigger = o.trigger;
+    r.group = o.group, r.mask = o.mask;
+    for (int i = 0; i < 3; i++)
+    {
+        r.linearMask[i] = o.translationLocked[i] ? 0.0f : 1.0f;
+        r.angularMask[i] = o.rotationLocked[i] ? 0.0f : 1.0f;
+    }
+    // Upstream's solver, the reference in tests, has one friction coefficient
+    r.body->friction = r.staticFriction;
+}
+
+void sdf_world_add_body_force(SDFWorld *world, SDFBodyID id, const float force[3], const float point[3])
+{
+    BodyRecord *record = world->find(id);
+    if (!record || record->mode != SDFBodyDynamic)
+        return;
+    float3 f = toFloat3(force);
+    record->force += f;
+    if (point)
+        record->torque += cross(toFloat3(point) - record->body->position, f);
+}
+
+void sdf_world_add_body_torque(SDFWorld *world, SDFBodyID id, const float torque[3])
+{
+    BodyRecord *record = world->find(id);
+    if (record && record->mode == SDFBodyDynamic)
+        record->torque += toFloat3(torque);
+}
+
+void sdf_world_clear_body_forces(SDFWorld *world, SDFBodyID id)
 {
     if (BodyRecord *record = world->find(id))
-        setNonNegative(record->body->friction, friction);
+        record->force = record->torque = {0, 0, 0};
 }
 
 void sdf_world_apply_impulse(SDFWorld *world, SDFBodyID id, const float impulse[3], const float point[3])
@@ -409,11 +538,19 @@ void sdf_world_apply_impulse(SDFWorld *world, SDFBodyID id, const float impulse[
         return;
     Body &body = *record->body;
     float3 j = toFloat3(impulse);
-    body.velocity += j * body.invMass;
-    body.angularVelocity += body.invInertiaWorld * cross(toFloat3(point) - body.position, j);
+    body.velocity += j * body.invMass * record->linearMask;
+    if (point)
+        body.angularVelocity += lockedInverseInertia(*record) * cross(toFloat3(point) - body.position, j);
 }
 
-// MARK: Contacts and picking
+void sdf_world_apply_angular_impulse(SDFWorld *world, SDFBodyID id, const float impulse[3])
+{
+    BodyRecord *record = world->find(id);
+    if (record && record->mode == SDFBodyDynamic)
+        record->body->angularVelocity += lockedInverseInertia(*record) * toFloat3(impulse);
+}
+
+// MARK: Contacts
 
 int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t capacity)
 {
@@ -433,6 +570,7 @@ int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t 
                 store(contact.position, point.x);
                 store(contact.normal, point.normal);
                 contact.separation = point.separation;
+                contact.impulse = point.normalImpulse;
                 contact.cached = point.cached;
             }
             count++;
@@ -440,6 +578,127 @@ int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t 
     }
     return count;
 }
+
+int32_t sdf_world_pairs(const SDFWorld *world, SDFPair *pairs, int32_t capacity)
+{
+    int32_t count = 0;
+    for (const PairRecord &p : world->pairs)
+    {
+        if (count < capacity)
+        {
+            SDFPair &pair = pairs[count];
+            pair.bodyA = p.bodyA, pair.bodyB = p.bodyB;
+            store(pair.position, p.position);
+            pair.penetration = p.penetration;
+            pair.impulse = p.impulse;
+            store(pair.impulseDirection, lengthSq(p.impulseVector) > 0 ? normalize(p.impulseVector) : float3{0, 0, 0});
+        }
+        count++;
+    }
+    return count;
+}
+
+// MARK: Queries
+
+int32_t sdf_world_raycast(SDFWorld *world, const float origin[3], const float direction[3], float length, uint32_t mask,
+                          SDFRayHit *hits, int32_t capacity)
+{
+    float3 o = toFloat3(origin), d = normalize(toFloat3(direction));
+    int32_t count = 0;
+    for (auto &body : world->solver.bodies)
+    {
+        if (!(world->record(body.get()).group & mask))
+            continue;
+        // Clip the ray against the bounding box, then sphere trace the SDF, like upstream's picking
+        body->updateBounds();
+        float t0 = 0, t1 = length;
+        for (int i = 0; i < 3; i++)
+        {
+            if (d[i] == 0)
+            {
+                // Parallel to the slab: inside it all along, or never
+                if (o[i] < body->bounds.min[i] || o[i] > body->bounds.max[i])
+                    t1 = -1;
+                continue;
+            }
+            float inv = 1.0f / d[i];
+            float a = (body->bounds.min[i] - o[i]) * inv, b = (body->bounds.max[i] - o[i]) * inv;
+            t0 = max(t0, min(a, b)), t1 = min(t1, max(a, b));
+        }
+        float t = t0;
+        for (int i = 0; i < 256 && t <= t1; i++)
+        {
+            float3 gradient;
+            float distance = body->sdf(o + d * t, &gradient);
+            if (distance < 1e-3f * body->scale)
+            {
+                if (count < capacity)
+                {
+                    SDFRayHit &hit = hits[count];
+                    hit.body = world->ids.at(body.get());
+                    store(hit.position, o + d * t);
+                    store(hit.normal, normalize(gradient));
+                    hit.distance = t;
+                }
+                count++;
+                break;
+            }
+            t += max(0.9f * distance, 1e-3f * body->scale); // Under-relaxed, since some fields are only quasi-exact
+        }
+    }
+    return count;
+}
+
+int32_t sdf_world_overlaps(SDFWorld *world, const SDFShape *shape, SDFPose pose, float margin, uint32_t mask,
+                           SDFOverlap *results, int32_t capacity)
+{
+    if (!shape || !(pose.scale > 0))
+        return 0;
+    margin = std::isfinite(margin) ? max(margin, 0.0f) : 0;
+    quat q = toQuat(pose.orientation);
+    Body query(shape->shape, shapeOrigin(shape->center, pose, q), q, pose.scale / shape->unitScale, true);
+
+    // The narrow phase of a step, repeated so that the cache converges without the step to step
+    // coherence it normally has. Its search volume grows by half the margin, so twice ours.
+    CollisionParams params = world->solver.params;
+    params.margin = 2 * margin;
+    params.warmStart = true;
+    params.randomSamples = std::max(params.randomSamples, 8);
+    const int rounds = 4;
+
+    int32_t count = 0;
+    for (auto &body : world->solver.bodies)
+    {
+        if (!(world->record(body.get()).group & mask))
+            continue;
+        body->updateBounds();
+        if (!overlaps(expand(query.bounds, margin), body->bounds))
+            continue;
+
+        Manifold manifold;
+        manifold.bodyA = &query, manifold.bodyB = body.get();
+        Random rng;
+        CollisionStats stats;
+        for (int i = 0; i < rounds; i++)
+            manifold.update(params, 0, rng, stats);
+        auto best = std::min_element(manifold.points.begin(), manifold.points.end(),
+                                     [](const ContactPoint &a, const ContactPoint &b) { return a.separation < b.separation; });
+        if (best == manifold.points.end() || best->separation > margin)
+            continue;
+        if (count < capacity)
+        {
+            SDFOverlap &overlap = results[count];
+            overlap.body = world->ids.at(body.get());
+            store(overlap.position, best->x);
+            store(overlap.normal, best->normal);
+            overlap.separation = best->separation;
+        }
+        count++;
+    }
+    return count;
+}
+
+// MARK: Picking
 
 SDFBodyID sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3])
 {

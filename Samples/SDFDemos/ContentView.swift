@@ -11,7 +11,6 @@ struct ContentView: View {
             Sidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320)
         } detail: {
-            // Top trailing, clear of RealityKit's statistics in the top leading corner
             ZStack(alignment: .topTrailing) {
                 Viewport(model: model)
                 StatsOverlay(simulation: model.simulation, sceneDescription: model.sceneDescription,
@@ -20,11 +19,7 @@ struct ContentView: View {
             }
         }
         .task {
-            if CommandLine.arguments.contains("--showcase") {
-                await model.runShowcase()
-            } else {
-                await model.loadScene(0)
-            }
+            await model.loadScene(0)
         }
     }
 }
@@ -55,7 +50,6 @@ private struct Sidebar: View {
                         .disabled(model.isLoading)
                 }
                 Toggle("Show contacts", isOn: $model.showsContacts)
-                Toggle("RealityKit statistics (ARView)", isOn: $model.showsRealityKitStatistics)
             }
 
             Section("Drop") {
@@ -68,7 +62,7 @@ private struct Sidebar: View {
                     .keyboardShortcut(.space, modifiers: [])
             }
 
-            ParametersSection(parameters: $model.parameters, reset: model.resetParameters)
+            ParametersSection(settings: $model.settings, reset: model.resetParameters)
 
             Section {
                 Text("Drag a body to move it, drag the background to orbit, pinch to zoom.")
@@ -81,30 +75,35 @@ private struct Sidebar: View {
 }
 
 private struct ParametersSection: View {
-    @Binding var parameters: SDFSimulation.Parameters
+    @Binding var settings: SDFSimulationComponent
     let reset: () -> Void
+
+    private var parameters: Binding<SDFCollisionDetection> { $settings.collisionDetection }
 
     var body: some View {
         Section("Collision Detection") {
-            Picker("Optimizer", selection: $parameters.optimizer) {
-                Text("Nelder–Mead").tag(SDFSimulation.Parameters.Optimizer.nelderMead)
-                Text("Ellipsoid").tag(SDFSimulation.Parameters.Optimizer.ellipsoid)
-                Text("Gradient Descent").tag(SDFSimulation.Parameters.Optimizer.gradientDescent)
+            Picker("Optimizer", selection: parameters.optimizer) {
+                Text("Nelder–Mead").tag(SDFCollisionDetection.Optimizer.nelderMead)
+                Text("Ellipsoid").tag(SDFCollisionDetection.Optimizer.ellipsoid)
+                Text("Gradient Descent").tag(SDFCollisionDetection.Optimizer.gradientDescent)
             }
-            Stepper("Cached samples: \(parameters.cachedSamples)", value: $parameters.cachedSamples, in: 0...16)
-            Stepper("Random samples: \(parameters.randomSamples)", value: $parameters.randomSamples, in: 0...16)
-            Toggle("Temporal cache", isOn: $parameters.usesTemporalCache)
-            Toggle("Curvature sampling", isOn: $parameters.usesCurvatureSampling)
-            Toggle("Skip convex samples", isOn: $parameters.skipsConvexSamples)
-            LabeledSlider(title: "Softmax ε", value: $parameters.softmaxEpsilon, range: 0...0.5)
-            LabeledSlider(title: "Repulsion α", value: $parameters.repulsionAlpha, range: 0...0.1)
-            LabeledSlider(title: "Tolerance τ", value: $parameters.tolerance, range: 0.001...0.05)
-            Stepper("Max iterations: \(parameters.maxIterations)", value: $parameters.maxIterations, in: 5...200, step: 5)
+            Stepper("Cached samples: \(settings.collisionDetection.cachedSamples)", value: parameters.cachedSamples, in: 0...16)
+            Stepper("Random samples: \(settings.collisionDetection.randomSamples)", value: parameters.randomSamples, in: 0...16)
+            Toggle("Temporal cache", isOn: parameters.usesTemporalCache)
+            Toggle("Curvature sampling", isOn: parameters.usesCurvatureSampling)
+            Toggle("Skip convex samples", isOn: parameters.skipsConvexSamples)
+            LabeledSlider(title: "Softmax ε", value: parameters.softmaxEpsilon, range: 0...0.5)
+            LabeledSlider(title: "Repulsion α", value: parameters.repulsionAlpha, range: 0...0.1)
+            LabeledSlider(title: "Tolerance τ", value: parameters.tolerance, range: 0.001...0.05)
+            Stepper("Max iterations: \(settings.collisionDetection.maxIterations)", value: parameters.maxIterations, in: 5...200, step: 5)
+            LabeledSlider(title: "Contact margin", value: parameters.contactMargin, range: 0...0.1)
         }
         Section("Solver") {
-            Stepper("Substeps: \(parameters.substeps)", value: $parameters.substeps, in: 1...16)
-            Stepper("Iterations: \(parameters.solverIterations)", value: $parameters.solverIterations, in: 1...100)
-            LabeledSlider(title: "Contact margin", value: $parameters.contactMargin, range: 0...0.1)
+            Stepper("Substeps: \(settings.substeps)", value: $settings.substeps, in: 1...16)
+            Stepper("Velocity iterations: \(settings.solverIterations.velocityIterations)",
+                    value: $settings.solverIterations.velocityIterations, in: 1...100)
+            Stepper("Position iterations: \(settings.solverIterations.positionIterations)",
+                    value: $settings.solverIterations.positionIterations, in: 0...100)
             Button("Paper Defaults", action: reset)
         }
     }
@@ -140,7 +139,6 @@ private struct StatsOverlay: View {
             let stats = simulation.statistics
             VStack(alignment: .leading, spacing: 2) {
                 Text(sceneDescription).font(.headline.monospaced())
-                Text("physics: SDF engine (RealityKit physics off)")
                 if isLoading {
                     Text("Baking shapes…")
                 }
@@ -174,18 +172,12 @@ private struct Viewport: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // The same entities run in either RealityKit host
-                if model.showsRealityKitStatistics {
-                    ARViewport(model: model)
-                } else {
-                    RealityView { content in
-                        content.add(model.root)
-                        content.add(DemoStage.makeFloor())
-                        content.add(DemoStage.makeLight())
-                        content.add(model.cameraEntity)
-                    }
+                RealityView { content in
+                    content.add(model.root)
+                    content.add(DemoStage.makeFloor())
+                    content.add(DemoStage.makeLight())
+                    content.add(model.cameraEntity)
                 }
-                // Gestures on a SwiftUI layer, since ARView handles its own mouse events
                 Color.clear
                     .contentShape(.rect)
                     .gesture(dragGesture(in: geometry.size))
@@ -228,23 +220,4 @@ private struct Viewport: View {
             }
             .onEnded { _ in lastMagnification = 1 }
     }
-}
-
-/// Hosts the scene in an ARView, which shows RealityKit's own statistics overlay
-private struct ARViewport: NSViewRepresentable {
-    let model: DemoModel
-
-    func makeNSView(context: Context) -> ARView {
-        let view = ARView(frame: .zero)
-        view.debugOptions = [.showStatistics]
-        view.environment.background = .color(NSColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1))
-        let anchor = AnchorEntity(world: .zero)
-        for entity in [model.root, DemoStage.makeFloor(), DemoStage.makeLight(), model.cameraEntity] {
-            anchor.addChild(entity)
-        }
-        view.scene.addAnchor(anchor)
-        return view
-    }
-
-    func updateNSView(_ view: ARView, context: Context) {}
 }

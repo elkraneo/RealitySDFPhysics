@@ -1,6 +1,6 @@
 // Simulates every demo scene and renders it offscreen with RealityKit to a PNG, and prints timings.
 //
-//   swift run -c release sdf-snapshot <output directory> [steps >= 0] [scene index...]
+//   swift run -c release sdf-snapshot [--single-threaded] <output directory> [steps >= 0] [scene index...]
 //
 // Steps default to 240 (4 s of simulated time).
 
@@ -14,11 +14,12 @@ import SDFDemoScenes
 import UniformTypeIdentifiers
 
 func usage() -> Never {
-    print("usage: sdf-snapshot <output directory> [steps >= 0] [scene index...]")
+    print("usage: sdf-snapshot [--single-threaded] <output directory> [steps >= 0] [scene index...]")
     exit(1)
 }
 
-let arguments = CommandLine.arguments.dropFirst()
+let isMultithreaded = !CommandLine.arguments.contains("--single-threaded")
+let arguments = CommandLine.arguments.dropFirst().filter { $0 != "--single-threaded" }
 guard let output = arguments.first else { usage() }
 let numbers = arguments.dropFirst().compactMap { Int($0) }
 guard numbers.count == arguments.count - 1 else { usage() }
@@ -39,7 +40,9 @@ do {
         let scene = DemoScene.all[index]
         let simulation = SDFSimulation()
         let root = Entity()
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        var settings = SDFSimulationComponent(simulation: simulation)
+        settings.isMultithreaded = isMultithreaded
+        root.components.set(settings)
 
         let loadStart = Date()
         try await scene.load(into: root)

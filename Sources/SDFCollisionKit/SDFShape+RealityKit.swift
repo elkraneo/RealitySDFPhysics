@@ -16,6 +16,28 @@ extension SDFShape {
         }.value
     }
 
+    /// Bakes several entities at once, each like `bake(from:resolution:)`, in parallel. Returns the
+    /// shapes in the order of the entities.
+    @MainActor
+    public static func bake(from entities: [Entity], resolution: Int = 100) async throws -> [SDFShape] {
+        let meshes = entities.map { entity in
+            var positions: [SIMD3<Float>] = []
+            var indices: [UInt32] = []
+            appendTriangles(of: entity, relativeTo: entity, positions: &positions, indices: &indices)
+            return (positions, indices)
+        }
+        return try await withThrowingTaskGroup(of: (Int, SDFShape).self) { group in
+            for (index, mesh) in meshes.enumerated() {
+                group.addTask {
+                    (index, try SDFShape(baking: mesh.0, indices: mesh.1, resolution: resolution))
+                }
+            }
+            var shapes = [SDFShape?](repeating: nil, count: meshes.count)
+            for try await (index, shape) in group { shapes[index] = shape }
+            return shapes.map { $0! }
+        }
+    }
+
     @MainActor
     private static func appendTriangles(of entity: Entity, relativeTo root: Entity, positions: inout [SIMD3<Float>],
                                         indices: inout [UInt32]) {
