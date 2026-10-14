@@ -4,29 +4,37 @@ What a step costs, where it runs, and the current limits.
 
 ## Overview
 
-The simulation steps on the main actor, single threaded, inside RealityKit's update. Only baking
-runs in the background. The engine seeds its random sampling with a fixed value, so the same bodies
-and inputs give bit-identical results on every run.
+The simulation steps on the main actor, inside RealityKit's update. Collision detection, which
+takes most of a step, runs on several threads (``SDFSimulationComponent/isMultithreaded``); the
+contact solver runs on the main actor. Baking runs in the background.
+
+The engine seeds its random sampling with fixed values, so the same bodies and inputs give
+bit-identical results on every run. Multithreaded, every pair of bodies draws from its own seeded
+sequence, so results don't depend on the number of threads either. They do differ from a single
+thread's, which reproduces the paper's engine exactly.
 
 ## Measurements
 
-The demo scenes of the paper, rebuilt on this package, on an Apple M1 in a release build: 240 steps
-at 60 steps per second with 4 substeps each. Times vary by about 20% from run to run on the same
-machine; run `swift run -c release sdf-snapshot out/` to measure yours.
+The demo scenes of the paper, rebuilt on this package, on an Apple M1 (4 performance and 4
+efficiency cores) in a release build: 240 steps at 60 steps per second with 4 substeps each. Times
+vary by up to about 20% from run to run on the same machine; run
+`swift run -c release sdf-snapshot out/` to measure yours, and add `--single-threaded` for the
+other column.
 
-| Scene | Bodies | Contacts at the end | Step ms, mean |
+| Scene | Bodies | Step ms, multithreaded | Step ms, one thread |
 | --- | ---: | ---: | ---: |
-| Box Stack | 29 | 196 | 1.8 |
-| Gear Stack | 11 | 48 | 0.7 |
-| Falling Boxes (plain, bent, twisted, displaced) | 13 | 47–54 | 0.9–2.3 |
-| Pile of Chairs | 28 | 115 | 5.8 |
-| Spiky Wheel | 12 | 40 | 0.9 |
-| Cows on Spikes | 20 | 74 | 4.4 |
-| Bunny Pile | 28 | 92 | 10.8 |
-| Primitives | 49 | 187 | 7.0 |
+| Box Stack | 29 | 1.7 | 1.7 |
+| Gear Stack | 11 | 0.5 | 0.6 |
+| Falling Boxes (plain, bent, twisted, displaced) | 13 | 0.6–1.0 | 0.8–2.3 |
+| Pile of Chairs | 28 | 1.6 | 4.5 |
+| Spiky Wheel | 12 | 0.7 | 0.9 |
+| Cows on Spikes | 20 | 1.4 | 4.1–5.9 |
+| Bunny Pile | 28 | 2.4 | 8.5–9.8 |
+| Primitives | 49 | 2.7 | 6.6 |
 
-At 60 frames per second a frame has about 16 ms, so piles of a few dozen concave bodies fit in a
-frame with room to spare, and the heaviest scenes take most of it on an M1.
+At 60 frames per second a frame has about 16 ms, so piles of a few dozen concave bodies take a
+small part of a frame. Scenes of convex shapes gain little from threads, since their pairs are
+cheap to begin with.
 
 ## Keep it fast
 
@@ -40,5 +48,7 @@ frame with room to spare, and the heaviest scenes take most of it on an M1.
 - **Discrete collision detection.** Contacts are found at each substep, so a fast, thin body can
   pass through another between two substeps. Raise the substeps, or keep such bodies thicker.
 - **No sleeping yet.** Bodies at rest are simulated like moving ones.
+- **Solver on the main actor.** The contact solver is sequential; with many contacts, it becomes
+  the larger part of a multithreaded step.
 - **No joints yet.**
 - **Uniform scale.** A body's entity can be scaled, but uniformly.

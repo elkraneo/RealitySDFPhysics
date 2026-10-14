@@ -109,6 +109,7 @@ typedef struct
     float gravity[3];
     float restitutionThreshold;  // Approach speed below which contacts do not bounce
     uint32_t pairOptions;        // SDFPairOptions
+    bool parallel;               // Narrow phase on several threads, with a random sequence per pair
 } SDFParams;
 
 // Per step statistics

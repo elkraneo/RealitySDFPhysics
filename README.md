@@ -73,25 +73,26 @@ swift test
 
 Use release builds: debug builds of the engine are several times slower.
 
-Apple M1, release, 240 steps at 60 Hz with 4 substeps, single threaded. Times vary by about 20%
-between runs.
+Apple M1, release, 240 steps at 60 Hz with 4 substeps. Times vary by up to about 20% between runs.
 
-| Scene | Bodies | Step ms mean |
-| --- | ---: | ---: |
-| Box Stack | 29 | 1.8 |
-| Gear Stack | 11 | 0.7 |
-| Falling Boxes (plain / bend / twist / displace) | 13 | 0.9–2.3 |
-| Pile of Chairs | 28 | 5.8 |
-| Spiky Wheel | 12 | 0.9 |
-| Cows on Spikes | 20 | 4.4 |
-| Bunny Pile | 28 | 10.8 |
-| Primitives | 49 | 7.0 |
+| Scene | Bodies | Step ms, multithreaded | Step ms, one thread |
+| --- | ---: | ---: | ---: |
+| Box Stack | 29 | 1.7 | 1.7 |
+| Gear Stack | 11 | 0.5 | 0.6 |
+| Falling Boxes (plain / bend / twist / displace) | 13 | 0.6–1.0 | 0.8–2.3 |
+| Pile of Chairs | 28 | 1.6 | 4.5 |
+| Spiky Wheel | 12 | 0.7 | 0.9 |
+| Cows on Spikes | 20 | 1.4 | 4.1–5.9 |
+| Bunny Pile | 28 | 2.4 | 8.5–9.8 |
+| Primitives | 49 | 2.7 | 6.6 |
 
 ## Notes
 
-- **Deterministic.** The engine is single threaded and seeds its sampling with a fixed value, so
-  the same bodies and inputs give bit-identical results.
-- **Main actor.** The simulation steps on the main actor. Only baking runs in the background.
+- **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, so the same bodies
+  and inputs give bit-identical results whatever the number of threads. Turn
+  `isMultithreaded` off to reproduce the paper's engine exactly.
+- **Threads.** The simulation steps on the main actor; its collision detection runs on several
+  threads, and baking in the background.
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies do not collide with each
   other. Give an entity one or the other.
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.

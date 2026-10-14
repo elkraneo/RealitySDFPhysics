@@ -183,6 +183,7 @@ static SDFParams paramsOf(const SDFWorld &world)
     store(p.gravity, solver.gravity);
     p.restitutionThreshold = world.restitutionThreshold;
     p.pairOptions = world.pairOptions;
+    p.parallel = world.parallel;
     return p;
 }
 
@@ -242,6 +243,7 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
         solver.gravity = gravity;
     setNonNegative(world->restitutionThreshold, p.restitutionThreshold);
     world->pairOptions = p.pairOptions;
+    world->parallel = p.parallel;
 }
 
 void sdf_world_step(SDFWorld *world)

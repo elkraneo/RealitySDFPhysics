@@ -48,6 +48,7 @@ struct SDFWorld
     int32_t positionIterations = 20;
     float restitutionThreshold = 1;
     uint32_t pairOptions = 0;          // SDFPairOptions
+    bool parallel = false;             // Narrow phase on several threads
 
     double stepMilliseconds = 0;
     SDFBodyID nextID = 1;

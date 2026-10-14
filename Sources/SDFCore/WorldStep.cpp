@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <dispatch/dispatch.h>
 #include <map>
 #include <numeric>
 
@@ -86,6 +87,15 @@ float effectiveMass(const Mover &a, const Mover &b, float3 rA, float3 rB, float3
 
 bool isDynamic(const BodyRecord &r) { return r.mode == SDFBodyDynamic; }
 
+// SplitMix64, to derive independent random streams from a seed
+uint64_t mix(uint64_t x)
+{
+    x += 0x9e3779b97f4a7c15ULL;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    return x ^ (x >> 31);
+}
+
 // Whether the narrow phase runs for a pair: at least one dynamic body, or a kinematic body when
 // the world reports those pairs, and filters that accept each other
 bool shouldCollide(const BodyRecord &a, const BodyRecord &b, uint32_t options)
@@ -158,8 +168,44 @@ void SDFWorld::step()
 
         // Narrow phase: Algorithm 1 for every pair
         auto start = std::chrono::steady_clock::now();
-        for (auto &entry : s.manifolds)
-            entry.second.update(s.params, h, s.rng, s.stats);
+        if (!parallel)
+        {
+            for (auto &entry : s.manifolds)
+                entry.second.update(s.params, h, s.rng, s.stats);
+        }
+        else
+        {
+            // Pairs are independent but for upstream's single random sequence. Each pair gets its
+            // own, seeded from the world's sequence and the pair's bodies, so that the results do
+            // not depend on the number of threads or the order the pairs finish in.
+            struct Job
+            {
+                Manifold *manifold;
+                Random rng;
+                CollisionStats stats;
+            };
+            uint64_t seed = (uint64_t)s.rng.next() << 32 | s.rng.next();
+            std::vector<Job> jobs;
+            jobs.reserve(s.manifolds.size());
+            for (auto &entry : s.manifolds)
+            {
+                Job job = {&entry.second};
+                job.rng.state = mix(seed ^ mix((uint64_t)ids.at(entry.second.bodyA) << 32 | ids.at(entry.second.bodyB)));
+                jobs.push_back(job);
+            }
+            const CollisionParams &params = s.params;
+            Job *data = jobs.data();
+            dispatch_apply(jobs.size(), DISPATCH_APPLY_AUTO, ^(size_t i) {
+                data[i].manifold->update(params, h, data[i].rng, data[i].stats);
+            });
+            for (const Job &job : jobs)
+            {
+                s.stats.pairs += job.stats.pairs;
+                s.stats.contacts += job.stats.contacts;
+                s.stats.iterations += job.stats.iterations;
+                s.stats.queries += job.stats.queries;
+            }
+        }
         s.stats.milliseconds += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 
         // External forces

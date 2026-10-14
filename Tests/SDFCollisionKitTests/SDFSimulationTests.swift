@@ -129,10 +129,13 @@ import simd
         #expect(simulation.mass(of: box) == 5)
     }
 
-    @Test func simulationIsDeterministic() {
+    @Test(arguments: [false, true])
+    func simulationIsDeterministic(isMultithreaded: Bool) {
         func pile() -> [SIMD3<Float>] {
             let root = Entity(), simulation = SDFSimulation()
-            root.components.set(SDFSimulationComponent(simulation: simulation))
+            var settings = SDFSimulationComponent(simulation: simulation)
+            settings.isMultithreaded = isMultithreaded
+            root.components.set(settings)
             let ground = Entity()
             ground.position = [0, -0.5, 0]
             ground.components.set(SDFBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))

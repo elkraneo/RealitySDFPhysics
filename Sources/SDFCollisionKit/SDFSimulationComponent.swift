@@ -39,8 +39,16 @@ public struct SDFSimulationComponent: Component {
     /// The parameters of the paper's collision detection
     public var collisionDetection: SDFCollisionDetection
 
+    /// Runs the collision detection of different pairs on several threads, which makes scenes of
+    /// many concave bodies several times faster. Each pair then draws its random samples from its
+    /// own seeded sequence, so results stay deterministic whatever the number of threads, but
+    /// differ from those of a single thread. On by default; turn it off to reproduce the paper's
+    /// engine exactly.
+    public var isMultithreaded: Bool
+
     /// A simulation with the paper's parameters: 60 steps per second of 4 substeps each, with 20
-    /// velocity and 20 position iterations, and Earth's gravity
+    /// velocity and 20 position iterations, and Earth's gravity. Collision detection is
+    /// multithreaded.
     @MainActor
     public init(simulation: SDFSimulation = SDFSimulation()) {
         _ = registration
@@ -55,6 +63,7 @@ public struct SDFSimulationComponent: Component {
         isPaused = false
         restitutionThreshold = p.restitutionThreshold
         collisionDetection = SDFCollisionDetection(p)
+        isMultithreaded = true
     }
 
     /// The nearest ancestor of an entity, or the entity itself, that has an `SDFSimulationComponent`
@@ -76,6 +85,7 @@ public struct SDFSimulationComponent: Component {
         p.timeStep = timeStep
         p.gravity = (gravity.x, gravity.y, gravity.z)
         p.restitutionThreshold = restitutionThreshold
+        p.parallel = isMultithreaded
         p.pairOptions = (collisionOptions.contains(.reportKinematicVsStatic) ? SDFReportKinematicVsStatic.rawValue : 0)
             | (collisionOptions.contains(.reportKinematicVsKinematic) ? SDFReportKinematicVsKinematic.rawValue : 0)
         return p
