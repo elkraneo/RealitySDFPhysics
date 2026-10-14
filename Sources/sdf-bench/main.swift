@@ -3,7 +3,8 @@
 //
 //   swift run -c release sdf-bench [steps]
 //   swift run -c release sdf-bench quality [steps]
-//   swift run -c release sdf-bench phases [steps]
+//   swift run -c release sdf-bench phases [steps] [tori ...]
+//   swift run -c release sdf-bench soak [minutes] [tori ...]
 //
 // `quality` compares SDFCollisionKit's settings, from the paper's to RealityKit-like ones: step time,
 // deepest penetration, how still the pile ends, and bodies out of the box; and, for the default
@@ -11,7 +12,11 @@
 //
 // `phases` splits the step of the real-time preset, without sleeping so that every body keeps
 // moving, into collision detection (the narrow phase, on several threads and on one), the rest of
-// the engine (broad phase, solver and integration) and the Swift synchronization.
+// the engine (the solver, then the broad phase and integration) and the Swift synchronization.
+//
+// `soak` runs the pile for minutes of simulated time, with sleeping and without, and prints every
+// minute the memory footprint, the step time and how far the pile has moved since it settled, to
+// catch leaks and drift.
 //
 // The tori fall into a walled box. For RealityKit, each torus is the best it has for a moving torus:
 // a compound of 12 capsules (from a mesh it would generate a convex hull, which closes the hole).
@@ -29,9 +34,10 @@ import Metal
 import RealityKit
 import SDFCollisionKit
 
-let mode = CommandLine.arguments.dropFirst().first.flatMap { ["quality", "phases"].contains($0) ? $0 : nil }
+let mode = CommandLine.arguments.dropFirst().first.flatMap { ["quality", "phases", "soak"].contains($0) ? $0 : nil }
 let isQuality = mode == "quality"
 let steps = CommandLine.arguments.dropFirst(mode == nil ? 1 : 2).first.flatMap { Int($0) } ?? 300
+let countArguments = CommandLine.arguments.dropFirst(3).compactMap { Int($0) }
 let counts = [25, 50, 100, 200, 400]
 let major: Float = 0.15, minor: Float = 0.04, segments = 12
 
@@ -198,7 +204,7 @@ func quality(count: Int, setting: Setting) -> String {
         root.addChild(entity)
         bodies.append(entity)
     }
-    var time = 0.0, endTime = 0.0, deepest: Float = 0, deepestAtRest: Float = 0, endSpeed: Float = 0
+    var time = 0.0, endTime = 0.0, deepest: Float = 0, deepestAtRest: Float = 0, endSpeed: Float = 0, fastest: Float = 0, spinning: Float = 0
     for step in 0..<steps {
         let start = DispatchTime.now().uptimeNanoseconds
         simulation.step(root: root)
@@ -212,16 +218,92 @@ func quality(count: Int, setting: Setting) -> String {
             deepestAtRest = max(deepestAtRest, overlap)
             endSpeed += bodies.map { length($0.components[SDFMotionComponent.self]!.linearVelocity) }.reduce(0, +) / Float(bodies.count) / 30
         }
+        if step == steps - 1 {
+            fastest = bodies.map { length($0.components[SDFMotionComponent.self]!.linearVelocity) }.max() ?? 0
+            spinning = bodies.map { length($0.components[SDFMotionComponent.self]!.angularVelocity) }.max() ?? 0
+        }
     }
     let name = setting.name.padding(toLength: 34, withPad: " ", startingAt: 0)
     return name + String(format: " %4d   %6.2f ms  %6.2f ms   %5.1f mm   %5.1f mm   %6.1f mm/s   %4d   ", count,
                          time / Double(steps), endTime, deepest * 1000, deepestAtRest * 1000, endSpeed * 1000,
                          simulation.statistics.sleepingBodies) + check(bodies)
+        + String(format: " (fastest %.1f mm/s, %.3f rad/s)", fastest * 1000, spinning)
+}
+
+/// The process's physical memory footprint in megabytes
+func footprintMB() -> Double {
+    var info = task_vm_info_data_t()
+    var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+    let result = withUnsafeMutablePointer(to: &info) {
+        $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+    }
+    return result == KERN_SUCCESS ? Double(info.phys_footprint) / 1e6 : .nan
+}
+
+/// Minutes of the pile, with sleeping or without: memory, step time, and the drift of the pile
+/// since it settled (20 s in)
+@MainActor
+func soak(count: Int, minutes: Int, isSleepingEnabled: Bool) {
+    let root = Entity(), simulation = SDFSimulation()
+    var settings = SDFSimulationComponent(simulation: simulation)
+    settings.isSleepingEnabled = isSleepingEnabled
+    root.components.set(settings)
+    for wall in walls {
+        let entity = Entity()
+        entity.position = wall.center
+        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
+        root.addChild(entity)
+    }
+    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
+    var bodies: [Entity] = []
+    for placement in placements(count) {
+        let entity = Entity()
+        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
+        entity.components.set(SDFBodyComponent(shape: torus))
+        entity.components.set(SDFMotionComponent())
+        root.addChild(entity)
+        bodies.append(entity)
+    }
+    print("\(count) tori, sleeping \(isSleepingEnabled ? "on" : "off"): footprint and step time per simulated minute, drift of the pile since 20 s")
+    print("minute   footprint   step (last 600)   contacts   asleep   max drift   max turn   max speed   invalid")
+    var settled: [Transform] = []
+    for minute in 0..<minutes {
+        var time = 0.0
+        for second in 0..<60 {
+            for _ in 0..<60 {
+                let start = DispatchTime.now().uptimeNanoseconds
+                simulation.step(root: root)
+                if second >= 50 { time += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6 / 600 }
+            }
+            if minute == 0 && second == 19 { settled = bodies.map(\.transform) }
+        }
+        var drift: Float = 0, turn: Float = 0, speed: Float = 0, invalid = 0
+        for (body, rest) in zip(bodies, settled) {
+            let t = body.transform
+            if !t.translation.x.isFinite || !t.translation.y.isFinite || !t.translation.z.isFinite { invalid += 1; continue }
+            drift = max(drift, simd_distance(t.translation, rest.translation))
+            turn = max(turn, abs(simd_quatf(from: rest.rotation.act([0, 1, 0]), to: t.rotation.act([0, 1, 0])).angle))
+            speed = max(speed, length(body.components[SDFMotionComponent.self]!.linearVelocity))
+        }
+        print(String(format: "%6d   %6.1f MB   %8.2f ms       %8d   %6d   %6.2f mm   %6.3f°   %7.2f mm/s   %7d", minute + 1, footprintMB(), time,
+                     simulation.statistics.contacts, simulation.statistics.sleepingBodies, drift * 1000, turn * 180 / .pi, speed * 1000, invalid)
+            + (invalid > 0 ? "   " + check(bodies) : ""))
+    }
+    print("   " + check(bodies))
+}
+
+if mode == "soak" {
+    let minutes = steps == 300 ? 10 : steps
+    for count in countArguments.isEmpty ? [100] : countArguments {
+        soak(count: count, minutes: minutes, isSleepingEnabled: true)
+        soak(count: count, minutes: minutes, isSleepingEnabled: false)
+    }
+    exit(0)
 }
 
 /// Mean milliseconds per step of each phase of the real-time preset, without sleeping
 @MainActor
-func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, engine: Double, step: Double, contacts: Int) {
+func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, solver: Double, engine: Double, step: Double, contacts: Int) {
     let root = Entity(), simulation = SDFSimulation()
     var settings = SDFSimulationComponent(simulation: simulation)
     settings.isSleepingEnabled = false
@@ -240,28 +322,30 @@ func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, engine: Do
         entity.components.set(SDFBodyComponent(shape: torus))
         root.addChild(entity)
     }
-    var collision = 0.0, engine = 0.0, step = 0.0, contacts = 0
+    var collision = 0.0, solver = 0.0, engine = 0.0, step = 0.0, contacts = 0
     for _ in 0..<steps {
         let start = DispatchTime.now().uptimeNanoseconds
         simulation.step(root: root)
         step += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
         let statistics = simulation.statistics
         collision += statistics.collisionMilliseconds
+        solver += statistics.solverMilliseconds
         engine += statistics.stepMilliseconds
         contacts += statistics.contacts
     }
     let n = Double(steps)
-    return (collision / n, engine / n, step / n, contacts / steps)
+    return (collision / n, solver / n, engine / n, step / n, contacts / steps)
 }
 
 if mode == "phases" {
-    print("ms/step, mean over \(steps) steps: real-time preset without sleeping. Collision is the narrow phase;")
-    print("the rest of the engine is the broad phase, solver and integration; Swift is the synchronization.")
-    print("tori   contacts   collision (threads / one)   rest of engine   Swift   step")
-    for count in [100, 400, 800] {
+    print("ms/step, mean over \(steps) steps: real-time preset without sleeping. Collision is the narrow phase, solver the")
+    print("contact solver; the rest of the engine is the broad phase and integration; Swift is the synchronization.")
+    print("tori   contacts   collision (threads / one)   solver   rest of engine   Swift   step")
+    for count in countArguments.isEmpty ? [100, 400, 800] : countArguments {
         let multi = phases(count: count, isMultithreaded: true), single = phases(count: count, isMultithreaded: false)
-        print(String(format: "%4d   %8d   %8.2f / %8.2f          %8.2f   %6.2f   %6.2f", count, multi.contacts,
-                     multi.collision, single.collision, multi.engine - multi.collision, multi.step - multi.engine, multi.step))
+        print(String(format: "%4d   %8d   %8.2f / %8.2f   %6.2f   %8.2f   %6.2f   %6.2f", count, multi.contacts,
+                     multi.collision, single.collision, multi.solver, multi.engine - multi.collision - multi.solver,
+                     multi.step - multi.engine, multi.step))
     }
     exit(0)
 }
@@ -276,8 +360,10 @@ if isQuality {
         Setting(name: "RealityKit-like: 1, 6/2", substeps: 1, velocityIterations: 6, positionIterations: 2),
     ]
     print("setting                            tori   step       last 30     deepest    at rest    end speed    asleep  check")
-    for count in [25, 100, 400] {
-        for setting in settings { print(quality(count: count, setting: setting)) }
+    for count in countArguments.isEmpty ? [25, 100, 400] : countArguments {
+        for setting in settings where countArguments.isEmpty || setting.name.hasPrefix("real time") {
+            print(quality(count: count, setting: setting))
+        }
     }
     exit(0)
 }

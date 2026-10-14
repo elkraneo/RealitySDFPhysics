@@ -279,6 +279,7 @@ SDFWorld *sdf_world_copy(const SDFWorld *world)
     copy->sleeping = world->sleeping;
     copy->nextIsland = world->nextIsland;
     copy->stepMilliseconds = world->stepMilliseconds;
+    copy->solverMilliseconds = world->solverMilliseconds;
     copy->nextID = world->nextID;
     copy->pairs = world->pairs;
     for (const auto &entry : world->records)
@@ -368,6 +369,7 @@ SDFStats sdf_world_stats(const SDFWorld *world)
     stats.queries = s.queries;
     stats.collisionMilliseconds = s.milliseconds;
     stats.stepMilliseconds = world->stepMilliseconds;
+    stats.solverMilliseconds = world->solverMilliseconds;
     stats.sleepingBodies = (int32_t)std::count_if(world->records.begin(), world->records.end(),
                                                   [](const auto &entry) { return entry.second.asleep; });
     return stats;

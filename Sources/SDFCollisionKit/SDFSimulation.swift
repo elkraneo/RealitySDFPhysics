@@ -409,6 +409,8 @@ public final class SDFSimulation {
         public var queries: Int
         /// Narrow phase time, summed over the substeps
         public var collisionMilliseconds: Double
+        /// Contact solver time, summed over the substeps
+        public var solverMilliseconds: Double
         public var stepMilliseconds: Double
         /// Dynamic bodies asleep after the step
         public var sleepingBodies: Int
@@ -418,7 +420,8 @@ public final class SDFSimulation {
         let s = sdf_world_stats(world)
         return Statistics(bodies: Int(s.bodies), pairs: Int(s.pairs), contacts: Int(s.contacts),
                           optimizerIterations: Int(s.iterations), queries: Int(s.queries),
-                          collisionMilliseconds: s.collisionMilliseconds, stepMilliseconds: s.stepMilliseconds,
+                          collisionMilliseconds: s.collisionMilliseconds, solverMilliseconds: s.solverMilliseconds,
+                          stepMilliseconds: s.stepMilliseconds,
                           sleepingBodies: Int(s.sleepingBodies))
     }
 

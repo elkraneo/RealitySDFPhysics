@@ -4,14 +4,17 @@ What a step costs, where it runs, and the current limits.
 
 ## Overview
 
-The simulation steps on the main actor, inside RealityKit's update. Collision detection, which
-takes most of a step, runs on several threads (``SDFSimulationComponent/isMultithreaded``); the
-contact solver runs on the main actor. Baking runs in the background.
+The simulation steps on the main actor, inside RealityKit's update. With
+``SDFSimulationComponent/isMultithreaded``, collision detection, which takes most of a step, runs
+on several threads, and so does the contact solver: its contacts are colored so that no two of a
+color share a moving body, and each color is solved at once on the performance cores but one.
+Baking runs in the background.
 
 The engine seeds its random sampling with fixed values, so the same bodies and inputs give
 bit-identical results on every run. Multithreaded, every pair of bodies draws from its own seeded
-sequence, so results don't depend on the number of threads either. They do differ from a single
-thread's, which follows upstream's single random sequence.
+sequence, and the solver takes its contacts in the order of their colors, so results don't depend
+on the number of threads either. They do differ from a single thread's, which follows upstream's
+single random sequence and solves the contacts in the order of the pairs.
 
 ## Measurements
 
@@ -52,7 +55,8 @@ cheap to begin with.
 
 - **Discrete collision detection.** Contacts are found at each substep, so a fast, thin body can
   pass through another between two substeps. Raise the substeps, or keep such bodies thicker.
-- **Solver on the main actor.** The contact solver is sequential; with many contacts, it becomes
-  the larger part of a multithreaded step.
+- **Scalar solver.** The contact solver takes one contact at a time; with many contacts, it stays
+  a large part of a multithreaded step. On an M1, 400 tori take about 2.5 ms a step for the solver,
+  against 6 ms on one thread.
 - **No joints yet.**
 - **Uniform scale.** A body's entity can be scaled, but uniformly.

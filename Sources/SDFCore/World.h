@@ -3,10 +3,12 @@
 
 #pragma once
 
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
 #include "SDFCore.h"
+#include "WorkerPool.h"
 #include "solver.h"
 
 // Per body state the upstream Body has no fields for. The defaults reproduce upstream's solver.
@@ -55,7 +57,8 @@ struct SDFWorld
     int32_t positionIterations = 20;
     float restitutionThreshold = 1;
     uint32_t pairOptions = 0;          // SDFPairOptions
-    bool parallel = false;             // Narrow phase on several threads
+    bool parallel = false;             // Narrow phase and solver on several threads
+    std::unique_ptr<WorkerPool> solverPool; // Created on first use
     float metersPerUnit = 1;           // For the physical constants that upstream gives in meters
     bool sleeping = false;             // Puts still islands of touching bodies to sleep
     uint32_t nextIsland = 1;
@@ -64,6 +67,7 @@ struct SDFWorld
     bool broadPhaseCurrent = false;
 
     double stepMilliseconds = 0;
+    double solverMilliseconds = 0;
     SDFBodyID nextID = 1;
     std::unordered_map<SDFBodyID, BodyRecord> records;
     std::unordered_map<const Body *, SDFBodyID> ids;

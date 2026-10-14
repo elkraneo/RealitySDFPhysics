@@ -50,11 +50,12 @@ public struct SDFSimulationComponent: Component {
     /// The parameters of the paper's collision detection
     public var collisionDetection: SDFCollisionDetection
 
-    /// Runs the collision detection of different pairs on several threads, which makes scenes of
-    /// many concave bodies several times faster. Each pair then draws its random samples from its
-    /// own seeded sequence, so results stay deterministic whatever the number of threads, but
-    /// differ from those of a single thread. On by default; turn it off for upstream's single random
-    /// sequence.
+    /// Runs the collision detection of different pairs, and the contact solver, on several
+    /// threads, which makes scenes of many bodies several times faster. Each pair then draws its
+    /// random samples from its own seeded sequence, and the solver takes the contacts color by
+    /// color (no two contacts of a color share a moving body), so results stay deterministic
+    /// whatever the number of threads, but differ from those of a single thread. On by default;
+    /// turn it off for upstream's single random sequence and contact order.
     public var isMultithreaded: Bool
 
     /// Puts bodies to sleep when they and the bodies they touch have been nearly still for half a
