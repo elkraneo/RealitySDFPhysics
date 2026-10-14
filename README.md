@@ -37,6 +37,10 @@ gear.components.set(SDFBodyComponent(shape: try await .bake(from: gear),
 gear.position = [0, 2, 0]
 root.addChild(gear)
 
+// Objects of another size: model them at about 1 unit in a scaled root, and say how long a unit is
+// let root = Entity(); root.scale = [0.01, 0.01, 0.01]
+// root.components.set(SDFSimulationComponent(metersPerUnit: 0.01)) // Centimeters
+
 // Forces and events, as with RealityKit's physics
 gear.sdfPhysics.applyAngularImpulse([0, 2, 0], relativeTo: nil)
 let simulation = root.components[SDFSimulationComponent.self]!.simulation

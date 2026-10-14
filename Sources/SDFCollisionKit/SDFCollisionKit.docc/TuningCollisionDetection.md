@@ -35,7 +35,8 @@ pairs, the contacts and the work of the optimizer for the last step.
   when the optimizer stops. A larger tolerance is faster and coarser.
 - ``SDFCollisionDetection/contactMargin`` (0.02) and
   ``SDFCollisionDetection/allowedPenetration`` (0.01): bodies rest a skin apart, between these
-  two. Scale both with your objects if they are much larger or smaller than 1 unit.
+  two. Rather than scaling them for objects much larger or smaller than 1 unit, model the objects
+  at about 1 unit in a scaled root (see <doc:GettingStarted>).
 
 ## Solver settings
 

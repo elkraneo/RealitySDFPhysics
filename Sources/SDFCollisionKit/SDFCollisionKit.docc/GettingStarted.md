@@ -29,9 +29,21 @@ RealityView { content in
 ```
 
 The root's frame is the simulation's frame. Positions, velocities, forces and query results are in
-it, and gravity points down its y axis. The default parameters suit objects about 1 unit across,
-so for tabletop scale, build the scene in units of about a meter and scale the root down. Scaling
-the root scales the whole simulation, gravity included.
+its units, and gravity points down its y axis, as with RealityKit's `PhysicsSimulationComponent`.
+
+### Choose units
+
+The collision tolerances suit objects about 1 unit across. For objects of another size, model them
+at about that size in the root, scale the root to show them at theirs, and give the length of a
+unit in ``SDFSimulationComponent/metersPerUnit``. That sets the defaults that are physical rather
+than relative to the objects, such as gravity and the density of water:
+
+```swift
+// Dice 2 cm across, modeled in centimeters
+let root = Entity()
+root.scale = SIMD3(repeating: 0.01)
+root.components.set(SDFSimulationComponent(metersPerUnit: 0.01)) // Gravity is 981 units/s²
+```
 
 ## Add bodies
 

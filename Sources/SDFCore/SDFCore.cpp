@@ -184,6 +184,7 @@ static SDFParams paramsOf(const SDFWorld &world)
     p.restitutionThreshold = world.restitutionThreshold;
     p.pairOptions = world.pairOptions;
     p.parallel = world.parallel;
+    p.metersPerUnit = world.metersPerUnit;
     return p;
 }
 
@@ -244,6 +245,8 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
     setNonNegative(world->restitutionThreshold, p.restitutionThreshold);
     world->pairOptions = p.pairOptions;
     world->parallel = p.parallel;
+    if (std::isfinite(p.metersPerUnit) && p.metersPerUnit > 0)
+        world->metersPerUnit = p.metersPerUnit;
 }
 
 void sdf_world_step(SDFWorld *world)
@@ -281,8 +284,9 @@ SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pos
                           mode != SDFBodyDynamic);
     if (mode == SDFBodyDynamic)
     {
-        // Upstream bodies have unit density, ours that of water
-        body->mass *= 1000, body->inertia = body->inertia * 1000;
+        // Upstream bodies have unit density, ours that of water: 1000 kg per cubic meter
+        float density = 1000 * powf(world->metersPerUnit, 3);
+        body->mass *= density, body->inertia = body->inertia * density;
         body->updateInertia();
     }
     world->solver.add(body);

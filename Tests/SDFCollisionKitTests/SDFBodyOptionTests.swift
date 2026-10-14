@@ -213,4 +213,24 @@ import simd
         withExtendedLifetime(subscription) { run(2) }
         #expect(began == 1)
     }
+
+    @Test func metersPerUnitSetsThePhysicalDefaults() {
+        // A 1 m cube modeled in centimeters, in a root scaled to 0.01
+        let root = Entity(), simulation = SDFSimulation()
+        root.scale = SIMD3(repeating: 0.01)
+        let settings = SDFSimulationComponent(simulation: simulation, metersPerUnit: 0.01)
+        #expect(simd_distance(settings.gravity, [0, -981, 0]) < 1e-3)
+        #expect(abs(settings.restitutionThreshold - 100) < 1e-3)
+        root.components.set(settings)
+        let cube = Entity()
+        cube.position = [0, 500, 0]
+        cube.components.set(SDFBodyComponent(shape: .box(halfExtents: [50, 50, 50])))
+        root.addChild(cube)
+        simulation.step(root: root)
+        #expect(abs(simulation.mass(of: cube)! - 1000) < 30) // Water, integrated over a voxelization
+        for _ in 0..<23 { simulation.step(root: root) } // 0.4 s in all
+        // Falls 0.5 g t² = 78 cm, less a little for the damping
+        let fallen = 500 - cube.position.y
+        #expect(fallen > 74 && fallen < 79, "fell \(fallen) cm")
+    }
 }

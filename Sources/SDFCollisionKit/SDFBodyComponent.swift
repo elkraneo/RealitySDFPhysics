@@ -125,30 +125,38 @@ public struct SDFMaterial: Equatable, Sendable {
 /// uniform density. The counterpart of `PhysicsMassProperties`.
 public struct SDFMassProperties: Equatable, Sendable {
     enum Value: Equatable {
+        case water
         case density(Float)
         case mass(Float)
     }
 
     let value: Value
 
-    /// A total mass
+    private init(_ value: Value) {
+        self.value = value
+    }
+
+    /// A total mass, in kilograms
     public init(mass: Float) {
         value = .mass(mass)
     }
 
-    /// Mass per unit volume, in the root's units
+    /// Mass per unit volume of the root, in kilograms. In a root whose unit is a centimeter, 1 g
+    /// per cubic centimeter is 0.001.
     public init(density: Float) {
         value = .density(density)
     }
 
-    /// The density of water, 1000
-    public static let `default` = SDFMassProperties(density: 1000)
+    /// The density of water, 1000 kg per cubic meter, whatever the root's unit
+    public static let `default` = SDFMassProperties(.water)
 
-    /// The mass of a shape at a scale
-    func mass(of shape: SDFShape, scale: Float) -> Float {
-        switch value {
+    /// The mass of a shape at a scale, in a root whose unit is `metersPerUnit` long
+    func mass(of shape: SDFShape, scale: Float, metersPerUnit: Float) -> Float {
+        let volume = shape.volume * scale * scale * scale
+        return switch value {
+        case .water: 1000 * pow(metersPerUnit, 3) * volume
         case .mass(let mass): mass
-        case .density(let density): density * shape.volume * scale * scale * scale
+        case .density(let density): density * volume
         }
     }
 }

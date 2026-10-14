@@ -256,7 +256,8 @@ void SDFWorld::step()
             float3 targetVelocity = (s.dragTarget - anchor) * (0.2f / h) - body->pointVelocity(anchor) * 0.85f;
             float3x3 K = identity3() * body->invMass - skew(r) * body->invInertiaWorld * skew(r);
             float3 impulse = inverse(K) * targetVelocity;
-            float maxImpulse = body->mass * 50.0f * h;
+            // Upstream limits the pull to 50 m/s², converted to the world's units
+            float maxImpulse = body->mass * (50.0f / metersPerUnit) * h;
             if (length(impulse) > maxImpulse)
                 impulse = impulse * (maxImpulse / length(impulse));
             movers[std::find_if(s.bodies.begin(), s.bodies.end(), [&](auto &b) { return b.get() == body; }) - s.bodies.begin()]

@@ -49,6 +49,7 @@ struct SDFWorld
     float restitutionThreshold = 1;
     uint32_t pairOptions = 0;          // SDFPairOptions
     bool parallel = false;             // Narrow phase on several threads
+    float metersPerUnit = 1;           // For the physical constants that upstream gives in meters
 
     double stepMilliseconds = 0;
     SDFBodyID nextID = 1;

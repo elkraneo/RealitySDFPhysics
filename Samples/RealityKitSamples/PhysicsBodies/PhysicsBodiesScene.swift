@@ -51,7 +51,7 @@ final class PhysicsBodiesScene {
 
     init() {
         root.scale = SIMD3(repeating: 0.1)
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
         root.addChild(makeContainment())
         root.addChild(bodies)
         content.addChild(root)

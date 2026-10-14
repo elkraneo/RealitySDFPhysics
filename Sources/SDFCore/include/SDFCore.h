@@ -110,6 +110,7 @@ typedef struct
     float restitutionThreshold;  // Approach speed below which contacts do not bounce
     uint32_t pairOptions;        // SDFPairOptions
     bool parallel;               // Narrow phase on several threads, with a random sequence per pair
+    float metersPerUnit;         // Length of a unit, for the drag limit and the default density
 } SDFParams;
 
 // Per step statistics
@@ -157,7 +158,7 @@ typedef struct
     float scale;                 // Uniform
 } SDFPose;
 
-// The shape is retained by the body. Dynamic bodies get a mass of 1000 per unit volume.
+// The shape is retained by the body. Dynamic bodies get the mass of their volume of water.
 SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pose, SDFBodyMode mode);
 void sdf_world_remove_body(SDFWorld *world, SDFBodyID body);
 

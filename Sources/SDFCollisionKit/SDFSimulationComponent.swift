@@ -6,11 +6,22 @@ internal import SDFCore
 ///
 /// Everything happens in the root's local frame and units: scale the root to scale the whole
 /// simulation. Nested simulations own their own subtrees.
+///
+/// The collision tolerances suit objects about 1 unit across, so model your objects at about that
+/// size and scale the root to show them at theirs; then say how long a unit is with
+/// `metersPerUnit`, for the physical constants.
 public struct SDFSimulationComponent: Component {
     /// The simulation's state: its bodies, statistics, contacts, queries and events
     public let simulation: SDFSimulation
 
-    /// Acceleration of gravity in the root's frame and units, per second squared
+    /// The length of a unit of the root, in meters. It sets the defaults that are physical rather
+    /// than relative to the objects' size: gravity, the restitution threshold, the density of
+    /// `SDFMassProperties.default`, and the limit on the force of `SDFSimulation.drag(to:)`. For
+    /// dice modeled in centimeters, in a root scaled to 0.01, it is 0.01.
+    public let metersPerUnit: Float
+
+    /// Acceleration of gravity in the root's frame and units, per second squared. By default
+    /// 9.81 m/s² down the y axis.
     public var gravity: SIMD3<Float>
 
     /// Contact solver iterations per substep. `velocityIterations` solve the contacts and friction,
@@ -33,7 +44,7 @@ public struct SDFSimulationComponent: Component {
     public var isPaused: Bool
 
     /// Speed below which contacts do not bounce, whatever their restitution, so that resting
-    /// bodies settle
+    /// bodies settle, in units per second. By default 1 m/s.
     public var restitutionThreshold: Float
 
     /// The parameters of the paper's collision detection
@@ -49,19 +60,24 @@ public struct SDFSimulationComponent: Component {
     /// A simulation with the paper's parameters: 60 steps per second of 4 substeps each, with 20
     /// velocity and 20 position iterations, and Earth's gravity. Collision detection is
     /// multithreaded.
+    ///
+    /// - Parameters:
+    ///   - simulation: The simulation, for example one you keep to query and subscribe to
+    ///   - metersPerUnit: The length of a unit of the root, in meters
     @MainActor
-    public init(simulation: SDFSimulation = SDFSimulation()) {
+    public init(simulation: SDFSimulation = SDFSimulation(), metersPerUnit: Float = 1) {
         _ = registration
         self.simulation = simulation
+        self.metersPerUnit = metersPerUnit > 0 && metersPerUnit.isFinite ? metersPerUnit : 1
         let p = sdf_default_params()
-        gravity = SIMD3(p.gravity.0, p.gravity.1, p.gravity.2)
+        gravity = SIMD3(p.gravity.0, p.gravity.1, p.gravity.2) / self.metersPerUnit
         solverIterations = .init(positionIterations: Int(p.positionIterations), velocityIterations: Int(p.velocityIterations))
         collisionOptions = .none
         timeStep = p.timeStep
         substeps = Int(p.substeps)
         maximumStepsPerFrame = 4
         isPaused = false
-        restitutionThreshold = p.restitutionThreshold
+        restitutionThreshold = p.restitutionThreshold / self.metersPerUnit
         collisionDetection = SDFCollisionDetection(p)
         isMultithreaded = true
     }
@@ -86,6 +102,7 @@ public struct SDFSimulationComponent: Component {
         p.gravity = (gravity.x, gravity.y, gravity.z)
         p.restitutionThreshold = restitutionThreshold
         p.parallel = isMultithreaded
+        p.metersPerUnit = metersPerUnit
         p.pairOptions = (collisionOptions.contains(.reportKinematicVsStatic) ? SDFReportKinematicVsStatic.rawValue : 0)
             | (collisionOptions.contains(.reportKinematicVsKinematic) ? SDFReportKinematicVsKinematic.rawValue : 0)
         return p

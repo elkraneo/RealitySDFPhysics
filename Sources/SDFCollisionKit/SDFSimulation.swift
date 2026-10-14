@@ -31,6 +31,8 @@ public final class SDFSimulation {
     /// Bodies whose forces are set in the engine
     private var forced: Set<SDFBodyID> = []
     private var isStepping = false
+    /// The length of a unit of the root being simulated, from its component
+    private var metersPerUnit: Float = 1
     var events = EventRouter()
     /// Pairs touching after the last step
     var touching: [PairKey: (entityA: Entity, entityB: Entity)] = [:]
@@ -55,6 +57,7 @@ public final class SDFSimulation {
     public func update(root: Entity, deltaTime: TimeInterval) {
         guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
         sdf_world_set_params(world, settings.engine)
+        metersPerUnit = settings.metersPerUnit
         let dynamic = synchronize(root: root, deltaTime: deltaTime)
         guard !settings.isPaused else { return }
         let timeStep = TimeInterval(settings.timeStep)
@@ -75,6 +78,7 @@ public final class SDFSimulation {
     public func step(root: Entity) {
         guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
         sdf_world_set_params(world, settings.engine)
+        metersPerUnit = settings.metersPerUnit
         let timeStep = TimeInterval(settings.timeStep)
         step(root: root, dynamic: synchronize(root: root, deltaTime: timeStep), timeStep: timeStep)
         updatePushes = [:]
@@ -179,7 +183,7 @@ public final class SDFSimulation {
             body.options = options
         }
         if body.massProperties != component.massProperties {
-            sdf_world_set_body_mass(world, body.id, component.massProperties.mass(of: component.shape, scale: scale))
+            sdf_world_set_body_mass(world, body.id, component.massProperties.mass(of: component.shape, scale: scale, metersPerUnit: metersPerUnit))
             body.massProperties = component.massProperties
         }
         switch component.mode {
@@ -212,7 +216,7 @@ public final class SDFSimulation {
         sdf_world_set_body_options(world, id, options.engine)
         // The engine computes the default mass itself
         if component.massProperties != .default {
-            sdf_world_set_body_mass(world, id, component.massProperties.mass(of: component.shape, scale: scale))
+            sdf_world_set_body_mass(world, id, component.massProperties.mass(of: component.shape, scale: scale, metersPerUnit: metersPerUnit))
         }
         if let motion { setVelocity(of: id, motion) }
         bodies[entity.id] = Body(id: id, entity: entity, shape: component.shape, mode: component.mode, scale: scale,
