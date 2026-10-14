@@ -1,3 +1,6 @@
+// Derived from upstream/solver.cpp, Copyright (c) 2026 Chris Giles, MIT License (see
+// upstream/LICENSE).
+//
 // Our solver: upstream's Solver::step (upstream/solver.cpp, MIT, Chris Giles) with the per body
 // options of BodyRecord, collision filtering and contact totals for events. With every option at
 // its default it takes exactly the same steps, which SolverReferenceTests checks against
