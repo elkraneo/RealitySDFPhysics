@@ -30,7 +30,7 @@ import SwiftUI
 
 @MainActor
 @Observable
-final class DiceScene {
+package final class DiceScene {
     struct Die {
         let kind: DieKind
         /// The body, in the simulation root's centimeters
@@ -40,8 +40,8 @@ final class DiceScene {
         let shape: SDFShape
     }
 
-    @ObservationIgnored let content = Entity()
-    @ObservationIgnored let camera = SampleCamera(eye: [0.09, 0.3, 0.4], target: [0.09, 0, 0], fieldOfView: 40)
+    @ObservationIgnored package let content = Entity()
+    @ObservationIgnored package let camera = SampleCamera(eye: [0.09, 0.3, 0.4], target: [0.09, 0, 0], fieldOfView: 40)
     @ObservationIgnored private var root = Entity()
     @ObservationIgnored private var dice: [Die] = []
     @ObservationIgnored private let table = Entity()
@@ -50,17 +50,17 @@ final class DiceScene {
     @ObservationIgnored private var walls: [Entity] = []
 
     /// A thrown die and the value on top
-    struct Roll: Identifiable {
-        var id: String { kind.rawValue }
-        let kind: DieKind
-        let value: Int
+    package struct Roll: Identifiable {
+        package var id: String { kind.rawValue }
+        package let kind: DieKind
+        package let value: Int
     }
 
     /// The faces the hidden copy of the last toss predicted, as soon as it knows them
-    private(set) var predicted: [Roll]?
+    package private(set) var predicted: [Roll]?
     /// The faces on top once the last toss came to rest
-    private(set) var rolled: [Roll]?
-    private(set) var isRolling = false
+    package private(set) var rolled: [Roll]?
+    package private(set) var isRolling = false
 
     // MARK: Setup
 
@@ -68,7 +68,7 @@ final class DiceScene {
     /// The table's collision group, which picking leaves out
     static let tableGroup = CollisionGroup(rawValue: 1 << 2)
 
-    init() {
+    package init() {
         let light = DirectionalLight()
         light.light.intensity = 3500
         light.shadow = DirectionalLightComponent.Shadow(maximumDistance: 2, depthBias: 1)
@@ -78,7 +78,7 @@ final class DiceScene {
     }
 
     /// Loads Apple's dice models and bakes their shapes
-    func load() async throws {
+    package func load() async throws {
         // A table 1 m across and its rim, in centimeters
         var tableBody = SDFBodyComponent(shape: .cylinder(radius: Self.tableRadius, halfHeight: 5), mode: .static)
         tableBody.filter = CollisionFilter(group: Self.tableGroup, mask: .all)
@@ -190,12 +190,20 @@ final class DiceScene {
     private let holdHeight: Float = 6
 
     /// Grabs the die under a point of the view, and with `tossAll` pulls the others around it
-    func pickUp(at point: CGPoint, in size: CGSize, tossAll: Bool) -> Bool {
+    package func pickUp(at point: CGPoint, in size: CGSize, tossAll: Bool) -> Bool {
         let ray = camera.ray(through: point, in: size)
         guard let hit = simulation.raycast(origin: root.convert(position: ray.origin, from: nil),
                                            direction: root.convert(direction: ray.direction, from: nil), length: 1000,
                                            query: .nearest, mask: .all.subtracting(Self.tableGroup)).first,
               let index = dice.firstIndex(where: { $0.entity == hit.entity }) else { return false }
+        pickUp(die: index, at: hit.position, tossAll: tossAll)
+        return true
+    }
+
+    /// Grabs a die by its index at a point (by default the top of its center, in the root's frame),
+    /// for scripted tosses
+    package func pickUp(die index: Int, at point: SIMD3<Float>? = nil, tossAll: Bool) {
+        let point = point ?? dice[index].entity.position + [0, 1, 0]
         held = [(index, .zero)]
         if tossAll {
             // Apple's hexagon of the other dice around the held one, 10 cm across
@@ -205,14 +213,18 @@ final class DiceScene {
             }
         }
         let entity = dice[index].entity
-        grab = (entity.convert(position: hit.position, from: root), hit.position)
+        grab = (entity.convert(position: point, from: root), point)
         holding = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
         stopWatchingRoll()
-        return true
+    }
+
+    /// Moves the grabbed point's target to a point of the root's frame, for scripted tosses
+    package func move(heldTo target: SIMD3<Float>) {
+        grab?.target = target
     }
 
     /// Moves the grabbed point's target under a point of the view, at the hold height
-    func move(to point: CGPoint, in size: CGSize) {
+    package func move(to point: CGPoint, in size: CGSize) {
         let ray = camera.ray(through: point, in: size)
         let origin = root.convert(position: ray.origin, from: nil), direction = root.convert(direction: ray.direction, from: nil)
         guard grab != nil, abs(direction.y) > 1e-6 else { return }
@@ -244,7 +256,7 @@ final class DiceScene {
     }
 
     /// Lets the held dice go with their velocities and a random spin, and forecasts the roll
-    func toss(maxScore: Bool) {
+    package func toss(maxScore: Bool) {
         guard !held.isEmpty else { return }
         holding = nil
         grab = nil
@@ -316,7 +328,7 @@ final class DiceScene {
     }
 
     /// Puts the dice back in their row, with their models unturned
-    func reset() {
+    package func reset() {
         held = []
         holding = nil
         grab = nil

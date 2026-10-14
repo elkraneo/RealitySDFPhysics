@@ -4,13 +4,19 @@ import simd
 
 /// A fixed perspective camera, and the world space ray through a point of the view for picking.
 /// Apple's samples run in visionOS volumes, which macOS windows replace with a camera.
-struct SampleCamera {
-    var eye: SIMD3<Float>
-    var target: SIMD3<Float> = .zero
-    var fieldOfView: Float = 50
+package struct SampleCamera {
+    package var eye: SIMD3<Float>
+    package var target: SIMD3<Float>
+    package var fieldOfView: Float
+
+    package init(eye: SIMD3<Float>, target: SIMD3<Float> = .zero, fieldOfView: Float = 50) {
+        self.eye = eye
+        self.target = target
+        self.fieldOfView = fieldOfView
+    }
 
     @MainActor
-    func makeEntity() -> PerspectiveCamera {
+    package func makeEntity() -> PerspectiveCamera {
         let camera = PerspectiveCamera()
         camera.camera.fieldOfViewInDegrees = fieldOfView
         camera.camera.fieldOfViewOrientation = .vertical
@@ -19,7 +25,7 @@ struct SampleCamera {
         return camera
     }
 
-    func ray(through point: CGPoint, in size: CGSize) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
+    package func ray(through point: CGPoint, in size: CGSize) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
         let forward = normalize(target - eye)
         let right = normalize(cross(forward, [0, 1, 0]))
         let up = cross(right, forward)

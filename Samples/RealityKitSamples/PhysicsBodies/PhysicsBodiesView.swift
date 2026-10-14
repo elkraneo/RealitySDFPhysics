@@ -7,6 +7,7 @@
 
 import RealityKit
 import SDFCollisionKit
+import RealityKitSampleScenes
 import SwiftUI
 
 struct PhysicsBodiesView: View {

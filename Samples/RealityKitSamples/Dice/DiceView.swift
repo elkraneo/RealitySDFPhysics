@@ -5,6 +5,7 @@
 // toggles, becomes a bar over the view. Dice are picked with the simulation's raycast.
 
 import RealityKit
+import RealityKitSampleScenes
 import SwiftUI
 
 struct DiceView: View {

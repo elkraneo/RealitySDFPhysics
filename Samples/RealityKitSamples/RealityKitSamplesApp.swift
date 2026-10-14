@@ -2,6 +2,7 @@
 // keeps the structure and values of Apple's, and says where and why it differs.
 
 import RealityKit
+import RealityKitSampleScenes
 import SwiftUI
 
 @main

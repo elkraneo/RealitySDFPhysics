@@ -27,12 +27,12 @@ import simd
 import SwiftUI
 
 @MainActor
-final class PhysicsBodiesScene {
-    enum Shape: String, CaseIterable, Identifiable {
+package final class PhysicsBodiesScene {
+    package enum Shape: String, CaseIterable, Identifiable {
         case spheres = "Spheres"
         case tori = "Tori"
 
-        var id: Self { self }
+        package var id: Self { self }
     }
 
     /// The edge of the cubic volume, in meters
@@ -41,17 +41,17 @@ final class PhysicsBodiesScene {
     /// The walls' collision group, which the drag's raycast leaves out
     static let walls = CollisionGroup(rawValue: 1 << 1)
 
-    let content = Entity()
+    package let content = Entity()
     /// The simulation root, scaled so that its units are decimeters
     let root = Entity()
-    let camera = SampleCamera(eye: [0, 0.45, 1.8])
-    let simulation = SDFSimulation()
+    package let camera = SampleCamera(eye: [0, 0.45, 1.8])
+    package let simulation = SDFSimulation()
     private let bodies = Entity()
     /// The body being dragged and the world space point it is pulled toward
     private var drag: (entity: Entity, target: SIMD3<Float>)?
     private var dragSubscription: AnyCancellable?
 
-    init() {
+    package init() {
         root.scale = SIMD3(repeating: 0.1)
         root.components.set(SDFSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
         root.addChild(makeContainment())
@@ -72,8 +72,8 @@ final class PhysicsBodiesScene {
     }
 
     /// Replaces the bodies with 16 new ones of a shape
-    func reset(shape: Shape) {
-        spawning?.cancel()
+    package func reset(shape: Shape) {
+        spawning = nil
         bodies.children.removeAll()
         guard shape == .tori else {
             // Apple's spheres appear at once in semi-random places, overlapping ones pushing apart
@@ -86,28 +86,30 @@ final class PhysicsBodiesScene {
             return
         }
         // Tori placed overlapping can be threaded through each other, links that no motion can
-        // undo. They appear one at a time, each where the simulation's overlap query finds room.
-        spawning = Task {
-            for index in 0..<16 {
-                let body = Self.makeBody(shape)
-                body.name = "\(shape.rawValue)_\(index)"
-                guard let component = body.components[SDFBodyComponent.self] else { return }
-                for _ in 0..<50 {
-                    let position = root.convert(position: SIMD3<Float>.random(in: -0.3...0.3), from: nil)
-                    let place = Transform(rotation: body.orientation, translation: position)
-                    if simulation.overlaps(of: component.shape, at: place, margin: 0.2).isEmpty {
-                        body.transform = place
-                        bodies.addChild(body)
-                        break
-                    }
+        // undo. They appear one at a time, every 12 steps, each where the simulation's overlap query
+        // finds room.
+        var spawned = 0, steps = 0
+        spawning = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { [unowned self] _ in
+            steps += 1
+            guard steps % 12 == 0 else { return }
+            let body = Self.makeBody(shape)
+            body.name = "\(shape.rawValue)_\(spawned)"
+            guard let component = body.components[SDFBodyComponent.self] else { return }
+            for _ in 0..<50 {
+                let position = root.convert(position: SIMD3<Float>.random(in: -0.3...0.3), from: nil)
+                let place = Transform(rotation: body.orientation, translation: position)
+                if simulation.overlaps(of: component.shape, at: place, margin: 0.2).isEmpty {
+                    body.transform = place
+                    bodies.addChild(body)
+                    break
                 }
-                try? await Task.sleep(for: .seconds(0.2))
-                if Task.isCancelled { return }
             }
+            spawned += 1
+            if spawned == 16 { spawning = nil }
         }
     }
 
-    private var spawning: Task<Void, Never>?
+    private var spawning: AnyCancellable?
 
     // MARK: Bodies
 
@@ -200,18 +202,18 @@ final class PhysicsBodiesScene {
     // MARK: Dragging
 
     /// Starts dragging the body under a point of the view. Returns its distance from the camera.
-    func beginDrag(at point: CGPoint, in size: CGSize) -> Float? {
+    package func beginDrag(at point: CGPoint, in size: CGSize) -> Float? {
         guard let (entity, distance) = pick(at: point, in: size) else { return nil }
         drag = (entity, entity.position(relativeTo: nil))
         return distance
     }
 
     /// Moves the drag target to a world space point
-    func drag(to target: SIMD3<Float>) {
+    package func drag(to target: SIMD3<Float>) {
         drag?.target = target
     }
 
-    func endDrag() {
+    package func endDrag() {
         drag = nil
     }
 

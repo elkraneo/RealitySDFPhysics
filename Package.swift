@@ -36,13 +36,19 @@ let package = Package(
             dependencies: ["SDFDemoScenes"],
             path: "Samples/SDFDemos"
         ),
-        // Apple's RealityKit physics samples, ported to SDF bodies
-        .executableTarget(
-            name: "RealityKitSamples",
+        // Apple's RealityKit physics samples, ported to SDF bodies: the scenes, shared by the app and
+        // the video renderer, and the app
+        .target(
+            name: "RealityKitSampleScenes",
             dependencies: ["SDFCollisionKit"],
-            path: "Samples/RealityKitSamples",
+            path: "Samples/RealityKitSampleScenes",
             exclude: ["Dice/Models/LICENSE.txt"],
             resources: [.copy("Dice/Models")]
+        ),
+        .executableTarget(
+            name: "RealityKitSamples",
+            dependencies: ["RealityKitSampleScenes"],
+            path: "Samples/RealityKitSamples"
         ),
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(
@@ -52,7 +58,7 @@ let package = Package(
         // Showcase video of the demo scenes, rendered offscreen
         .executableTarget(
             name: "sdf-video",
-            dependencies: ["SDFDemoScenes"]
+            dependencies: ["SDFDemoScenes", "RealityKitSampleScenes"]
         ),
         .testTarget(
             name: "SDFCollisionKitTests",

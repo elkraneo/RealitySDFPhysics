@@ -12,16 +12,16 @@ import RealityKit
 import SDFCollisionKit
 
 /// Marks a body that the other marked bodies and the center attract
-struct AttractionComponent: Component {}
+package struct AttractionComponent: Component {}
 
-struct AttractionSystem: System {
+package struct AttractionSystem: System {
     let entityQuery = EntityQuery(where: .has(AttractionComponent.self))
     /// The closest two of Apple's spheres can be, in meters
     let minimumDistance: Float = 0.06
 
-    init(scene: RealityKit.Scene) {}
+    package init(scene: RealityKit.Scene) {}
 
-    func update(context: SceneUpdateContext) {
+    package func update(context: SceneUpdateContext) {
         let bodies = Array(context.entities(matching: entityQuery, updatingSystemWhen: .rendering))
         for body in bodies {
             // Start with a force back to the center, with the inverse-square law

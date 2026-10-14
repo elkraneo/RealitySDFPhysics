@@ -8,7 +8,7 @@
 
 import simd
 
-enum DieKind: String, CaseIterable {
+package enum DieKind: String, CaseIterable {
     case d4 = "D4"
     case d6 = "D6"
     case d8 = "D8"
@@ -18,7 +18,7 @@ enum DieKind: String, CaseIterable {
     case d20 = "D20"
 
     /// The die's name, with the custom D8's values
-    var label: String { self == .customD8 ? "D8 (1–35)" : rawValue }
+    package var label: String { self == .customD8 ? "D8 (1–35)" : rawValue }
 
     struct Face {
         var normal: SIMD3<Float>
