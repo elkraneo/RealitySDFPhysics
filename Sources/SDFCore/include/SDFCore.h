@@ -57,6 +57,10 @@ void sdf_shape_release(SDFShape *shape);
 // outside may be ambiguous
 bool sdf_shape_is_watertight(const SDFShape *shape);
 
+// True for analytical convex shapes, and for baked meshes that are closed and convex. Pairs of
+// convex shapes skip random samples while their contact is tracked.
+bool sdf_shape_is_convex(const SDFShape *shape);
+
 // Volume enclosed by the shape, in its frame's units
 float sdf_shape_volume(const SDFShape *shape);
 

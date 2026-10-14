@@ -45,6 +45,14 @@ import simd
         #expect(throws: SDFShape.BakeError.invalidMesh) { try SDFShape(baking: [], indices: []) }
         #expect(throws: SDFShape.BakeError.invalidMesh) { try SDFShape(baking: [.zero, .one, [1, 0, 0]], indices: [0, 1, 7]) }
     }
+
+    @Test func bakedConvexMeshesAreConvex() throws {
+        #expect(SDFShape.box(halfExtents: [1, 1, 1]).isConvex)
+        #expect(!SDFShape.torus(majorRadius: 1, minorRadius: 0.3).isConvex)
+        #expect(try SDFShape.bakedBox(halfExtents: [0.5, 0.3, 0.2]).isConvex)
+        let torus = SDFShape.torus(majorRadius: 1, minorRadius: 0.3).surface
+        #expect(try !SDFShape(baking: torus.positions, indices: torus.indices, resolution: 48).isConvex)
+    }
 }
 
 extension SDFShape {

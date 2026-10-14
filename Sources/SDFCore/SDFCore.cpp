@@ -64,6 +64,37 @@ SDFShape *sdf_shape_warped_box(SDFWarp warp, float halfX, float halfY, float hal
     return makeShape(new WarpedBox((WarpedBox::Type)std::clamp((int)warp, 0, 2), {halfX, halfY, halfZ}, k));
 }
 
+} // extern "C"
+
+// Whether every triangle's plane leaves the whole mesh on the side of its centroid, within a
+// tolerance. Upstream marks only analytical shapes convex, which lets convex pairs skip the random
+// samples of the narrow phase while the temporal cache tracks their contact (Sec. 3.5.2). Without
+// it, those samples keep nudging bodies that rest on a flat face, such as dice.
+static bool isConvex(const Mesh &mesh, float tolerance)
+{
+    // Quadratic in the mesh size: large meshes are left concave, which is always safe
+    if ((double)mesh.triangleCount() * mesh.positions.size() > 5e7)
+        return false;
+    float3 centroid = {0, 0, 0};
+    for (float3 p : mesh.positions)
+        centroid += p;
+    centroid = centroid / (float)mesh.positions.size();
+    for (int t = 0; t < mesh.triangleCount(); t++)
+    {
+        float3 a = mesh.vertex(t, 0), n = cross(mesh.vertex(t, 1) - a, mesh.vertex(t, 2) - a);
+        if (lengthSq(n) < 1e-20f)
+            continue;
+        n = normalize(n);
+        float inside = dot(n, centroid - a) < 0 ? 1.0f : -1.0f; // Sign of the outward side
+        for (float3 p : mesh.positions)
+            if (inside * dot(n, p - a) > tolerance)
+                return false;
+    }
+    return true;
+}
+
+extern "C" {
+
 SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint32_t *indices, int32_t indexCount,
                          int32_t resolution)
 {
@@ -106,6 +137,9 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     // VoxelSdf normalizes the mesh with the same center and scale
     auto voxel = std::make_shared<VoxelSdf>(mesh, "", std::max(8, resolution));
     voxel->finalize();
+    // Dents under 0.5% of the size, such as the tessellation of rounded edges, are well within
+    // the contact margin and can't change a contact
+    voxel->convex = voxel->watertight && isConvex(mesh, 5e-3f * extent);
     SDFShape *handle = new SDFShape();
     handle->shape = voxel;
     handle->center = center(box);
@@ -120,6 +154,8 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
 void sdf_shape_release(SDFShape *shape) { delete shape; }
 
 bool sdf_shape_is_watertight(const SDFShape *shape) { return shape->watertight; }
+
+bool sdf_shape_is_convex(const SDFShape *shape) { return shape->shape->convex; }
 
 float sdf_shape_volume(const SDFShape *shape) { return shape->shape->volume / powf(shape->unitScale, 3); }
 

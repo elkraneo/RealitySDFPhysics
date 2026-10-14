@@ -37,6 +37,10 @@ let shape = try await SDFShape.bake(from: chair, resolution: 64)
   form a closed surface. ``SDFShape/isWatertight`` is false when some edges are not shared by two
   triangles. Vertices duplicated at normal and texture seams are welded first, so split vertices
   are fine.
+- **Convex meshes rest still.** A mesh that is closed and convex, up to dents under 0.5% of its
+  size such as rounded edges, bakes into a shape with ``SDFShape/isConvex``. Pairs of convex
+  shapes touch in a single region, so their collision detection stops sampling for others while
+  it tracks that contact, which keeps a die or a box still on a flat face.
 - **Choose a resolution.** Features thinner than about two cells are lost. Baking time and memory
   grow with the cube of the resolution: 100 cells take up to about a second on an Apple M1.
 - **Bake once.** Share a shape between all the bodies that use it, and keep it around across scene
