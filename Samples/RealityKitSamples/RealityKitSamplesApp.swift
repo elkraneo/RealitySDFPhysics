@@ -21,6 +21,7 @@ struct RealityKitSamplesApp: App {
 
 private enum Sample: String, CaseIterable, Identifiable {
     case physicsBodies = "Physics Bodies"
+    case dice = "Dice"
 
     var id: Self { self }
 
@@ -32,6 +33,11 @@ private enum Sample: String, CaseIterable, Identifiable {
             "Shape swaps the spheres for concave tori, which RealityKit's physics can't move.",
             "A fixed 1 m volume on macOS. Dragging picks with the simulation's raycast and pulls on every step.",
         ]
+        case .dice: [
+            "SDF bodies baked from Apple's dice models, in place of TabletopKit, which is visionOS only.",
+            "Max score toss runs the same toss in a hidden simulation first; the engine is deterministic, so each die is turned by a symmetry to land on its highest face, without adjusting the roll.",
+            "A rim and invisible walls keep the dice on the table; dice are picked up with the pointer and thrown with its velocity.",
+        ]
         }
     }
 
@@ -41,6 +47,9 @@ private enum Sample: String, CaseIterable, Identifiable {
         case .physicsBodies:
             ("Simulating physics with collisions in your visionOS app",
              URL(string: "https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app")!)
+        case .dice:
+            ("Simulating dice rolls as a component for your game",
+             URL(string: "https://developer.apple.com/documentation/tabletopkit/simulating-dice-rolls-as-a-component-for-your-game")!)
         }
     }
 }
@@ -62,6 +71,7 @@ private struct SamplesView: View {
                 VStack(spacing: 0) {
                     switch selection {
                     case .physicsBodies: PhysicsBodiesView()
+                    case .dice: DiceView()
                     }
                     Divider()
                     SampleReference(sample: selection)

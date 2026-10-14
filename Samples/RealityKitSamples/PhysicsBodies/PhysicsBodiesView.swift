@@ -39,7 +39,7 @@ struct PhysicsBodiesView: View {
             .onChanged { value in
                 if dragDistance == nil { dragDistance = scene.beginDrag(at: value.startLocation, in: size) }
                 guard let dragDistance else { return }
-                let ray = scene.ray(through: value.location, in: size)
+                let ray = scene.camera.ray(through: value.location, in: size)
                 scene.drag(to: ray.origin + ray.direction * dragDistance)
             }
             .onEnded { _ in

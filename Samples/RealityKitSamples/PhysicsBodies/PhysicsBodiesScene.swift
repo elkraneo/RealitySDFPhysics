@@ -42,7 +42,7 @@ final class PhysicsBodiesScene {
     let content = Entity()
     /// The simulation root, scaled so that its units are decimeters
     let root = Entity()
-    let camera = PerspectiveCamera()
+    let camera = SampleCamera(eye: [0, 0.45, 1.8])
     let simulation = SDFSimulation()
     private let bodies = Entity()
     /// The body being dragged and the world space point it is pulled toward
@@ -62,10 +62,7 @@ final class PhysicsBodiesScene {
         light.look(at: .zero, from: [1, 2, 1.5], relativeTo: nil)
         content.addChild(light)
 
-        camera.camera.fieldOfViewInDegrees = Self.fieldOfView
-        camera.camera.fieldOfViewOrientation = .vertical
-        camera.look(at: .zero, from: Self.eye, relativeTo: nil)
-        content.addChild(camera)
+        content.addChild(camera.makeEntity())
 
         dragSubscription = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in
             if let drag { pull(drag.entity, towards: drag.target) }
@@ -174,21 +171,6 @@ final class PhysicsBodiesScene {
 
     // MARK: Dragging
 
-    static let fieldOfView: Float = 50
-    static let eye: SIMD3<Float> = [0, 0.45, 1.8]
-
-    /// A world space ray through a point of the view
-    func ray(through point: CGPoint, in size: CGSize) -> (origin: SIMD3<Float>, direction: SIMD3<Float>) {
-        let forward = normalize(-Self.eye)
-        let right = normalize(cross(forward, [0, 1, 0]))
-        let up = cross(right, forward)
-        let t = tan(Self.fieldOfView * .pi / 360)
-        let aspect = Float(size.width / max(size.height, 1))
-        let x = Float(2 * point.x / max(size.width, 1) - 1)
-        let y = Float(1 - 2 * point.y / max(size.height, 1))
-        return (Self.eye, normalize(forward + right * (x * t * aspect) + up * (y * t)))
-    }
-
     /// Starts dragging the body under a point of the view. Returns its distance from the camera.
     func beginDrag(at point: CGPoint, in size: CGSize) -> Float? {
         guard let (entity, distance) = pick(at: point, in: size) else { return nil }
@@ -207,7 +189,7 @@ final class PhysicsBodiesScene {
 
     /// The body under a point of the view, and its distance from the camera
     private func pick(at point: CGPoint, in size: CGSize) -> (entity: Entity, distance: Float)? {
-        let ray = ray(through: point, in: size)
+        let ray = camera.ray(through: point, in: size)
         // The simulation's raycast works in the root's frame
         let origin = root.convert(position: ray.origin, from: nil)
         let direction = root.convert(direction: ray.direction, from: nil)

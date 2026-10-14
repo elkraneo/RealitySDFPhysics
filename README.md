@@ -69,6 +69,10 @@ In `Samples/`, macOS apps built on the public API:
   structure and values so that the two can be compared. So far:
   - [Simulating physics with collisions in your visionOS app](https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app),
     with a switch from spheres to concave tori.
+  - [Simulating dice rolls as a component for your game](https://developer.apple.com/documentation/tabletopkit/simulating-dice-rolls-as-a-component-for-your-game),
+    with Apple's seven dice models (MIT, see `Samples/RealityKitSamples/Dice/Models/LICENSE.txt`). Its
+    "Max score toss" runs each toss in a hidden simulation first: the engine is deterministic, so
+    the real roll lands exactly as predicted.
 
 `sdf-snapshot` renders the demo scenes offscreen with timings, and `sdf-video` renders a showcase
 video.

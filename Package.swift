@@ -40,7 +40,9 @@ let package = Package(
         .executableTarget(
             name: "RealityKitSamples",
             dependencies: ["SDFCollisionKit"],
-            path: "Samples/RealityKitSamples"
+            path: "Samples/RealityKitSamples",
+            exclude: ["Dice/Models/LICENSE.txt"],
+            resources: [.copy("Dice/Models")]
         ),
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(
