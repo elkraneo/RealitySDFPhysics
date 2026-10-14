@@ -21,8 +21,14 @@ final class DemoModel {
     private(set) var isLoading = false
     private(set) var errorMessage: String?
 
-    var isPaused = false {
-        didSet { simulation.isPaused = isPaused }
+    /// The root's simulation settings, applied on change
+    var settings: SDFSimulationComponent {
+        didSet { root.components.set(settings) }
+    }
+
+    var isPaused: Bool {
+        get { settings.isPaused }
+        set { settings.isPaused = newValue }
     }
 
     var showsContacts = false {
@@ -33,14 +39,11 @@ final class DemoModel {
 
     var dropShape = "Box"
 
-    var parameters = SDFSimulation.Parameters() {
-        didSet { simulation.parameters = parameters }
-    }
-
     var sceneDescription: String { DemoScene.all[sceneIndex].description }
 
     init() {
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        settings = SDFSimulationComponent(simulation: simulation)
+        root.components.set(settings)
         camera.place(cameraEntity)
     }
 
@@ -63,7 +66,9 @@ final class DemoModel {
     }
 
     func resetParameters() {
-        parameters = SDFSimulation.Parameters()
+        let isPaused = isPaused
+        settings = SDFSimulationComponent(simulation: simulation)
+        settings.isPaused = isPaused
     }
 
     func step() {

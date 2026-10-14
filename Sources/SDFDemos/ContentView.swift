@@ -68,7 +68,7 @@ private struct Sidebar: View {
                     .keyboardShortcut(.space, modifiers: [])
             }
 
-            ParametersSection(parameters: $model.parameters, reset: model.resetParameters)
+            ParametersSection(settings: $model.settings, reset: model.resetParameters)
 
             Section {
                 Text("Drag a body to move it, drag the background to orbit, pinch to zoom.")
@@ -81,30 +81,35 @@ private struct Sidebar: View {
 }
 
 private struct ParametersSection: View {
-    @Binding var parameters: SDFSimulation.Parameters
+    @Binding var settings: SDFSimulationComponent
     let reset: () -> Void
+
+    private var parameters: Binding<SDFCollisionDetection> { $settings.collisionDetection }
 
     var body: some View {
         Section("Collision Detection") {
-            Picker("Optimizer", selection: $parameters.optimizer) {
-                Text("Nelder–Mead").tag(SDFSimulation.Parameters.Optimizer.nelderMead)
-                Text("Ellipsoid").tag(SDFSimulation.Parameters.Optimizer.ellipsoid)
-                Text("Gradient Descent").tag(SDFSimulation.Parameters.Optimizer.gradientDescent)
+            Picker("Optimizer", selection: parameters.optimizer) {
+                Text("Nelder–Mead").tag(SDFCollisionDetection.Optimizer.nelderMead)
+                Text("Ellipsoid").tag(SDFCollisionDetection.Optimizer.ellipsoid)
+                Text("Gradient Descent").tag(SDFCollisionDetection.Optimizer.gradientDescent)
             }
-            Stepper("Cached samples: \(parameters.cachedSamples)", value: $parameters.cachedSamples, in: 0...16)
-            Stepper("Random samples: \(parameters.randomSamples)", value: $parameters.randomSamples, in: 0...16)
-            Toggle("Temporal cache", isOn: $parameters.usesTemporalCache)
-            Toggle("Curvature sampling", isOn: $parameters.usesCurvatureSampling)
-            Toggle("Skip convex samples", isOn: $parameters.skipsConvexSamples)
-            LabeledSlider(title: "Softmax ε", value: $parameters.softmaxEpsilon, range: 0...0.5)
-            LabeledSlider(title: "Repulsion α", value: $parameters.repulsionAlpha, range: 0...0.1)
-            LabeledSlider(title: "Tolerance τ", value: $parameters.tolerance, range: 0.001...0.05)
-            Stepper("Max iterations: \(parameters.maxIterations)", value: $parameters.maxIterations, in: 5...200, step: 5)
+            Stepper("Cached samples: \(settings.collisionDetection.cachedSamples)", value: parameters.cachedSamples, in: 0...16)
+            Stepper("Random samples: \(settings.collisionDetection.randomSamples)", value: parameters.randomSamples, in: 0...16)
+            Toggle("Temporal cache", isOn: parameters.usesTemporalCache)
+            Toggle("Curvature sampling", isOn: parameters.usesCurvatureSampling)
+            Toggle("Skip convex samples", isOn: parameters.skipsConvexSamples)
+            LabeledSlider(title: "Softmax ε", value: parameters.softmaxEpsilon, range: 0...0.5)
+            LabeledSlider(title: "Repulsion α", value: parameters.repulsionAlpha, range: 0...0.1)
+            LabeledSlider(title: "Tolerance τ", value: parameters.tolerance, range: 0.001...0.05)
+            Stepper("Max iterations: \(settings.collisionDetection.maxIterations)", value: parameters.maxIterations, in: 5...200, step: 5)
+            LabeledSlider(title: "Contact margin", value: parameters.contactMargin, range: 0...0.1)
         }
         Section("Solver") {
-            Stepper("Substeps: \(parameters.substeps)", value: $parameters.substeps, in: 1...16)
-            Stepper("Iterations: \(parameters.solverIterations)", value: $parameters.solverIterations, in: 1...100)
-            LabeledSlider(title: "Contact margin", value: $parameters.contactMargin, range: 0...0.1)
+            Stepper("Substeps: \(settings.substeps)", value: $settings.substeps, in: 1...16)
+            Stepper("Velocity iterations: \(settings.solverIterations.velocityIterations)",
+                    value: $settings.solverIterations.velocityIterations, in: 1...100)
+            Stepper("Position iterations: \(settings.solverIterations.positionIterations)",
+                    value: $settings.solverIterations.positionIterations, in: 0...100)
             Button("Paper Defaults", action: reset)
         }
     }

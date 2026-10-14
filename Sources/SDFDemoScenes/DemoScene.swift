@@ -53,7 +53,7 @@ public struct DemoBuilder {
     /// Adds a body of a named shape with a pastel color, or gray when static
     @discardableResult
     public mutating func spawn(_ shapeName: String, at position: SIMD3<Float>, orientation: simd_quatf = simd_quatf(),
-                               scale: Float = 1, mode: SDFBodyComponent.Mode = .dynamic,
+                               scale: Float = 1, mode: PhysicsBodyMode = .dynamic,
                                isVisible: Bool = true) async throws -> Entity {
         let shape = try await DemoShapes.shared.shape(named: shapeName)
         let entity: Entity
@@ -81,7 +81,7 @@ extension DemoScene {
             // They start a small gap apart, within the contact margin but short of the allowed
             // penetration, so the stack is at rest from the start
             let levels = 7
-            let parameters = SDFSimulation.Parameters()
+            let parameters = SDFCollisionDetection()
             let gap = parameters.contactMargin - 0.5 * parameters.allowedPenetration
             for level in 0..<levels {
                 for i in 0..<(levels - level) {
@@ -116,7 +116,7 @@ extension DemoScene {
                                           scale: 1.2)
             // A heavy wheel, four times the mass of its volume of water
             let volume = try await DemoShapes.shared.shape(named: "Spiky Wheel").volume
-            wheel.components[SDFBodyComponent.self]?.mass = 4 * 1000 * volume * pow(1.2, 3)
+            wheel.components[SDFBodyComponent.self]?.massProperties = .init(mass: 4 * 1000 * volume * pow(1.2, 3))
             wheel.components.set(SDFMotionComponent(linearVelocity: [6, 0, 0], angularVelocity: [0, 0, -4]))
             for row in 0..<4 {
                 for i in 0...row {

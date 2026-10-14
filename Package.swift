@@ -45,7 +45,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SDFCollisionKitTests",
-            dependencies: ["SDFCollisionKit"]
+            dependencies: ["SDFCollisionKit", "SDFCore"]
         ),
     ],
     cxxLanguageStandard: .cxx17

@@ -1,7 +1,8 @@
 // C interface over the SDF-SDF collision engine of Giles and Andrews, "Real-Time Collision Handling
 // for Signed Distance Fields via Caching and Importance Sampling" (Pacific Graphics 2026). The
-// engine is vendored unmodified in upstream/; this header is the only API Swift sees, so clients
-// do not need C++ interoperability.
+// engine is vendored unmodified in upstream/. Worlds are stepped by our solver, derived from
+// upstream's, which adds the body options of a game physics engine. This header is the only API
+// Swift sees, so clients do not need C++ interoperability.
 //
 // Shapes are immutable once created and may be created and used from any thread. A world must be
 // used from one thread at a time.
@@ -77,6 +78,13 @@ SDFShapeMesh sdf_shape_mesh(const SDFShape *shape);
 
 typedef struct SDFWorld SDFWorld;
 
+// Pairs without a dynamic body that still get collision detection, to report their contacts
+typedef enum
+{
+    SDFReportKinematicVsStatic = 1,
+    SDFReportKinematicVsKinematic = 2,
+} SDFPairOptions;
+
 // Collision and solver parameters, defaults are the values of the paper (Sec. 4)
 typedef struct
 {
@@ -95,9 +103,12 @@ typedef struct
     float margin;                // Contact skin
     float allowedPenetration;    // Penetration of the skin left uncorrected
     int32_t substeps;            // Substeps per time step, each with its own collision detection
-    int32_t solverIterations;    // Solver iterations per substep
+    int32_t velocityIterations;  // Contact solver iterations per substep
+    int32_t positionIterations;  // Penetration correction iterations per substep
     float timeStep;              // Seconds per step
     float gravity[3];
+    float restitutionThreshold;  // Approach speed below which contacts do not bounce
+    uint32_t pairOptions;        // SDFPairOptions
 } SDFParams;
 
 // Per step statistics
@@ -121,6 +132,9 @@ SDFParams sdf_world_params(const SDFWorld *world);
 void sdf_world_set_params(SDFWorld *world, SDFParams params);
 
 void sdf_world_step(SDFWorld *world);
+// Steps with upstream's own solver, which ignores the body options. For tests: with default
+// options both steps give the same results.
+void sdf_world_step_reference(SDFWorld *world);
 SDFStats sdf_world_stats(const SDFWorld *world);
 
 // MARK: Bodies
@@ -156,10 +170,34 @@ void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID body, const float li
 float sdf_world_body_mass(const SDFWorld *world, SDFBodyID body);
 // Rescales the inertia with the mass. Ignored for kinematic and static bodies.
 void sdf_world_set_body_mass(SDFWorld *world, SDFBodyID body, float mass);
-void sdf_world_set_body_friction(SDFWorld *world, SDFBodyID body, float friction);
 
-// Impulse at a world point, changes the velocity immediately
+// Material and motion options of a body. The defaults reproduce upstream's solver.
+typedef struct
+{
+    float staticFriction;        // Friction coefficients, combined by geometric mean
+    float dynamicFriction;
+    float restitution;           // Bounce, combined by maximum
+    float linearDamping;         // Per second
+    float angularDamping;
+    bool affectedByGravity;
+    bool trigger;                // Detects contacts without responding to them
+    uint32_t group, mask;        // Pairs collide when each group is in the other's mask
+    bool translationLocked[3];   // Axes of the world frame
+    bool rotationLocked[3];
+} SDFBodyOptions;
+SDFBodyOptions sdf_default_body_options(void);
+void sdf_world_set_body_options(SDFWorld *world, SDFBodyID body, SDFBodyOptions options);
+
+// Force (at a world point, or the center of mass when point is NULL) and torque, applied in every
+// step until cleared. Ignored for kinematic and static bodies.
+void sdf_world_add_body_force(SDFWorld *world, SDFBodyID body, const float force[3], const float point[3]);
+void sdf_world_add_body_torque(SDFWorld *world, SDFBodyID body, const float torque[3]);
+void sdf_world_clear_body_forces(SDFWorld *world, SDFBodyID body);
+
+// Impulse at a world point (or the center of mass when point is NULL), and angular impulse. They
+// change the velocity immediately. Ignored for kinematic and static bodies.
 void sdf_world_apply_impulse(SDFWorld *world, SDFBodyID body, const float impulse[3], const float point[3]);
+void sdf_world_apply_angular_impulse(SDFWorld *world, SDFBodyID body, const float impulse[3]);
 
 // MARK: Contacts and picking
 
@@ -169,11 +207,54 @@ typedef struct
     float position[3];           // x* (world space)
     float normal[3];             // From body A to body B
     float separation;            // Gap (> 0) or overlap (< 0)
+    float impulse;               // Normal impulse of the last substep
     bool cached;                 // Warm started from the cache, as opposed to a new sample
 } SDFContact;
 
 // Writes min(capacity, count) active contacts of the last substep, returns their count
 int32_t sdf_world_contacts(const SDFWorld *world, SDFContact *contacts, int32_t capacity);
+
+// A pair of bodies in contact after the last step
+typedef struct
+{
+    SDFBodyID bodyA, bodyB;
+    float position[3];           // Deepest contact point
+    float penetration;           // Of the deepest contact, negative while within the margin
+    float impulse;               // Normal impulse over the step, from A to B
+    float impulseDirection[3];
+} SDFPair;
+
+// Writes min(capacity, count) touching pairs of the last step, returns their count
+int32_t sdf_world_pairs(const SDFWorld *world, SDFPair *pairs, int32_t capacity);
+
+// MARK: Queries
+
+typedef struct
+{
+    SDFBodyID body;
+    float position[3];
+    float normal[3];
+    float distance;
+} SDFRayHit;
+
+// The first hit of a ray on each body whose group is in the mask, unsorted. Writes
+// min(capacity, count) hits and returns their count.
+int32_t sdf_world_raycast(SDFWorld *world, const float origin[3], const float direction[3], float length, uint32_t mask,
+                          SDFRayHit *hits, int32_t capacity);
+
+typedef struct
+{
+    SDFBodyID body;
+    float position[3];           // Deepest point found
+    float normal[3];             // From the query shape towards the body
+    float separation;            // Gap (> 0) or overlap (< 0) of the surfaces
+} SDFOverlap;
+
+// Bodies within a margin of a shape at a pose, whose group is in the mask. Uses the paper's
+// collision detection with a fixed seed, so results are deterministic and the world's random
+// sequence is untouched. Writes min(capacity, count) results and returns their count.
+int32_t sdf_world_overlaps(SDFWorld *world, const SDFShape *shape, SDFPose pose, float margin, uint32_t mask,
+                           SDFOverlap *overlaps, int32_t capacity);
 
 // Mouse dragging: picks the closest dynamic body on the ray and holds it at the hit point, which
 // then follows sdf_world_drag_to. Returns the picked body or 0.

@@ -15,7 +15,7 @@ import simd
     }
 
     @discardableResult
-    func addBody(_ shape: SDFShape, mode: SDFBodyComponent.Mode = .dynamic, at position: SIMD3<Float>,
+    func addBody(_ shape: SDFShape, mode: PhysicsBodyMode = .dynamic, at position: SIMD3<Float>,
                  parent: Entity? = nil) -> Entity {
         let entity = Entity()
         entity.position = position
@@ -124,7 +124,7 @@ import simd
         let box = addBody(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 2, 0])
         run(1)
         #expect(abs(simulation.mass(of: box)! - 1000) < 30) // Integrated over a voxelization
-        box.components[SDFBodyComponent.self]!.mass = 5
+        box.components[SDFBodyComponent.self]!.massProperties = .init(mass: 5)
         run(1)
         #expect(simulation.mass(of: box) == 5)
     }
