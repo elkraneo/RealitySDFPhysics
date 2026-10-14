@@ -2,6 +2,10 @@
 // bodies, and prints a table.
 //
 //   swift run -c release sdf-bench [steps]
+//   swift run -c release sdf-bench quality [steps]
+//
+// `quality` compares SDFCollisionKit's settings, from the paper's to RealityKit-like ones: step time,
+// deepest penetration, how still the pile ends, and bodies out of the box.
 //
 // The tori fall into a walled box. For RealityKit, each torus is the best it has for a moving torus:
 // a compound of 12 capsules (from a mesh it would generate a convex hull, which closes the hole).
@@ -18,7 +22,8 @@ import Metal
 import RealityKit
 import SDFCollisionKit
 
-let steps = CommandLine.arguments.dropFirst().first.flatMap { Int($0) } ?? 300
+let isQuality = CommandLine.arguments.dropFirst().first == "quality"
+let steps = CommandLine.arguments.dropFirst(isQuality ? 2 : 1).first.flatMap { Int($0) } ?? 300
 let counts = [25, 50, 100, 200, 400]
 let major: Float = 0.15, minor: Float = 0.04, segments = 12
 
@@ -140,6 +145,66 @@ func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, ch
     var times: [Double] = []
     for step in 1...steps { times.append(max(0, try await frame(advancing: true, to: step) - overhead)) }
     return (times.reduce(0, +) / Double(times.count), times.max() ?? 0, check(bodies))
+}
+
+/// A setting of the simulation: substeps, velocity and position iterations
+struct Setting {
+    let name: String, substeps: Int, velocityIterations: Int, positionIterations: Int
+}
+
+@MainActor
+func quality(count: Int, setting: Setting) -> String {
+    let root = Entity(), simulation = SDFSimulation()
+    var settings = SDFSimulationComponent(simulation: simulation)
+    settings.substeps = setting.substeps
+    settings.solverIterations = .init(positionIterations: setting.positionIterations, velocityIterations: setting.velocityIterations)
+    root.components.set(settings)
+    for wall in walls {
+        let entity = Entity()
+        entity.position = wall.center
+        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
+        root.addChild(entity)
+    }
+    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
+    var bodies: [Entity] = []
+    for placement in placements(count) {
+        let entity = Entity()
+        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
+        entity.components.set(SDFBodyComponent(shape: torus))
+        entity.components.set(SDFMotionComponent())
+        root.addChild(entity)
+        bodies.append(entity)
+    }
+    var time = 0.0, deepest: Float = 0, deepestAtRest: Float = 0, endSpeed: Float = 0
+    for step in 0..<steps {
+        let start = DispatchTime.now().uptimeNanoseconds
+        simulation.step(root: root)
+        time += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        // Separation is the gap (> 0) or overlap (< 0) of the surfaces at a contact
+        let overlap = -(simulation.contacts().map(\.separation).min() ?? 0)
+        deepest = max(deepest, overlap)
+        if step >= steps - 30 {
+            deepestAtRest = max(deepestAtRest, overlap)
+            endSpeed += bodies.map { length($0.components[SDFMotionComponent.self]!.linearVelocity) }.reduce(0, +) / Float(bodies.count) / 30
+        }
+    }
+    let name = setting.name.padding(toLength: 28, withPad: " ", startingAt: 0)
+    return name + String(format: " %4d   %6.2f ms   %5.1f mm   %5.1f mm   %6.1f mm/s   ", count, time / Double(steps),
+                         deepest * 1000, deepestAtRest * 1000, endSpeed * 1000) + check(bodies)
+}
+
+if isQuality {
+    let settings = [
+        Setting(name: "paper: 4 substeps, 20/20", substeps: 4, velocityIterations: 20, positionIterations: 20),
+        Setting(name: "2 substeps, 10/4", substeps: 2, velocityIterations: 10, positionIterations: 4),
+        Setting(name: "1 substep, 8/4", substeps: 1, velocityIterations: 8, positionIterations: 4),
+        Setting(name: "RealityKit-like: 1, 6/2", substeps: 1, velocityIterations: 6, positionIterations: 2),
+    ]
+    print("setting                      tori   step       deepest    at rest    end speed     check")
+    for count in [25, 100, 400] {
+        for setting in settings { print(quality(count: count, setting: setting)) }
+    }
+    exit(0)
 }
 
 print("tori   SDFCollisionKit ms/step (mean / worst)   one thread         RealityKit, 12-capsule tori (estimate)")
