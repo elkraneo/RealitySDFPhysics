@@ -113,14 +113,16 @@ vary by up to about 20% between runs.
 
 - **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, so the same bodies
   and inputs give bit-identical results whatever the number of threads. Turn
-  `isMultithreaded` off for upstream's single random sequence; at default settings our solver
+  `isMultithreaded` off for upstream's single random sequence; with `preset: .paper` our solver
   then takes the same steps as upstream's (`SolverReferenceTests`).
 - **Threads.** The simulation steps on the main actor; its collision detection runs on several
   threads, and baking in the background.
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies do not collide with each
   other. Give an entity one or the other.
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.
-- **Not yet available:** joints, continuous collision detection, sleeping and shape sweeps.
+- **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
+  pushed (`isSleepingEnabled`).
+- **Not yet available:** joints, continuous collision detection and shape sweeps.
 
 ## License
 

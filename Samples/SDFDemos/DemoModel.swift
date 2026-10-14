@@ -131,6 +131,7 @@ private extension SDFSimulationComponent {
         copy.restitutionThreshold = restitutionThreshold
         copy.collisionDetection = collisionDetection
         copy.isMultithreaded = isMultithreaded
+        copy.isSleepingEnabled = isSleepingEnabled
         return copy
     }
 }

@@ -221,6 +221,7 @@ static SDFParams paramsOf(const SDFWorld &world)
     p.pairOptions = world.pairOptions;
     p.parallel = world.parallel;
     p.metersPerUnit = world.metersPerUnit;
+    p.sleeping = world.sleeping;
     return p;
 }
 
@@ -275,6 +276,8 @@ SDFWorld *sdf_world_copy(const SDFWorld *world)
     copy->pairOptions = world->pairOptions;
     copy->parallel = world->parallel;
     copy->metersPerUnit = world->metersPerUnit;
+    copy->sleeping = world->sleeping;
+    copy->nextIsland = world->nextIsland;
     copy->stepMilliseconds = world->stepMilliseconds;
     copy->nextID = world->nextID;
     copy->pairs = world->pairs;
@@ -320,13 +323,19 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
     if (p.timeStep > 0)
         setNonNegative(solver.dt, p.timeStep);
     float3 gravity = toFloat3(p.gravity);
-    if (std::isfinite(gravity.x) && std::isfinite(gravity.y) && std::isfinite(gravity.z))
+    if (std::isfinite(gravity.x) && std::isfinite(gravity.y) && std::isfinite(gravity.z) && lengthSq(gravity - solver.gravity) > 0)
+    {
         solver.gravity = gravity;
+        world->wakeAll();
+    }
     setNonNegative(world->restitutionThreshold, p.restitutionThreshold);
     world->pairOptions = p.pairOptions;
     world->parallel = p.parallel;
     if (std::isfinite(p.metersPerUnit) && p.metersPerUnit > 0)
         world->metersPerUnit = p.metersPerUnit;
+    if (world->sleeping && !p.sleeping)
+        world->wakeAll();
+    world->sleeping = p.sleeping;
 }
 
 void sdf_world_step(SDFWorld *world)
@@ -349,6 +358,8 @@ SDFStats sdf_world_stats(const SDFWorld *world)
     stats.queries = s.queries;
     stats.collisionMilliseconds = s.milliseconds;
     stats.stepMilliseconds = world->stepMilliseconds;
+    stats.sleepingBodies = (int32_t)std::count_if(world->records.begin(), world->records.end(),
+                                                  [](const auto &entry) { return entry.second.asleep; });
     return stats;
 }
 
@@ -376,6 +387,8 @@ SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pos
     record.body = body, record.mode = mode, record.center = shape->center, record.unitScale = shape->unitScale;
     world->records[id] = record;
     world->ids[body] = id;
+    body->updateBounds();
+    world->disturb(body);
     return id;
 }
 
@@ -386,6 +399,7 @@ void sdf_world_remove_body(SDFWorld *world, SDFBodyID id)
         return;
     Solver &solver = world->solver;
     Body *body = record->body;
+    world->disturb(body);
     int index = (int)(std::find_if(solver.bodies.begin(), solver.bodies.end(), [&](auto &b) { return b.get() == body; }) -
                       solver.bodies.begin());
 
@@ -438,6 +452,9 @@ void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID id, SDFPose pose)
     body.position = shapeOrigin(record->center, pose, body.orientation) + rotate(body.orientation, body.shape->centerOfMass * body.scale);
     body.updateInertia();
     body.updateBounds();
+    // Kinematic bodies are posed every frame, and wake what they touch while they move
+    if (record->mode != SDFBodyKinematic)
+        world->disturb(&body);
 }
 
 void sdf_world_body_velocity(const SDFWorld *world, SDFBodyID id, float linear[3], float angular[3])
@@ -445,6 +462,12 @@ void sdf_world_body_velocity(const SDFWorld *world, SDFBodyID id, float linear[3
     const BodyRecord *record = world->find(id);
     store(linear, record ? record->body->velocity : float3{0, 0, 0});
     store(angular, record ? record->body->angularVelocity : float3{0, 0, 0});
+}
+
+bool sdf_world_body_is_asleep(const SDFWorld *world, SDFBodyID id)
+{
+    const BodyRecord *record = world->find(id);
+    return record && record->asleep;
 }
 
 void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID id, const float linear[3], const float angular[3])
@@ -471,6 +494,7 @@ void sdf_world_set_body_mass(SDFWorld *world, SDFBodyID id, float mass)
     body.inertia = body.inertia * (mass / body.mass);
     body.mass = mass;
     body.updateInertia();
+    world->disturb(&body);
 }
 
 SDFBodyOptions sdf_default_body_options(void)
@@ -505,6 +529,7 @@ void sdf_world_set_body_options(SDFWorld *world, SDFBodyID id, SDFBodyOptions o)
     }
     // Upstream's solver, the reference in tests, has one friction coefficient
     r.body->friction = r.staticFriction;
+    world->disturb(r.body);
 }
 
 void sdf_world_add_body_force(SDFWorld *world, SDFBodyID id, const float force[3], const float point[3])

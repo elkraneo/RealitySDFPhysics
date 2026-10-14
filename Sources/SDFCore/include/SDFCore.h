@@ -115,6 +115,7 @@ typedef struct
     uint32_t pairOptions;        // SDFPairOptions
     bool parallel;               // Narrow phase on several threads, with a random sequence per pair
     float metersPerUnit;         // Length of a unit, for the drag limit and the default density
+    bool sleeping;               // Puts islands of touching dynamic bodies to sleep once still
 } SDFParams;
 
 // Per step statistics
@@ -127,6 +128,7 @@ typedef struct
     int32_t queries;             // Objective evaluations
     double collisionMilliseconds; // Narrow phase time, summed over the substeps
     double stepMilliseconds;     // Whole step, including the solver
+    int32_t sleepingBodies;
 } SDFStats;
 
 SDFWorld *sdf_world_create(void);
@@ -174,6 +176,8 @@ SDFPose sdf_world_body_pose(const SDFWorld *world, SDFBodyID body);
 void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID body, SDFPose pose);
 
 void sdf_world_body_velocity(const SDFWorld *world, SDFBodyID body, float linear[3], float angular[3]);
+// Whether a dynamic body is asleep, with zero velocities, until something touches or moves it
+bool sdf_world_body_is_asleep(const SDFWorld *world, SDFBodyID body);
 void sdf_world_set_body_velocity(SDFWorld *world, SDFBodyID body, const float linear[3], const float angular[3]);
 
 float sdf_world_body_mass(const SDFWorld *world, SDFBodyID body);

@@ -27,6 +27,12 @@ struct BodyRecord
     float3 force = {0, 0, 0};          // Applied in every step until cleared
     float3 torque = {0, 0, 0};
 
+    // Sleeping dynamic bodies keep zero velocities and are neither integrated nor collided with
+    // each other or static bodies. Bodies put to sleep together share an island, and wake together.
+    bool asleep = false;
+    float stillTime = 0;               // Seconds the body has been nearly still
+    uint32_t island = 0;
+
     bool locked() const { return min(min(linearMask.x, linearMask.y), min(linearMask.z, min(min(angularMask.x, angularMask.y), angularMask.z))) < 1; }
 };
 
@@ -50,6 +56,8 @@ struct SDFWorld
     uint32_t pairOptions = 0;          // SDFPairOptions
     bool parallel = false;             // Narrow phase on several threads
     float metersPerUnit = 1;           // For the physical constants that upstream gives in meters
+    bool sleeping = false;             // Puts still islands of touching bodies to sleep
+    uint32_t nextIsland = 1;
 
     double stepMilliseconds = 0;
     SDFBodyID nextID = 1;
@@ -72,4 +80,14 @@ struct SDFWorld
     BodyRecord &record(const Body *body) { return records.at(ids.at(body)); }
 
     void step();
+
+    // Wakes a body and the bodies put to sleep with it
+    void wake(BodyRecord &record);
+    // Wakes a body, the bodies it had contacts with and those its bounds overlap, after a change
+    // that the step can't see: a teleport, new options, a new mass, an addition or a removal
+    void disturb(const Body *body);
+    void wakeAll();
+
+private:
+    void sleep();
 };

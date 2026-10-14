@@ -67,4 +67,7 @@ RealityKit physics bodies don't collide with each other, so give each entity one
   of the last substep. Handlers can't step the simulation: `update` and `step` do nothing when
   called from them.
 - **Not yet available:** joints, continuous collision detection (fast thin bodies can pass
-  through others), sleeping, sweeps of a shape along a path, and the simulation `clock`.
+  through others), sweeps of a shape along a path, and the simulation `clock`.
+- **Sleeping.** Bodies at rest fall asleep and wake when touched, moved or pushed. Turn it off
+  with ``SDFSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``. While asleep, a pair in contact keeps reporting `Updated` with
+  the contacts it had when it fell asleep, and no impulse.

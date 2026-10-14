@@ -44,12 +44,13 @@ cheap to begin with.
 - Separate bodies that never touch with collision filters, so their pairs are skipped.
 - Lower ``SDFSimulationComponent/substeps`` and the solver iterations for scenes that don't stack.
 - Bake each mesh once and share the shape.
+- Keep ``SDFSimulationComponent/isSleepingEnabled`` on. In a box of tori, a pile of 400 asleep
+  takes 4.4 ms a step, against 22 ms awake, most of it the broad phase, which still runs.
 
 ## Limits
 
 - **Discrete collision detection.** Contacts are found at each substep, so a fast, thin body can
   pass through another between two substeps. Raise the substeps, or keep such bodies thicker.
-- **No sleeping yet.** Bodies at rest are simulated like moving ones.
 - **Solver on the main actor.** The contact solver is sequential; with many contacts, it becomes
   the larger part of a multithreaded step.
 - **No joints yet.**

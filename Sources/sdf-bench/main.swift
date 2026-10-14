@@ -5,7 +5,8 @@
 //   swift run -c release sdf-bench quality [steps]
 //
 // `quality` compares SDFCollisionKit's settings, from the paper's to RealityKit-like ones: step time,
-// deepest penetration, how still the pile ends, and bodies out of the box.
+// deepest penetration, how still the pile ends, and bodies out of the box; and, for the default
+// real-time preset, the bodies asleep at the end and the step time over the last 30 steps.
 //
 // The tori fall into a walled box. For RealityKit, each torus is the best it has for a moving torus:
 // a compound of 12 capsules (from a mesh it would generate a convex hull, which closes the hole).
@@ -147,9 +148,10 @@ func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, ch
     return (times.reduce(0, +) / Double(times.count), times.max() ?? 0, check(bodies))
 }
 
-/// A setting of the simulation: substeps, velocity and position iterations
+/// A setting of the simulation: substeps, velocity and position iterations, and sleeping
 struct Setting {
     let name: String, substeps: Int, velocityIterations: Int, positionIterations: Int
+    var isSleepingEnabled = false
 }
 
 @MainActor
@@ -158,6 +160,7 @@ func quality(count: Int, setting: Setting) -> String {
     var settings = SDFSimulationComponent(simulation: simulation)
     settings.substeps = setting.substeps
     settings.solverIterations = .init(positionIterations: setting.positionIterations, velocityIterations: setting.velocityIterations)
+    settings.isSleepingEnabled = setting.isSleepingEnabled
     root.components.set(settings)
     for wall in walls {
         let entity = Entity()
@@ -175,11 +178,13 @@ func quality(count: Int, setting: Setting) -> String {
         root.addChild(entity)
         bodies.append(entity)
     }
-    var time = 0.0, deepest: Float = 0, deepestAtRest: Float = 0, endSpeed: Float = 0
+    var time = 0.0, endTime = 0.0, deepest: Float = 0, deepestAtRest: Float = 0, endSpeed: Float = 0
     for step in 0..<steps {
         let start = DispatchTime.now().uptimeNanoseconds
         simulation.step(root: root)
-        time += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        let stepTime = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
+        time += stepTime
+        if step >= steps - 30 { endTime += stepTime / 30 }
         // Separation is the gap (> 0) or overlap (< 0) of the surfaces at a contact
         let overlap = -(simulation.contacts().map(\.separation).min() ?? 0)
         deepest = max(deepest, overlap)
@@ -188,19 +193,22 @@ func quality(count: Int, setting: Setting) -> String {
             endSpeed += bodies.map { length($0.components[SDFMotionComponent.self]!.linearVelocity) }.reduce(0, +) / Float(bodies.count) / 30
         }
     }
-    let name = setting.name.padding(toLength: 28, withPad: " ", startingAt: 0)
-    return name + String(format: " %4d   %6.2f ms   %5.1f mm   %5.1f mm   %6.1f mm/s   ", count, time / Double(steps),
-                         deepest * 1000, deepestAtRest * 1000, endSpeed * 1000) + check(bodies)
+    let name = setting.name.padding(toLength: 34, withPad: " ", startingAt: 0)
+    return name + String(format: " %4d   %6.2f ms  %6.2f ms   %5.1f mm   %5.1f mm   %6.1f mm/s   %4d   ", count,
+                         time / Double(steps), endTime, deepest * 1000, deepestAtRest * 1000, endSpeed * 1000,
+                         simulation.statistics.sleepingBodies) + check(bodies)
 }
 
 if isQuality {
     let settings = [
         Setting(name: "paper: 4 substeps, 20/20", substeps: 4, velocityIterations: 20, positionIterations: 20),
         Setting(name: "2 substeps, 10/4", substeps: 2, velocityIterations: 10, positionIterations: 4),
+        Setting(name: "real time: 2, 10/4, sleeping", substeps: 2, velocityIterations: 10, positionIterations: 4,
+                isSleepingEnabled: true),
         Setting(name: "1 substep, 8/4", substeps: 1, velocityIterations: 8, positionIterations: 4),
         Setting(name: "RealityKit-like: 1, 6/2", substeps: 1, velocityIterations: 6, positionIterations: 2),
     ]
-    print("setting                      tori   step       deepest    at rest    end speed     check")
+    print("setting                            tori   step       last 30     deepest    at rest    end speed    asleep  check")
     for count in [25, 100, 400] {
         for setting in settings { print(quality(count: count, setting: setting)) }
     }
