@@ -119,9 +119,6 @@ Apple M1, release, 240 steps at 60 Hz with 4 substeps. Times vary by up to about
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.
 - **Not yet available:** joints, continuous collision detection, sleeping and shape sweeps.
 
-The reference port of the upstream demo, without the component API, is
-[sdf-dcd-realitykit](https://github.com/elkraneo/sdf-dcd-realitykit).
-
 ## License
 
 MIT (see [LICENSE](LICENSE)). The vendored engine is MIT too, by Chris Giles (see
