@@ -12,7 +12,7 @@ For the static and kinematic colliders a scene already has, such as floors, wall
 `addSDFColliders(mode:material:resolution:)` adds SDF bodies for an entity's `CollisionComponent`
 shapes, so that SDF bodies collide with them too. Axis-aligned boxes, spheres and capsules become
 exact analytical shapes; other shapes are baked from their meshes with
-``SDFShape/make(from:resolution:)``.
+``SDFShape/make(from:scale:resolution:)``.
 
 ## Counterparts
 
