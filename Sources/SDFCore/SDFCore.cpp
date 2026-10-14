@@ -30,9 +30,35 @@ static void store(float out[3], float3 v)
     out[0] = v.x, out[1] = v.y, out[2] = v.z;
 }
 
+// The curvature seeds (Sec. 3.5.2) point the random samples at the sharp features of a shape. A
+// shape whose whole surface is high curvature by the engine's threshold, such as a torus or a
+// capsule, has no features to point at: its seeds are a uniform sampling of its surface, and the
+// engine's fallback, a uniform sample of the overlap, finds contacts as well. Those seeds are
+// dropped, since every random sample scans all of them (a torus has 151): on a pile of 400 tori
+// the scan was half of collision detection. The surface is sampled with a fixed random sequence,
+// so the outcome is deterministic.
+static void dropUniformCurvatureSeeds(Shape &shape)
+{
+    if (shape.seeds.empty())
+        return;
+    const int samples = 512;
+    float L = maxComponent(size(shape.bounds));
+    float kappa = 4.0f / L, delta = 0.001f * L; // as in Shape::finalize
+    Random rng;
+    int high = 0;
+    for (int i = 0; i < samples; i++)
+    {
+        float3 p = shape.project(rng.inBox(shape.bounds));
+        high += fabsf(shape.laplacian(p, delta)) > kappa;
+    }
+    if (high >= samples * 19 / 20) // tori, capsules; a cone (92%) keeps its apex and rim
+        shape.seeds.clear();
+}
+
 static SDFShape *makeShape(Shape *shape)
 {
     shape->finalize();
+    dropUniformCurvatureSeeds(*shape);
     SDFShape *handle = new SDFShape();
     handle->shape = ShapePtr(shape);
     handle->display = shape->mesh;
@@ -137,6 +163,7 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     // VoxelSdf normalizes the mesh with the same center and scale
     auto voxel = std::make_shared<VoxelSdf>(mesh, "", std::max(8, resolution));
     voxel->finalize();
+    dropUniformCurvatureSeeds(*voxel);
     // Dents under 0.5% of the size, such as the tessellation of rounded edges, are well within
     // the contact margin and can't change a contact
     voxel->convex = voxel->watertight && isConvex(mesh, 5e-3f * extent);

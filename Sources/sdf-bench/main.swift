@@ -59,12 +59,25 @@ let walls: [(center: SIMD3<Float>, halfExtents: SIMD3<Float>)] = [
     ([0, 2.5, -1.05], [1.1, 2.5, 0.05]), ([0, 2.5, 1.05], [1.1, 2.5, 0.05]),
 ]
 
+/// Collision detection overrides for experiments: SDF_BENCH_CURVATURE=0 turns curvature sampling
+/// off, SDF_BENCH_SAMPLES=n sets the random samples per pair and step
+func applyEnvironment(to settings: inout SDFSimulationComponent) {
+    let environment = ProcessInfo.processInfo.environment
+    if environment["SDF_BENCH_CURVATURE"] == "0" {
+        settings.collisionDetection.usesCurvatureSampling = false
+    }
+    if let samples = environment["SDF_BENCH_SAMPLES"].flatMap({ Int($0) }) {
+        settings.collisionDetection.randomSamples = samples
+    }
+}
+
 @MainActor
 func timeSDF(count: Int, isMultithreaded: Bool, preset: SDFSimulationComponent.Preset = .paper)
     -> (mean: Double, worst: Double, check: String) {
     let root = Entity(), simulation = SDFSimulation()
     var settings = SDFSimulationComponent(simulation: simulation, preset: preset)
     settings.isMultithreaded = isMultithreaded
+    applyEnvironment(to: &settings)
     root.components.set(settings)
     for wall in walls {
         let entity = Entity()
@@ -308,6 +321,7 @@ func phases(count: Int, isMultithreaded: Bool) -> (collision: Double, solver: Do
     var settings = SDFSimulationComponent(simulation: simulation)
     settings.isSleepingEnabled = false
     settings.isMultithreaded = isMultithreaded
+    applyEnvironment(to: &settings)
     root.components.set(settings)
     for wall in walls {
         let entity = Entity()
