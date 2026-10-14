@@ -6,7 +6,7 @@
 // Every frame is one simulation step at 60 Hz, so the videos play in real time. `demos` is a reel
 // of the paper's scenes; `tori` and `dice` drive the samples' scenes as the app does, with the
 // RealityKit systems stepping the simulation and a scripted toss. `compare` drops the same rings over
-// a peg with RealityKit's physics, which needs a convex hull for a moving body, and with SDF bodies.
+// a peg with RealityKit's physics, each ring a compound of capsules, and with SDF bodies.
 
 import AppKit
 import AVFoundation
@@ -212,17 +212,17 @@ func renderDice(_ recorder: Recorder) async throws {
     }
 }
 
-/// A ring toss: three tori dropped over a peg, with RealityKit's physics (left), whose moving bodies
-/// need convex shapes, and with SDFCollisionKit (right). Same sizes, drops and simulated time.
+/// A ring toss: three tori dropped over a peg. Left, RealityKit's physics, with each ring as the best
+/// RealityKit has for a moving torus: a compound of 12 capsules around it, built by hand (from a mesh,
+/// it would generate a convex hull, which closes the hole). Right, SDFCollisionKit with the torus
+/// itself. Each side draws what its physics collides with, and its contact points.
 @MainActor
 func renderComparison(_ recorder: Recorder) async throws {
     // In meters
-    let major: Float = 0.15, minor: Float = 0.04, pegHalfWidth: Float = 0.03, pegHeight: Float = 0.5
+    let major: Float = 0.15, minor: Float = 0.04, pegHalfWidth: Float = 0.03, pegHeight: Float = 0.5, segments = 12
     let drops: [(offset: SIMD3<Float>, height: Float, tilt: Float)] = [
         ([0.03, 0, -0.02], 0.8, 0.15), ([-0.04, 0, 0.03], 1.1, -0.2), ([0.02, 0, 0.04], 1.4, 0.1),
     ]
-    let ring = SDFShape.torus(majorRadius: major, minorRadius: minor)
-    let ringMesh = try MeshResource.generate(from: ring)
     func material(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> PhysicallyBasedMaterial {
         var material = PhysicallyBasedMaterial()
         material.baseColor = .init(tint: .init(red: red, green: green, blue: blue, alpha: 1))
@@ -231,6 +231,19 @@ func renderComparison(_ recorder: Recorder) async throws {
     }
     let colors = [material(0.9, 0.35, 0.3), material(0.3, 0.7, 0.45), material(0.35, 0.5, 0.9)]
     let pegMaterial = material(0.75, 0.72, 0.68)
+    let pegShape = ShapeResource.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])
+    let pegMesh = MeshResource.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])
+
+    // The capsules of a ring: each spans a chord, and their caps overlap at the joints
+    let chord = 2 * major * sin(.pi / Float(segments))
+    let capsuleMesh = try MeshResource.generate(from: SDFShape.capsule(radius: minor, halfLength: chord / 2))
+    let capsules: [(rotation: simd_quatf, translation: SIMD3<Float>)] = (0..<segments).map { k in
+        let angle = (Float(k) + 0.5) * 2 * .pi / Float(segments)
+        return (simd_quatf(from: [0, 1, 0], to: [-sin(angle), 0, cos(angle)]), [major * cos(angle), 0, major * sin(angle)])
+    }
+    let compound = capsules.map {
+        ShapeResource.generateCapsule(height: chord + 2 * minor, radius: minor).offsetBy(rotation: $0.rotation, translation: $0.translation)
+    }
 
     // RealityKit, with its physics clock driven frame by frame
     var timebase: CMTimebase?
@@ -247,27 +260,30 @@ func renderComparison(_ recorder: Recorder) async throws {
     ground.position = [0, -0.5, 0]
     ground.components.set(CollisionComponent(shapes: [.generateBox(size: [4, 1, 4])]))
     ground.components.set(PhysicsBodyComponent(shapes: [.generateBox(size: [4, 1, 4])], mass: 1, mode: .static))
-    let leftPeg = ModelEntity(mesh: .generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth]), materials: [pegMaterial])
+    let leftPeg = ModelEntity(mesh: pegMesh, materials: [pegMaterial])
     leftPeg.position = [0, pegHeight / 2, 0]
-    leftPeg.components.set(CollisionComponent(shapes: [.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])]))
-    leftPeg.components.set(PhysicsBodyComponent(shapes: [.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])],
-                                                mass: 1, mode: .static))
+    leftPeg.components.set(CollisionComponent(shapes: [pegShape], mode: .default, collisionOptions: .fullContactInformation))
+    leftPeg.components.set(PhysicsBodyComponent(shapes: [pegShape], mass: 1, mode: .static))
     left.addChild(ground)
     left.addChild(leftPeg)
-    // The best RealityKit offers a moving torus: its convex hull, a disk without the hole
-    let hull = try await ShapeResource.generateConvex(from: ringMesh)
     var leftRings: [Entity] = []
     for (index, drop) in drops.enumerated() {
-        let entity = ModelEntity(mesh: ringMesh, materials: [colors[index]])
-        entity.position = drop.offset + [0, drop.height, 0]
-        entity.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
-        entity.components.set(CollisionComponent(shapes: [hull]))
-        entity.components.set(PhysicsBodyComponent(shapes: [hull], density: 1000))
-        left.addChild(entity)
-        leftRings.append(entity)
+        let ring = Entity()
+        // Draw the capsules: what RealityKit's physics sees
+        for capsule in capsules {
+            let part = ModelEntity(mesh: capsuleMesh, materials: [colors[index]])
+            part.transform = Transform(rotation: capsule.rotation, translation: capsule.translation)
+            ring.addChild(part)
+        }
+        ring.position = drop.offset + [0, drop.height, 0]
+        ring.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
+        ring.components.set(CollisionComponent(shapes: compound, mode: .default, collisionOptions: .fullContactInformation))
+        ring.components.set(PhysicsBodyComponent(shapes: compound, density: 1000))
+        left.addChild(ring)
+        leftRings.append(ring)
     }
 
-    // SDFCollisionKit, in a root of decimeters
+    // SDFCollisionKit, in a root of decimeters, with the contact markers of the demo
     let right = Entity()
     right.position = [0.45, 0, 0]
     right.scale = SIMD3(repeating: 0.1)
@@ -276,22 +292,25 @@ func renderComparison(_ recorder: Recorder) async throws {
     let sdfGround = Entity()
     sdfGround.position = [0, -5, 0]
     sdfGround.components.set(SDFBodyComponent(shape: .box(halfExtents: [20, 5, 20]), mode: .static))
-    let rightPeg = ModelEntity(mesh: .generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth]), materials: [pegMaterial])
+    let rightPeg = ModelEntity(mesh: pegMesh, materials: [pegMaterial])
     rightPeg.scale = SIMD3(repeating: 10)
     rightPeg.position = [0, 10 * pegHeight / 2, 0]
     rightPeg.components.set(SDFBodyComponent(shape: .box(halfExtents: [pegHalfWidth, pegHeight / 2, pegHalfWidth]), mode: .static))
     right.addChild(sdfGround)
     right.addChild(rightPeg)
+    right.addChild(ContactMarkers.makeEntity())
+    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
+    let torusMesh = try MeshResource.generate(from: torus)
     var rightRings: [Entity] = []
     for (index, drop) in drops.enumerated() {
-        // Shape and mesh in meters, scaled to the root's decimeters
-        let entity = ModelEntity(mesh: ringMesh, materials: [colors[index]])
-        entity.scale = SIMD3(repeating: 10)
-        entity.position = 10 * (drop.offset + [0, drop.height, 0])
-        entity.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
-        entity.components.set(SDFBodyComponent(shape: ring))
-        right.addChild(entity)
-        rightRings.append(entity)
+        // The mesh is the collision shape. In meters, scaled to the root's decimeters.
+        let ring = ModelEntity(mesh: torusMesh, materials: [colors[index]])
+        ring.scale = SIMD3(repeating: 10)
+        ring.position = 10 * (drop.offset + [0, drop.height, 0])
+        ring.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
+        ring.components.set(SDFBodyComponent(shape: torus))
+        right.addChild(ring)
+        rightRings.append(ring)
     }
 
     let renderer = try RealityRenderer()
@@ -301,6 +320,14 @@ func renderComparison(_ recorder: Recorder) async throws {
     renderer.entities.append(contentsOf: [left, right, DemoStage.makeFloor(), DemoStage.makeLight(), camera])
     renderer.activeCamera = camera
     renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.62, green: 0.70, blue: 0.80, alpha: 1))
+
+    // RealityKit's contact points, drawn as yellow dots
+    var realityKitContacts: [SIMD3<Float>] = []
+    let began = renderer.subscribe(to: CollisionEvents.Began.self) { event in realityKitContacts += event.contacts.map(\.point) }
+    let updated = renderer.subscribe(to: CollisionEvents.Updated.self) { event in realityKitContacts += event.contacts.map(\.point) }
+    var dots: [ModelEntity] = []
+    let dotMesh = MeshResource.generateSphere(radius: 0.006)
+    let dotMaterial = UnlitMaterial(color: .init(red: 1, green: 0.85, blue: 0.1, alpha: 1))
 
     /// Rings with the peg through their hole, below its top
     func ringsOnPeg(_ rings: [Entity], in side: Entity) -> Int {
@@ -313,15 +340,28 @@ func renderComparison(_ recorder: Recorder) async throws {
 
     let timeStep = TimeInterval(SDFSimulationComponent().timeStep)
     for frame in 1...Int(6 * Double(framesPerSecond)) {
+        realityKitContacts = []
         CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(frame), timescale: framesPerSecond))
         try await recorder.render(renderer, deltaTime: timeStep)
+        // Move the dots to this frame's contacts; they show in the next frame
+        while dots.count < realityKitContacts.count {
+            let dot = ModelEntity(mesh: dotMesh, materials: [dotMaterial])
+            renderer.entities.append(dot)
+            dots.append(dot)
+        }
+        for (index, dot) in dots.enumerated() {
+            dot.isEnabled = index < realityKitContacts.count
+            if index < realityKitContacts.count { dot.position = realityKitContacts[index] }
+        }
         try await recorder.append(lines: [
-            "Ring toss: three tori dropped over a peg, same sizes and drops",
-            "left   RealityKit physics: a moving body needs a convex hull (ShapeResource.generateConvex)",
+            "Ring toss: three rings dropped over a peg, same sizes, drops and simulated time",
+            "left   RealityKit physics: each ring is 12 capsules (a compound built by hand)",
             "right  SDFCollisionKit: the torus itself",
-            "rings around the peg   RealityKit \(ringsOnPeg(leftRings, in: left))/3 · SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3",
+            "contacts  RealityKit ● \(realityKitContacts.count) · SDFCollisionKit ● \(simulation.contacts().count)",
+            "rings around the peg  RealityKit \(ringsOnPeg(leftRings, in: left))/3 · SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3",
         ])
     }
+    withExtendedLifetime((began, updated)) {}
     print("rings around the peg: RealityKit \(ringsOnPeg(leftRings, in: left))/3, SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3")
 }
 
