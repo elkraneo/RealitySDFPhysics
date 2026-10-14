@@ -333,6 +333,8 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
         world->wakeAll();
     }
     setNonNegative(world->restitutionThreshold, p.restitutionThreshold);
+    if (world->pairOptions != p.pairOptions)
+        world->broadPhaseCurrent = false;
     world->pairOptions = p.pairOptions;
     world->parallel = p.parallel;
     if (std::isfinite(p.metersPerUnit) && p.metersPerUnit > 0)
@@ -349,7 +351,11 @@ void sdf_world_step(SDFWorld *world)
     world->stepMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 
-void sdf_world_step_reference(SDFWorld *world) { world->solver.step(); }
+void sdf_world_step_reference(SDFWorld *world)
+{
+    world->broadPhaseCurrent = false;
+    world->solver.step();
+}
 
 SDFStats sdf_world_stats(const SDFWorld *world)
 {

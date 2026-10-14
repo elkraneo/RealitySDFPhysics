@@ -59,6 +59,9 @@ struct SDFWorld
     float metersPerUnit = 1;           // For the physical constants that upstream gives in meters
     bool sleeping = false;             // Puts still islands of touching bodies to sleep
     uint32_t nextIsland = 1;
+    // The manifolds hold the pairs that overlap at the bodies' poses: nothing has moved, been
+    // added, removed or changed since the broad phase found them
+    bool broadPhaseCurrent = false;
 
     double stepMilliseconds = 0;
     SDFBodyID nextID = 1;
