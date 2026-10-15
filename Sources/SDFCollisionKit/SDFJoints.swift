@@ -347,20 +347,25 @@ extension SDFSimulation {
     }
 
     /// The engine's joint of a pair of pins
-    private func jointID(_ pin0: GeometricPin, _ pin1: GeometricPin) -> SDFJointID? {
-        guard let entityA = pin0.entity, let entityB = pin1.entity else { return nil }
-        return jointStates[JointKey(entityA: entityA.id, pinA: pin0.name, entityB: entityB.id, pinB: pin1.name)]?.id
+    /// The engine's joint on these pins, if it is of the kind asked for: a slider that replaced a
+    /// hinge on the same pins is not that hinge
+    private func jointID(_ pin0: GeometricPin, _ pin1: GeometricPin, revolute: Bool) -> SDFJointID? {
+        guard let entityA = pin0.entity, let entityB = pin1.entity,
+              let state = jointStates[JointKey(entityA: entityA.id, pinA: pin0.name, entityB: entityB.id, pinB: pin1.name)],
+              state.joint.isRevolute == revolute
+        else { return nil }
+        return state.id
     }
 
     /// The angle of a joint: the rotation of `pin1`'s entity relative to `pin0`'s about the axis,
     /// in radians, or nil while the joint isn't in the simulation
     public func angle(of joint: SDFRevoluteJoint) -> Float? {
-        jointID(joint.pin0, joint.pin1).map { sdf_world_joint_angle(world, $0) }
+        jointID(joint.pin0, joint.pin1, revolute: true).map { sdf_world_joint_angle(world, $0) }
     }
 
     /// The translation of a joint: how far `pin1` is from `pin0` along the axis, or nil while the
     /// joint isn't in the simulation
     public func translation(of joint: SDFPrismaticJoint) -> Float? {
-        jointID(joint.pin0, joint.pin1).map { sdf_world_joint_translation(world, $0) }
+        jointID(joint.pin0, joint.pin1, revolute: false).map { sdf_world_joint_translation(world, $0) }
     }
 }

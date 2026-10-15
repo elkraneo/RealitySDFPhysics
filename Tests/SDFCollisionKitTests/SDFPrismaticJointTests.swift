@@ -49,6 +49,15 @@ import simd
         return simd_length(d - axis * simd_dot(d, axis))
     }
 
+    @Test func queriesAnswerOnlyForTheirKind() throws {
+        let (_, slider) = blockOnRail()
+        try slider.addToSimulation()
+        run(2)
+        #expect(simulation.translation(of: slider) != nil)
+        // A hinge on the same pins is not in the simulation
+        #expect(simulation.angle(of: SDFRevoluteJoint(pin0: slider.pin0, pin1: slider.pin1)) == nil)
+    }
+
     @Test func slidesDownToItsLimit() throws {
         var (block, joint) = blockOnRail()
         joint.linearLimit = 0...1
