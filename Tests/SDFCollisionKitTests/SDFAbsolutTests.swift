@@ -2,6 +2,7 @@ import Combine
 import RealityKit
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 import Testing
 import simd
 
@@ -34,7 +35,7 @@ import simd
         var settings = SDFSimulationComponent(simulation: simulation, preset: preset)
         settings.isSleepingEnabled = false
         root.components.set(settings)
-        try await DemoScene.all.first { $0.name == "Absolut" }!.load(into: root)
+        try await MechanicsScenes.all.first { $0.name == "Absolut" }!.load(into: root)
         #expect(root.components[SDFSimulationComponent.self]!.gravity == [0, -3, 0])
         let links = root.children.filter { $0.name.hasPrefix("link") }
         #expect(links.count == 48)
@@ -162,19 +163,21 @@ import simd
         let (crank, hinge) = try #require(PedalDrive.crank(in: scene.root))
         #expect(crank == scene.plato)
         var drive = PedalDrive()
-        var joints: SDFJointsComponent { scene.root.components[SDFJointsComponent.self]! }
+        var crankHinge: SDFRevoluteJoint {
+            get throws { try #require(scene.root.components[SDFJointsComponent.self]!.joints[hinge].revolute) }
+        }
         scene.simulation.step(root: scene.root)
         var pointer: Float = 0.3
-        drive.grab(at: pointer, crankAngle: scene.simulation.angle(of: joints.joints[hinge])!)
+        drive.grab(at: pointer, crankAngle: scene.simulation.angle(of: try crankHinge)!)
         var lags: [Float] = [], speeds: [Float] = []
         for step in 0..<300 {
             pointer -= timeStep
             drive.move(to: pointer)
-            let angle = scene.simulation.angle(of: joints.joints[hinge])!
+            var joint = try crankHinge
+            let angle = scene.simulation.angle(of: joint)!
             if step >= 120 { lags.append(PedalDrive.wrap(drive.target! - angle)) }
-            var component = joints
-            component.joints[hinge].motor = drive.motor(crankAngle: angle)
-            scene.root.components.set(component)
+            joint.motor = drive.motor(crankAngle: angle)
+            scene.root.components[SDFJointsComponent.self]!.joints[hinge] = .revolute(joint)
             scene.simulation.step(root: scene.root)
             speeds.append(scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z)
         }
@@ -192,7 +195,7 @@ import simd
         let scene = try await load(.realTime)
         let names = ["bike", "saddle", "handlebar", "Gaudí"]
         let boards = names.map { scene.root.findEntity(named: $0)! }
-        let hinges = scene.root.components[SDFJointsComponent.self]!.joints.filter { $0.angularLimit != nil }
+        let hinges = scene.root.components[SDFJointsComponent.self]!.joints.compactMap(\.revolute).filter { $0.angularLimit != nil }
         #expect(hinges.count == 4)
         let carrier = try #require(CarrierZone(root: scene.root, simulation: scene.simulation))
         var entries: [String] = [], exits: [String] = [], changes = 0, crowded = 0
@@ -237,5 +240,11 @@ import simd
         #expect(abs(angleB + 20) < 2, report)
         #expect(abs(angleA / angleB - Self.ratio) < 0.05 * Self.ratio, report)
         print(report.rawValue)
+    }
+}
+
+private extension SDFJoint {
+    var revolute: SDFRevoluteJoint? {
+        if case .revolute(let joint) = self { joint } else { nil }
     }
 }

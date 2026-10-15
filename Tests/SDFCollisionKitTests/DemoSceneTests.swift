@@ -1,14 +1,15 @@
 import RealityKit
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 import Testing
 
-/// The upstream demo scenes, stepped as sdf-snapshot steps them. They are the one input of the
+/// The upstream demo scenes and the mechanics scenes, stepped as sdf-snapshot steps them. They are the one input of the
 /// package built the way a user builds a scene, with entities, transforms and components, where
 /// the tests above construct their bodies themselves.
 @MainActor
 @Suite struct DemoSceneTests {
-    @Test(arguments: DemoScene.all) func sceneSettles(_ scene: DemoScene) async throws {
+    @Test(arguments: DemoScene.all + MechanicsScenes.all) func sceneSettles(_ scene: DemoScene) async throws {
         let simulation = SDFSimulation()
         let root = Entity()
         root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))

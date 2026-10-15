@@ -3,10 +3,16 @@ import SDFCollisionKit
 import SDFDemoScenes
 import SwiftUI
 
-struct ContentView: View {
-    @State private var model = DemoModel()
+/// The demo window's content: a sidebar to pick a scene and tune the simulation, and the scene
+/// with an orbit camera, where dragging moves a body, or the scene's own interaction takes it
+public struct DemoViewer: View {
+    @State private var model: DemoModel
 
-    var body: some View {
+    public init(scenes: [DemoScene], interaction: ((DemoScene) -> DemoInteraction?)? = nil) {
+        _model = State(initialValue: DemoModel(scenes: scenes, interaction: interaction))
+    }
+
+    public var body: some View {
         NavigationSplitView {
             Sidebar(model: model)
                 .navigationSplitViewColumnWidth(min: 280, ideal: 320)
@@ -14,7 +20,7 @@ struct ContentView: View {
             ZStack(alignment: .topTrailing) {
                 Viewport(model: model)
                 StatsOverlay(simulation: model.simulation, sceneDescription: model.sceneDescription,
-                             isLoading: model.isLoading, errorMessage: model.errorMessage, activeObject: model.activeObject)
+                             isLoading: model.isLoading, errorMessage: model.errorMessage, interaction: model.interaction)
                     .padding(12)
             }
         }
@@ -35,7 +41,7 @@ private struct Sidebar: View {
                 Picker("Scene", selection: Binding(get: { model.sceneIndex }, set: { index in
                     Task { await model.loadScene(index) }
                 })) {
-                    ForEach(DemoScene.all) { scene in
+                    ForEach(model.scenes) { scene in
                         Text(scene.name).tag(scene.id)
                     }
                 }
@@ -65,7 +71,7 @@ private struct Sidebar: View {
             ParametersSection(settings: $model.settings, reset: model.resetParameters)
 
             Section {
-                Text("Drag a body to move it, drag the background to orbit, pinch to zoom. In Absolut, drag around the plato to pedal.")
+                Text("Drag a body to move it, drag the background to orbit, pinch to zoom.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -132,7 +138,7 @@ private struct StatsOverlay: View {
     let sceneDescription: String
     let isLoading: Bool
     let errorMessage: String?
-    let activeObject: String?
+    let interaction: DemoInteraction?
 
     var body: some View {
         // The simulation is not observable; sample its statistics a few times per second
@@ -146,8 +152,9 @@ private struct StatsOverlay: View {
                 if let errorMessage {
                     Text(errorMessage).foregroundStyle(.red)
                 }
-                if let activeObject {
-                    Text("Active: \(activeObject)").foregroundStyle(.orange)
+                // Not observable either, so read here with the statistics
+                if let status = interaction?.status {
+                    Text(status).foregroundStyle(.orange)
                 }
                 Text("\(stats.bodies) bodies · \(stats.pairs) pairs · \(stats.contacts) contacts")
                 Text("step \(stats.stepMilliseconds, format: .number.precision(.fractionLength(2))) ms · collision \(stats.collisionMilliseconds, format: .number.precision(.fractionLength(2))) ms")
@@ -165,13 +172,14 @@ private struct StatsOverlay: View {
 private struct Viewport: View {
     let model: DemoModel
 
-    private enum Interaction {
-        case pedal
+    /// What a drag moves, decided where it starts
+    private enum Drag {
+        case scene
         case body(distance: Float)
         case orbit(last: CGPoint)
     }
 
-    @State private var interaction: Interaction?
+    @State private var drag: Drag?
     @State private var lastMagnification: CGFloat = 1
 
     var body: some View {
@@ -182,7 +190,9 @@ private struct Viewport: View {
                     content.add(DemoStage.makeFloor())
                     content.add(DemoStage.makeLight())
                     content.add(model.cameraEntity)
-                    model.frameUpdates = content.subscribe(to: SceneEvents.Update.self) { _ in model.updatePedals() }
+                    model.frameUpdates = content.subscribe(to: SceneEvents.Update.self) { event in
+                        model.interaction?.update(deltaTime: event.deltaTime)
+                    }
                 }
                 Color.clear
                     .contentShape(.rect)
@@ -195,34 +205,34 @@ private struct Viewport: View {
     private func dragGesture(in size: CGSize) -> some Gesture {
         DragGesture(minimumDistance: 0)
             .onChanged { value in
-                switch interaction {
+                switch drag {
                 case nil:
                     let ray = model.ray(through: value.startLocation, in: size)
                     // The root is at the scene origin, so its frame is the world's. The drag holds
                     // the body as a hand would, with a capped force: a gear or a link pulled into
                     // another stops against it rather than passing through.
-                    if model.beginPedaling(origin: ray.origin, direction: ray.direction) {
-                        interaction = .pedal
+                    if model.interaction?.beginDrag(origin: ray.origin, direction: ray.direction) == true {
+                        drag = .scene
                     } else if let picked = model.simulation.beginDrag(origin: ray.origin, direction: ray.direction) {
-                        interaction = .body(distance: simd_distance(picked.hit, ray.origin))
+                        drag = .body(distance: simd_distance(picked.hit, ray.origin))
                     } else {
-                        interaction = .orbit(last: value.startLocation)
+                        drag = .orbit(last: value.startLocation)
                     }
-                case .pedal:
+                case .scene:
                     let ray = model.ray(through: value.location, in: size)
-                    model.pedal(origin: ray.origin, direction: ray.direction)
+                    model.interaction?.moveDrag(origin: ray.origin, direction: ray.direction)
                 case .body(let distance):
                     let ray = model.ray(through: value.location, in: size)
                     model.simulation.drag(to: ray.origin + ray.direction * distance)
                 case .orbit(let last):
                     model.orbit(by: CGSize(width: value.location.x - last.x, height: value.location.y - last.y))
-                    interaction = .orbit(last: value.location)
+                    drag = .orbit(last: value.location)
                 }
             }
             .onEnded { _ in
                 model.simulation.endDrag()
-                model.endPedaling()
-                interaction = nil
+                model.interaction?.endDrag()
+                drag = nil
             }
     }
 

@@ -17,6 +17,7 @@ import RealityKit
 import RealityKitSampleScenes
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 
 let width = 1280, height = 720, framesPerSecond: Int32 = 60
 let paperCredit = "Giles & Andrews, Real-Time Collision Handling for SDFs via Caching and Importance Sampling (PG 2026)"
@@ -104,11 +105,12 @@ final class Recorder {
 /// The paper's scenes, each with a slowly orbiting camera; `mechanics` the gears and the chains
 @MainActor
 func renderDemos(_ recorder: Recorder, mechanics: Bool = false) async throws {
+    let scenes = mechanics ? MechanicsScenes.all : DemoScene.all
     // Scenes in order, with their length in seconds and whether contacts are shown
     let reel: [(scene: Int, seconds: Double, contacts: Bool)] = mechanics ? [
-        (11, 6, false),  // Gears
-        (12, 14, false), // Chain
-        (13, 14, false), // Absolut
+        (0, 6, false),  // Gears
+        (1, 14, false), // Chain
+        (2, 14, false), // Absolut
     ] : [
         (7, 4.5, false), // Spiky Wheel
         (8, 5, false),   // Cows on Spikes
@@ -117,7 +119,7 @@ func renderDemos(_ recorder: Recorder, mechanics: Bool = false) async throws {
         (3, 4.5, false), // Bent planks
     ]
     for item in reel {
-        let scene = DemoScene.all[item.scene]
+        let scene = scenes[item.scene]
         let simulation = SDFSimulation()
         let root = Entity()
         root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))

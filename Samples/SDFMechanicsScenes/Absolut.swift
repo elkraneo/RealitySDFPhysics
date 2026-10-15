@@ -1,6 +1,7 @@
 import Combine
 import RealityKit
 import SDFCollisionKit
+import SDFDemoScenes
 import simd
 
 /// The Absolut scene's crank, pedals and hung objects: bodies on the chain that touch nothing,

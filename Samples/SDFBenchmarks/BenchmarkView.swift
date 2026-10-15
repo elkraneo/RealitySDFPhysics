@@ -1,6 +1,7 @@
 import RealityKit
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 import SwiftUI
 
 /// Runs the standard table of `sdf-bench` on the machine at hand and shows it: the pile of tori
@@ -59,12 +60,12 @@ final class BenchmarkModel {
         }
     }
 
-    /// The mechanics demo scenes stepped with the real-time preset: step time, mean and worst
+    /// The mechanics scenes stepped with the real-time preset: step time, mean and worst
     private func runScenes() async {
         emit("\(device.text)")
         emit("ms/step, mean / worst over 300 steps, real-time preset. Load is the baking.")
         emit("scene         bodies   load ms   step   contacts")
-        for scene in DemoScene.all where ["Gears", "Chain", "Absolut", "Planetary"].contains(scene.name) {
+        for scene in MechanicsScenes.all {
             await Task.yield()
             let simulation = SDFSimulation(), root = Entity()
             var settings = SDFSimulationComponent(simulation: simulation)

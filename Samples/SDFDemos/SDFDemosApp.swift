@@ -1,4 +1,8 @@
+// The 11 scenes of the paper's demo, rebuilt on the public API
+
 import AppKit
+import SDFDemoScenes
+import SDFDemoViewer
 import SwiftUI
 
 @main
@@ -7,7 +11,7 @@ struct SDFDemosApp: App {
 
     var body: some Scene {
         WindowGroup("SDF Collision Demos") {
-            ContentView()
+            DemoViewer(scenes: DemoScene.all)
                 .frame(minWidth: 960, minHeight: 600)
         }
     }
