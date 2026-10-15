@@ -30,6 +30,8 @@ public struct BenchmarkView: View {
             .padding()
         }
         .navigationTitle("SDF Benchmarks")
+        // Launched with --run, as from a Mac over devicectl, the table runs and prints by itself
+        .task { if CommandLine.arguments.contains("--run") { model.run() } }
     }
 }
 
