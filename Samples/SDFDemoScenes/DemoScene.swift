@@ -188,6 +188,10 @@ extension DemoScene {
                 b.joints.append(joint)
             }
         },
+        DemoScene(id: 12, name: "Chain", description: "A roller chain of 48 links around sprockets of 20 and 10 teeth, the big one driven by a motor: the small one turns by the chain alone",
+                  target: [4.1, 3, 0], distance: 16) { b in
+            try await b.buildChain()
+        },
     ]
 
     /// Fig. 8: a pile of falling boxes, optionally distorted
@@ -254,6 +258,51 @@ struct SeededRandom {
         case 3: return [p, q, v]
         case 4: return [t, p, v]
         default: return [v, p, q]
+        }
+    }
+}
+
+extension DemoBuilder {
+    /// The chain scene: links pinned to each other around two sprockets on hinges, in the x-y
+    /// plane at height 3, with the friction of oiled steel
+    @MainActor
+    public mutating func buildChain(chain: ChainMesh = ChainMesh(), links: Int = 48, teethA: Int = 20, teethB: Int = 10) async throws {
+        let layout = ChainLayout(chain: chain, links: links, teethA: teethA, teethB: teethB)
+        let origin = SIMD3<Float>(0, 3, 0)
+        let axle = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0]) // The pin's x axis along z
+        let steel = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+        let base = try await spawn("Box", at: origin + [layout.centerDistance / 2, -4, 0], scale: 0.5, mode: .static, isVisible: false)
+
+        let phases = layout.phases
+        for (name, teeth, x, phase, motor) in [("sprocket A", teethA, Float(0), phases.a, true), ("sprocket B", teethB, layout.centerDistance, phases.b, false)] {
+            let shape = try chain.sprocketShape(teeth: teeth)
+            let sprocket = spawn(shape, mesh: try MeshResource.generate(from: shape), named: name, at: origin + [x, 0, 0],
+                                 orientation: simd_quatf(angle: phase, axis: [0, 0, 1]))
+            sprocket.components[SDFBodyComponent.self]!.material = steel
+            sprocket.components.set(SDFMotionComponent())
+            let pin0 = base.pins.set(named: name, position: sprocket.position, orientation: axle, relativeTo: root)
+            let pin1 = sprocket.pins.set(named: "hub", orientation: sprocket.orientation.inverse * axle)
+            var joint = SDFRevoluteJoint(pin0: pin0, pin1: pin1)
+            if motor { joint.motor = SDFRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 5000) }
+            joints.append(joint)
+        }
+
+        let linkShape = try chain.linkShape()
+        let linkMesh = try MeshResource.generate(from: linkShape)
+        let pins = layout.pins
+        var linkEntities: [Entity] = []
+        for k in 0..<links {
+            let from = pins[k], to = pins[(k + 1) % links]
+            let middle = (from + to) / 2, direction = to - from
+            let link = spawn(linkShape, mesh: linkMesh, named: "link \(k)", at: origin + [middle.x, middle.y, 0],
+                             orientation: simd_quatf(angle: atan2(direction.y, direction.x), axis: [0, 0, 1]))
+            link.components[SDFBodyComponent.self]!.material = steel
+            link.pins.set(named: "left", position: [-chain.pitch / 2, 0, 0], orientation: axle)
+            link.pins.set(named: "right", position: [chain.pitch / 2, 0, 0], orientation: axle)
+            linkEntities.append(link)
+        }
+        for k in 0..<links {
+            joints.append(SDFRevoluteJoint(pin0: linkEntities[k].pins["right"]!, pin1: linkEntities[(k + 1) % links].pins["left"]!))
         }
     }
 }
