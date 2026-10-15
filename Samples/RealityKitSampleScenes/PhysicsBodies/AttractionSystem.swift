@@ -9,7 +9,7 @@
 // never come closer, so for them the forces are unchanged.
 
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// Marks a body that the other marked bodies and the center attract
 package struct AttractionComponent: Component {}

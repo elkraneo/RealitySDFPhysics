@@ -1,4 +1,4 @@
-# SDFCollisionKit
+# RealitySDFPhysics
 
 Rigid body physics for RealityKit in which every body is a signed distance field, built on
 
@@ -17,7 +17,7 @@ components. The paper's collision detection is vendored unmodified behind a C in
 
 ```swift
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 // A root entity runs the simulation for its descendants, in its local frame
 let root = Entity()
@@ -49,7 +49,7 @@ subscription = simulation.subscribe(to: SDFCollisionEvents.Began.self, on: gear)
 }
 ```
 
-| RealityKit | SDFCollisionKit |
+| RealityKit | RealitySDFPhysics |
 | --- | --- |
 | `PhysicsSimulationComponent` | `SDFSimulationComponent` |
 | `PhysicsBodyComponent` + `CollisionComponent` | `SDFBodyComponent` (mode, mass, material, locks, damping, gravity, filter, trigger) |
@@ -86,7 +86,7 @@ In `Samples/`, macOS apps built on the public API:
   chain of 2008 with pedals to drag and boards that light up over the plato, and a planetary
   gear set. It shares the window of `SDFDemos`, the `SDFDemoViewer` module, whose
   `DemoInteraction` lets a scene take the drag, as the Absolut pedals do.
-- `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, SDFCollisionKit
+- `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, RealitySDFPhysics
   against RealityKit's physics, in a window. The scene, the timings and the view are the
   `SDFBenchmarks` module; `Samples/BenchmarksApp` wraps it in an Xcode project for iPhone and
   Vision Pro, where the same table runs on the device.

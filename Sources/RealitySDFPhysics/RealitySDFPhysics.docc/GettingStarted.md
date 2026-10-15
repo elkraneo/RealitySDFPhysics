@@ -4,11 +4,11 @@ Add a simulation to a scene, give entities bodies, and react to their contacts.
 
 ## Add the package
 
-In Xcode, add `https://github.com/elkraneo/SDFCollisionKit` as a package dependency and link the
-`SDFCollisionKit` library. In a package manifest:
+In Xcode, add `https://github.com/elkraneo/RealitySDFPhysics` as a package dependency and link the
+`RealitySDFPhysics` library. In a package manifest:
 
 ```swift
-.package(url: "https://github.com/elkraneo/SDFCollisionKit", from: "0.1.0"),
+.package(url: "https://github.com/elkraneo/RealitySDFPhysics", from: "0.1.0"),
 ```
 
 The package supports macOS 15, iOS 18 and visionOS 2. The engine is C++, but its interface is C,

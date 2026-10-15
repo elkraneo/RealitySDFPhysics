@@ -1,5 +1,5 @@
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// Shows the contacts of the parent's simulation as points with normals: green when tracked by the
 /// temporal cache, red when newly found. Set it on a direct child of the simulation root.

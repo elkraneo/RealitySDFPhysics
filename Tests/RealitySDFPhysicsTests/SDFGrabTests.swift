@@ -1,5 +1,5 @@
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import SDFDemoScenes
 import SDFMechanicsScenes
 import Testing

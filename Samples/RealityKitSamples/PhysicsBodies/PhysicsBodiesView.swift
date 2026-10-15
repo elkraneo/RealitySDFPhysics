@@ -6,7 +6,7 @@
 // walls: the camera is outside the volume.
 
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import RealityKitSampleScenes
 import SwiftUI
 

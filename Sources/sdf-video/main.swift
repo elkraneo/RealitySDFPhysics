@@ -15,7 +15,7 @@ import CoreText
 import Metal
 import RealityKit
 import RealityKitSampleScenes
-import SDFCollisionKit
+import RealitySDFPhysics
 import SDFDemoScenes
 import SDFMechanicsScenes
 
@@ -146,7 +146,7 @@ func renderDemos(_ recorder: Recorder, mechanics: Bool = false) async throws {
             let stats = simulation.statistics
             let mean = stepMilliseconds.reduce(0, +) / Double(stepMilliseconds.count)
             try await recorder.append(lines: [
-                "SDFCollisionKit · SDF-SDF rigid bodies in RealityKit",
+                "RealitySDFPhysics · SDF-SDF rigid bodies in RealityKit",
                 "physics: SDF engine (RealityKit physics off)",
                 "\(scene.name.lowercased()) · \(stats.bodies) bodies · \(stats.contacts) contacts · \(String(format: "%.1f", mean)) ms/step",
             ] + (item.contacts ? ["contacts: ● cached  ● new"] : []), contactLegend: item.contacts)
@@ -179,7 +179,7 @@ func renderTori(_ recorder: Recorder) async throws {
         try await recorder.render(renderer, deltaTime: timeStep)
         let stats = scene.simulation.statistics
         try await recorder.append(lines: [
-            "Apple's \"Simulating physics with collisions\", ported to SDFCollisionKit",
+            "Apple's \"Simulating physics with collisions\", ported to RealitySDFPhysics",
             "tori in place of spheres: concave moving bodies, which RealityKit's physics can't simulate",
             "\(stats.bodies - 6) tori · \(stats.contacts) contacts · \(String(format: "%.1f", stats.stepMilliseconds)) ms/step",
         ])
@@ -208,7 +208,7 @@ func renderDice(_ recorder: Recorder) async throws {
         default: break
         }
         try await recorder.render(renderer, deltaTime: timeStep)
-        var lines = ["Apple's \"Simulating dice rolls\", ported to SDFCollisionKit", "toss all, max score"]
+        var lines = ["Apple's \"Simulating dice rolls\", ported to RealitySDFPhysics", "toss all, max score"]
         if let rolled = scene.rolled {
             let asForecast = scene.predicted.map { $0.map(\.value) == rolled.map(\.value) } ?? false
             lines.append("rolled    \(describe(rolled))\(asForecast ? ", as forecast" : "")")
@@ -223,7 +223,7 @@ func renderDice(_ recorder: Recorder) async throws {
 
 /// A ring toss: three tori dropped over a peg. Left, RealityKit's physics, with each ring as the best
 /// RealityKit has for a moving torus: a compound of 12 capsules around it, built by hand (from a mesh,
-/// it would generate a convex hull, which closes the hole). Right, SDFCollisionKit with the torus
+/// it would generate a convex hull, which closes the hole). Right, RealitySDFPhysics with the torus
 /// itself. Each side draws what its physics collides with, and its contact points.
 @MainActor
 func renderComparison(_ recorder: Recorder) async throws {
@@ -292,7 +292,7 @@ func renderComparison(_ recorder: Recorder) async throws {
         leftRings.append(ring)
     }
 
-    // SDFCollisionKit, in a root of decimeters, with the contact markers of the demo
+    // RealitySDFPhysics, in a root of decimeters, with the contact markers of the demo
     let right = Entity()
     right.position = [0.45, 0, 0]
     right.scale = SIMD3(repeating: 0.1)
@@ -365,13 +365,13 @@ func renderComparison(_ recorder: Recorder) async throws {
         try await recorder.append(lines: [
             "Ring toss: three rings dropped over a peg, same sizes, drops and simulated time",
             "left   RealityKit physics: each ring is 12 capsules (a compound built by hand)",
-            "right  SDFCollisionKit: the torus itself",
-            "contacts  RealityKit ● \(realityKitContacts.count) · SDFCollisionKit ● \(simulation.contacts().count)",
-            "rings around the peg  RealityKit \(ringsOnPeg(leftRings, in: left))/3 · SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3",
+            "right  RealitySDFPhysics: the torus itself",
+            "contacts  RealityKit ● \(realityKitContacts.count) · RealitySDFPhysics ● \(simulation.contacts().count)",
+            "rings around the peg  RealityKit \(ringsOnPeg(leftRings, in: left))/3 · RealitySDFPhysics \(ringsOnPeg(rightRings, in: right))/3",
         ])
     }
     withExtendedLifetime((began, updated)) {}
-    print("rings around the peg: RealityKit \(ringsOnPeg(leftRings, in: left))/3, SDFCollisionKit \(ringsOnPeg(rightRings, in: right))/3")
+    print("rings around the peg: RealityKit \(ringsOnPeg(leftRings, in: left))/3, RealitySDFPhysics \(ringsOnPeg(rightRings, in: right))/3")
 }
 
 do {

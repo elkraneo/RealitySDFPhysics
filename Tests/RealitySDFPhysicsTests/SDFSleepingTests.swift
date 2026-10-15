@@ -1,5 +1,5 @@
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import Testing
 import simd
 

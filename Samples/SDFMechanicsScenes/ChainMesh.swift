@@ -1,4 +1,4 @@
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 
 /// A roller chain and its sprockets, generated as closed meshes to bake: links pinned to each

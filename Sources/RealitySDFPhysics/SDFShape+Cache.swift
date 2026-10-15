@@ -2,9 +2,9 @@ import CryptoKit
 import Foundation
 
 extension SDFShape {
-    /// The folder "SDFCollisionKit" in the user's caches directory
+    /// The folder "RealitySDFPhysics" in the user's caches directory
     public static var cacheDirectory: URL {
-        URL.cachesDirectory.appending(path: "SDFCollisionKit", directoryHint: .isDirectory)
+        URL.cachesDirectory.appending(path: "RealitySDFPhysics", directoryHint: .isDirectory)
     }
 
     /// A key that identifies a bake by its inputs: a hash of the mesh and the resolution, so that a

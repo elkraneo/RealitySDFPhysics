@@ -1,4 +1,4 @@
-# ``SDFCollisionKit``
+# ``RealitySDFPhysics``
 
 Rigid body physics for RealityKit in which every body is a signed distance field, so concave
 shapes collide exactly.
@@ -7,7 +7,7 @@ shapes collide exactly.
 
 RealityKit's physics, like most game physics engines, gives moving bodies convex shapes only.
 Gears, spikes, chairs and most meshes have to be approximated by boxes and capsules or cut into
-convex pieces. SDFCollisionKit replaces RealityKit's physics for the entities you choose with a
+convex pieces. RealitySDFPhysics replaces RealityKit's physics for the entities you choose with a
 simulation in which every body is a signed distance field: the distance to its surface,
 negative inside. Concave and interlocking shapes collide as they are.
 

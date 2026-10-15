@@ -24,7 +24,7 @@
 
 import Combine
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 import SwiftUI
 

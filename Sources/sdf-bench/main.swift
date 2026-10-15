@@ -1,4 +1,4 @@
-// Times the same pile of tori with SDFCollisionKit and with RealityKit's physics, from 25 to 400
+// Times the same pile of tori with RealitySDFPhysics and with RealityKit's physics, from 25 to 400
 // bodies, and prints a table.
 //
 //   swift run -c release sdf-bench [steps]
@@ -6,7 +6,7 @@
 //   swift run -c release sdf-bench phases [steps] [tori ...]
 //   swift run -c release sdf-bench soak [minutes] [tori ...]
 //
-// `quality` compares SDFCollisionKit's settings, from the paper's to RealityKit-like ones: step time,
+// `quality` compares RealitySDFPhysics's settings, from the paper's to RealityKit-like ones: step time,
 // deepest penetration, how still the pile ends, and bodies out of the box; and, for the default
 // real-time preset, the bodies asleep at the end and the step time over the last 30 steps.
 //
@@ -21,10 +21,10 @@
 // The scene and the timings are those of the SDFBenchmarks module, which the Benchmarks app runs
 // on a Mac, an iPhone or a Vision Pro. The tori fall into a walled box. For RealityKit, each torus
 // is the best it has for a moving torus: a compound of 12 capsules (from a mesh it would generate
-// a convex hull, which closes the hole). SDFCollisionKit uses the torus itself. Both run in meters
+// a convex hull, which closes the hole). RealitySDFPhysics uses the torus itself. Both run in meters
 // at 60 steps per second; the bodies have no meshes, so that rendering costs next to nothing.
 //
-// SDFCollisionKit's time is that of `SDFSimulation.step(root:)`, synchronization included.
+// RealitySDFPhysics's time is that of `SDFSimulation.step(root:)`, synchronization included.
 // RealityKit's is measured between its `PhysicsSimulationEvents.WillSimulate` and `DidSimulate`
 // events, and cross-checked with an estimate: the time of a frame with the physics clock advancing
 // by a step, minus that of a frame with the clock still.
@@ -32,7 +32,7 @@
 import Foundation
 import RealityKit
 import SDFBenchmarks
-import SDFCollisionKit
+import RealitySDFPhysics
 
 let mode = CommandLine.arguments.dropFirst().first.flatMap { ["quality", "phases", "soak"].contains($0) ? $0 : nil }
 let steps = CommandLine.arguments.dropFirst(mode == nil ? 1 : 2).first.flatMap { Int($0) } ?? Benchmark.steps
@@ -193,7 +193,7 @@ func trace(_ timing: StepTiming, _ name: String) {
 }
 
 print(DeviceInfo.current.text)
-print("ms/step, mean / worst. SDFCollisionKit: the default real-time preset, with sleeping, and the paper's settings,")
+print("ms/step, mean / worst. RealitySDFPhysics: the default real-time preset, with sleeping, and the paper's settings,")
 print("multithreaded and on one thread. RealityKit: 12-capsule tori, measured between its simulation events.")
 print("tori   real time           paper               paper, one thread   RealityKit")
 for count in TorusPile.counts {

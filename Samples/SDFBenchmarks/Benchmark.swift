@@ -1,7 +1,7 @@
 import CoreMedia
 import Metal
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// Milliseconds per step of a run, and a check of where the pile ended
 public struct StepTiming: Sendable {
@@ -24,7 +24,7 @@ public struct Phases: Sendable {
     public var swift: Double { step - engine }
 }
 
-/// The pile of tori timed, headless: SDFCollisionKit stepped directly, RealityKit's physics
+/// The pile of tori timed, headless: RealitySDFPhysics stepped directly, RealityKit's physics
 /// stepped by its clock between its simulation events.
 public enum Benchmark {
     /// The steps of the standard table

@@ -1,10 +1,10 @@
 import CoreMedia
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 
 /// The benchmark scene: layers of concave tori dropped into a box 2 m across, with walls 5 m
-/// high so that 400 stay in. The same pile is built for SDFCollisionKit and for RealityKit's
+/// high so that 400 stay in. The same pile is built for RealitySDFPhysics and for RealityKit's
 /// physics, where a torus is a compound of capsules.
 public enum TorusPile {
     public static let major: Float = 0.15, minor: Float = 0.04, segments = 12

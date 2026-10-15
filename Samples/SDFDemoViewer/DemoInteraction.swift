@@ -1,6 +1,6 @@
 import Foundation
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// A scene's own handling of the pointer and the frame, such as a crank to pedal: the viewer
 /// makes one for every load of the scene and offers it each drag before the bodies and the

@@ -1,6 +1,6 @@
 import CoreGraphics
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 
 /// A scene of the demo apps, built on the public API. Those of the upstream demo, in `all`, have

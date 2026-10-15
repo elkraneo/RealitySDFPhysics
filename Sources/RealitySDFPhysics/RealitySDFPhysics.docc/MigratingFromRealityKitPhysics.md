@@ -4,7 +4,7 @@ Move entities from RealityKit's physics to SDF bodies, and know what differs.
 
 ## Overview
 
-SDFCollisionKit mirrors the names and shapes of RealityKit's physics API, and reuses its
+RealitySDFPhysics mirrors the names and shapes of RealityKit's physics API, and reuses its
 `PhysicsBodyMode`, `CollisionFilter`, `CollisionGroup`, `CollisionCastQueryType` and
 `PhysicsSimulationComponent` option types. The two simulations are separate: SDF bodies and
 RealityKit physics bodies don't push each other, so give each moving entity one or the other.
@@ -16,7 +16,7 @@ exact analytical shapes; other shapes are baked from their meshes with
 
 ## Counterparts
 
-| RealityKit | SDFCollisionKit |
+| RealityKit | RealitySDFPhysics |
 | --- | --- |
 | `PhysicsSimulationComponent` | ``SDFSimulationComponent`` |
 | `PhysicsBodyComponent` with `CollisionComponent` | ``SDFBodyComponent``, whose ``SDFBodyComponent/shape`` replaces the collision shapes |

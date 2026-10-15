@@ -6,7 +6,7 @@
 //
 // - Bodies are `SDFBodyComponent`s in an `SDFSimulationComponent` root, in place of
 //   `PhysicsBodyComponent` and `CollisionComponent`.
-// - The root is scaled to a tenth, so bodies are modeled in decimeters. SDFCollisionKit's default
+// - The root is scaled to a tenth, so bodies are modeled in decimeters. RealitySDFPhysics's default
 //   contact margin and tolerances suit objects about 1 unit across; the spheres are 6 to 30 cm
 //   across.
 //   Masses, forces and the sizes you see are the same as Apple's.
@@ -22,7 +22,7 @@
 
 import Combine
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 import SwiftUI
 

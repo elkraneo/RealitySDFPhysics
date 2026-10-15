@@ -10,7 +10,7 @@ import Foundation
 import ImageIO
 import Metal
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import SDFDemoScenes
 import SDFMechanicsScenes
 import UniformTypeIdentifiers
