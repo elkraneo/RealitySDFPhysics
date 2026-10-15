@@ -137,37 +137,46 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
 {
     Solver &s = world.solver;
     float r = 0.5f * s.params.margin;
-    std::vector<int> order(s.bodies.size());
-    std::iota(order.begin(), order.end(), 0);
-    std::sort(order.begin(), order.end(), [&](int a, int b) { return s.bodies[a]->bounds.min.x < s.bodies[b]->bounds.min.x; });
 
-    // Bounding spheres, tested after the boxes: a box and a sphere each enclose the shape, and a
-    // pair must pass both. The spheres reject pairs whose boxes overlap only at their corners.
-    // Only with threads: there every pair draws its own random samples, so a pair fewer changes
-    // nothing for the others, whereas the reference path draws them from one sequence.
-    std::vector<float3> sphereCenter(world.parallel ? s.bodies.size() : 0);
-    for (size_t i = 0; i < sphereCenter.size(); i++)
-        sphereCenter[i] = s.bodies[i]->toWorld(center(s.bodies[i]->shape->bounds));
-    auto spheresOverlap = [&](int a, int b) {
-        if (sphereCenter.empty())
-            return true;
-        float reach = movers[a].record->boundingRadius + movers[b].record->boundingRadius + 2 * r;
-        return lengthSq(sphereCenter[a] - sphereCenter[b]) <= reach * reach;
+    // What the sweep tests, packed in its order so that it reads memory in sequence: the bounds
+    // grown by half the margin, and a bounding sphere. A box and a sphere each enclose the shape,
+    // and a pair must pass both; the spheres reject pairs whose boxes overlap only at their
+    // corners. Only with threads: there every pair draws its own random samples, so a pair fewer
+    // changes nothing for the others, whereas the reference path draws them from one sequence.
+    struct Proxy
+    {
+        AABB box;
+        float3 center;
+        float radius;
+        int body;
+        const BodyRecord *record;
     };
+    std::vector<Proxy> proxies(s.bodies.size());
+    for (size_t i = 0; i < proxies.size(); i++)
+    {
+        const Body &body = *s.bodies[i];
+        float3 center = world.parallel ? body.toWorld(::center(body.shape->bounds)) : float3{0, 0, 0};
+        proxies[i] = {expand(body.bounds, r), center, movers[i].record->boundingRadius, (int)i, movers[i].record};
+    }
+    std::sort(proxies.begin(), proxies.end(), [](const Proxy &a, const Proxy &b) { return a.box.min.x < b.box.min.x; });
 
     std::vector<std::pair<int, int>> overlapping;
-    for (size_t i = 0; i < order.size(); i++)
+    for (size_t i = 0; i < proxies.size(); i++)
     {
-        for (size_t j = i + 1; j < order.size(); j++)
+        const Proxy &a = proxies[i];
+        for (size_t j = i + 1; j < proxies.size() && proxies[j].box.min.x <= a.box.max.x; j++)
         {
-            if (s.bodies[order[j]]->bounds.min.x - r > s.bodies[order[i]]->bounds.max.x + r)
-                break;
-
-            std::pair<int, int> key = std::minmax(order[i], order[j]);
-            if (shouldCollide(*movers[key.first].record, *movers[key.second].record, world.pairOptions) &&
-                overlaps(expand(s.bodies[key.first]->bounds, r), expand(s.bodies[key.second]->bounds, r)) &&
-                spheresOverlap(key.first, key.second))
-                overlapping.push_back(key);
+            const Proxy &b = proxies[j];
+            if (!overlaps(a.box, b.box))
+                continue;
+            if (world.parallel)
+            {
+                float reach = a.radius + b.radius + 2 * r;
+                if (lengthSq(a.center - b.center) > reach * reach)
+                    continue;
+            }
+            if (shouldCollide(*a.record, *b.record, world.pairOptions))
+                overlapping.push_back(std::minmax(a.body, b.body));
         }
     }
     std::sort(overlapping.begin(), overlapping.end());
