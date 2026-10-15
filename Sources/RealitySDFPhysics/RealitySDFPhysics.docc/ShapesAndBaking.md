@@ -44,7 +44,9 @@ let shape = try await SDFShape.bake(from: chair, resolution: 64)
 - **Choose a resolution.** Features thinner than about two cells are lost. Baking time and memory
   grow with the cube of the resolution: 100 cells take up to about a second on an Apple M1.
 - **Bake once.** Share a shape between all the bodies that use it, and keep it around across scene
-  loads.
+  loads. ``SDFShape/cached(baking:indices:resolution:in:sizeLimit:)`` keeps bakes on disk across
+  launches, trimmed to ``SDFShape/defaultCacheSizeLimit`` (512 MB) by dropping the least recently
+  used ones; ``SDFShape/trimCache(in:to:)`` trims on demand.
 
 ## Queries
 

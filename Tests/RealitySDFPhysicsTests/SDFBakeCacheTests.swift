@@ -112,6 +112,32 @@ import simd
             #expect(saved == shape.bakedData())
         }
     }
+
+    @Test func cacheKeepsTheMostRecentlyUsedBakes() throws {
+        try Self.withTemporaryDirectory { directory in
+            let shape = try SDFShape(baking: Self.positions, indices: Self.torus.indices, resolution: 16)
+            let size = try #require(shape.bakedData()).count
+            func cache(_ key: String, limit: Int = .max) throws { _ = try SDFShape.cached(key: key, in: directory, sizeLimit: limit) { shape } }
+            func keys() throws -> Set<String> {
+                Set(try FileManager.default.contentsOfDirectory(atPath: directory.path).map { ($0 as NSString).deletingPathExtension })
+            }
+            // Each file's date a second apart, as file systems keep them only so finely
+            for (index, key) in ["a", "b", "c"].enumerated() {
+                try cache(key)
+                try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: Double(index - 10))],
+                                                      ofItemAtPath: directory.appending(path: key + ".sdf").path)
+            }
+            // Loading "a" makes it the most recent; a fourth bake with room for about three drops "b"
+            try cache("a")
+            let other = directory.appending(path: "notes.txt")
+            try Data(count: size * 4).write(to: other)
+            try cache("d", limit: size * 3 + size / 2)
+            #expect(try keys() == ["a", "c", "d", "notes"])
+
+            SDFShape.trimCache(in: directory, to: 0)
+            #expect(try keys() == ["notes"])
+        }
+    }
 }
 
 /// A seeded random number generator, for points that are the same in every run
