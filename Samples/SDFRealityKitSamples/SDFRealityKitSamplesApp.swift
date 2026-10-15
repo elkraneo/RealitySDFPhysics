@@ -43,7 +43,7 @@ private enum Sample: String, CaseIterable, Identifiable {
         case .pendulum: [
             "SDF bodies and revolute joints in place of RealityKit's; Apple's sizes, masses, materials and slow-motion scale.",
             "It behaves as a Newton's cradle: one ball in, one out; two in, two out. RealityKit shares the bounce among the touching balls, so one ball in sends four out.",
-            "The contact margin and restitution threshold are sized for 4 cm balls. Lift lets one to three balls go from 30 degrees.",
+            "The contact margin and restitution threshold are sized for 4 cm balls. Drag a ball with the pointer, or Lift one to three and let them go from 30 degrees.",
         ]
         }
     }

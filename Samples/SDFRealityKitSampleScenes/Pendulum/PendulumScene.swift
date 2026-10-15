@@ -13,10 +13,13 @@
 // - The balls are 8 cm in the simulation's units (Apple's 4 cm, at the root's scale of 1/2), so
 //   the contact margin and the restitution threshold are sized for them: the defaults, for bodies
 //   of a meter, would hold the balls a centimeter apart, and not bounce at their speeds.
+// - Balls can be dragged, which Apple's sample doesn't do: the engine's force-limited hand pulls
+//   the ball under the pointer within the plane the balls swing in, and lets it go with its speed.
 // - "Push ball" gives the first ball the push RealityKit gives it in Apple's sample: measured, the
 //   ball leaves at 2 units/s in the simulation's frame and swings to 48 degrees. "Lift" raises one
 //   to three balls to 30 degrees and lets them go, as with a real cradle.
 
+import CoreGraphics
 import RealityKit
 import RealitySDFPhysics
 import simd
@@ -174,6 +177,27 @@ package final class PendulumScene {
     package func pushBall() {
         guard let ball = pendulums.first?.findEntity(named: "ball") else { return }
         ball.sdf.applyLinearImpulse(settings.impulsePower * pow(settings.pendulumSpeed, 3), relativeTo: root)
+    }
+
+    // MARK: Dragging
+
+    /// Takes hold of the ball under a point of the view, if any
+    package func beginDrag(at point: CGPoint, in size: CGSize) -> Bool {
+        let ray = camera.ray(through: point, in: size)
+        return simulation.beginDrag(origin: root.convert(position: ray.origin, from: nil),
+                                    direction: root.convert(direction: ray.direction, from: nil)) != nil
+    }
+
+    /// Pulls the held ball towards the point under the pointer in the plane the balls swing in
+    package func drag(to point: CGPoint, in size: CGSize) {
+        let ray = camera.ray(through: point, in: size)
+        let origin = root.convert(position: ray.origin, from: nil), direction = root.convert(direction: ray.direction, from: nil)
+        guard abs(direction.z) > 1e-6 else { return }
+        simulation.drag(to: origin - direction * (origin.z / direction.z))
+    }
+
+    package func endDrag() {
+        simulation.endDrag()
     }
 
     /// Rebuilds the cradle with its first `count` balls raised to `degrees` towards -x, at rest

@@ -152,8 +152,27 @@ import simd
         scene.reset(pendulumCount: 5)
         scene.pushBall()
         let farthest = Self.farthest(scene, seconds: 2)
-        print("push: farthest", farthest)
         #expect(farthest[4] > 40)
+        #expect(farthest[1...3].allSatisfy { $0 < 2 })
+    }
+
+    /// Drawn aside by hand and let go, a ball comes out as one on the far side
+    @Test func draggedBallComesOutAsOne() {
+        let scene = PendulumScene()
+        scene.reset(pendulumCount: 5)
+        let root = scene.content.children.first { $0.components.has(SDFPhysicsSimulationComponent.self) }!
+        let pendulum = root.children[0].children[0]
+        let ball = pendulum.findEntity(named: "ball")!, attachment = pendulum.findEntity(named: "attachment")!
+        scene.simulation.step(root: root)
+        // Held by its center and pulled to 30 degrees, in the units of the simulation's frame
+        let center = ball.position(relativeTo: root), pivot = attachment.position(relativeTo: root)
+        #expect(scene.simulation.beginDrag(ball, at: center))
+        let turn = simd_quatf(angle: -.pi / 6, axis: [0, 0, 1])
+        scene.simulation.drag(to: pivot + turn.act(center - pivot))
+        for _ in 0..<120 { scene.simulation.step(root: root) }
+        scene.endDrag()
+        let farthest = Self.farthest(scene, seconds: 1.5)
+        #expect(farthest[4] > 28)
         #expect(farthest[1...3].allSatisfy { $0 < 2 })
     }
 }

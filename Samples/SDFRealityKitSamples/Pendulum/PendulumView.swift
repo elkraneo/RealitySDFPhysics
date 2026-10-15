@@ -10,10 +10,15 @@ struct PendulumView: View {
     @State private var pendulumCount = 5
     @State private var pushButtonDisabled = false
 
+    @State private var isDragging = false
+
     var body: some View {
-        RealityView { content in
-            scene.reset(pendulumCount: pendulumCount)
-            content.add(scene.content)
+        GeometryReader { geometry in
+            RealityView { content in
+                scene.reset(pendulumCount: pendulumCount)
+                content.add(scene.content)
+            }
+            .gesture(drag(in: geometry.size))
         }
         .toolbar {
             Picker("Pendulums", selection: $pendulumCount) {
@@ -38,5 +43,18 @@ struct PendulumView: View {
             Button("Reset", systemImage: "arrow.counterclockwise") { scene.reset(pendulumCount: pendulumCount) }
         }
         .onChange(of: pendulumCount) { scene.reset(pendulumCount: pendulumCount) }
+    }
+
+    /// Pulls a ball around with the pointer, and lets it go with its speed
+    private func drag(in size: CGSize) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                if !isDragging { isDragging = scene.beginDrag(at: value.startLocation, in: size) }
+                if isDragging { scene.drag(to: value.location, in: size) }
+            }
+            .onEnded { _ in
+                if isDragging { scene.endDrag() }
+                isDragging = false
+            }
     }
 }
