@@ -192,7 +192,9 @@ private struct Viewport: View {
                 switch interaction {
                 case nil:
                     let ray = model.ray(through: value.startLocation, in: size)
-                    // The root is at the scene origin, so its frame is the world's
+                    // The root is at the scene origin, so its frame is the world's. The drag holds
+                    // the body as a hand would, with a capped force: a gear or a link pulled into
+                    // another stops against it rather than passing through.
                     if let picked = model.simulation.beginDrag(origin: ray.origin, direction: ray.direction) {
                         interaction = .body(distance: simd_distance(picked.hit, ray.origin))
                     } else {

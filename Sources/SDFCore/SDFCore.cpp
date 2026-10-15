@@ -321,6 +321,7 @@ SDFWorld *sdf_world_copy(const SDFWorld *world)
     to.baumgarte = from.baumgarte, to.maxCorrection = from.maxCorrection;
     to.dragBody = from.dragBody ? bodies.at(from.dragBody) : nullptr;
     to.dragAnchor = from.dragAnchor, to.dragTarget = from.dragTarget;
+    copy->dragParams = world->dragParams, copy->dragImpulse = world->dragImpulse;
 
     copy->positionIterations = world->positionIterations;
     copy->restitutionThreshold = world->restitutionThreshold;
@@ -981,6 +982,40 @@ int32_t sdf_world_overlaps(SDFWorld *world, const SDFShape *shape, SDFPose pose,
 
 // MARK: Picking
 
+SDFDragParams sdf_default_drag_params(void)
+{
+    static const SDFWorld defaults;
+    return defaults.dragParams;
+}
+
+SDFDragParams sdf_world_drag_params(const SDFWorld *world) { return world->dragParams; }
+
+void sdf_world_set_drag_params(SDFWorld *world, SDFDragParams params)
+{
+    SDFDragParams &p = world->dragParams;
+    setNonNegative(p.hertz, params.hertz);
+    setNonNegative(p.dampingRatio, params.dampingRatio);
+    setNonNegative(p.angularDamping, params.angularDamping);
+    if (params.maxForce >= 0)
+        p.maxForce = params.maxForce;
+    if (params.maxSpeed >= 0)
+        p.maxSpeed = params.maxSpeed;
+}
+
+// Holds a dynamic body at a world space point
+static bool beginDrag(SDFWorld *world, Body *body, float3 point)
+{
+    Solver &solver = world->solver;
+    solver.dragBody = nullptr;
+    world->dragImpulse = {0, 0, 0};
+    if (!body || world->record(body).mode != SDFBodyDynamic)
+        return false;
+    solver.dragBody = body;
+    solver.dragAnchor = rotate(conjugate(body->orientation), point - body->position);
+    solver.dragTarget = point;
+    return true;
+}
+
 SDFBodyID sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3])
 {
     Solver &solver = world->solver;
@@ -988,14 +1023,18 @@ SDFBodyID sdf_world_begin_drag(SDFWorld *world, const float origin[3], const flo
     for (auto &body : solver.bodies)
         body->updateBounds();
     float3 point;
-    solver.dragBody = solver.pick(toFloat3(origin), normalize(toFloat3(direction)), point);
-    if (!solver.dragBody)
+    Body *body = solver.pick(toFloat3(origin), normalize(toFloat3(direction)), point);
+    if (!beginDrag(world, body, point))
         return 0;
-    solver.dragAnchor = rotate(conjugate(solver.dragBody->orientation), point - solver.dragBody->position);
-    solver.dragTarget = point;
     if (hit)
         store(hit, point);
-    return world->ids.at(solver.dragBody);
+    return world->ids.at(body);
+}
+
+bool sdf_world_begin_drag_body(SDFWorld *world, SDFBodyID id, const float point[3])
+{
+    BodyRecord *record = world->find(id);
+    return beginDrag(world, record ? record->body : nullptr, toFloat3(point));
 }
 
 void sdf_world_drag_to(SDFWorld *world, const float target[3]) { world->solver.dragTarget = toFloat3(target); }

@@ -114,7 +114,7 @@ typedef struct
     float restitutionThreshold;  // Approach speed below which contacts do not bounce
     uint32_t pairOptions;        // SDFPairOptions
     bool parallel;               // Narrow phase on several threads, with a random sequence per pair
-    float metersPerUnit;         // Length of a unit, for the drag limit and the default density
+    float metersPerUnit;         // Length of a unit, for the default drag force and density
     bool sleeping;               // Puts islands of touching dynamic bodies to sleep once still
     // How stiffly joints hold: the frequency and damping ratio of the spring and damper their rows
     // amount to, as in Box3D, with the frequency capped at half the substep rate and no lower
@@ -342,9 +342,32 @@ typedef struct
 int32_t sdf_world_overlaps(SDFWorld *world, const SDFShape *shape, SDFPose pose, float margin, uint32_t mask,
                            SDFOverlap *overlaps, int32_t capacity);
 
-// Mouse dragging: picks the closest dynamic body on the ray and holds it at the hit point, which
-// then follows sdf_world_drag_to. Returns the picked body or 0.
+// Dragging, by a mouse, a finger or a hand: the grabbed point of a body is pulled toward a target
+// by a damped spring of a frequency and damping ratio, the stiffness of the hand, with up to a
+// greatest force and at up to a greatest speed. The pull is solved with the joints, after the
+// contacts, so a body that meets resistance stops, pressing with at most that force, rather than
+// being pushed through; the speed keeps it from flying into what resists faster than contacts
+// catch it. While held, the body's spin is damped as well, per second.
+typedef struct
+{
+    float hertz;
+    float dampingRatio;
+    float maxForce;              // 0 for 50 times the body's weight (at 9.81 m/s² without gravity)
+    float maxSpeed;              // Cap on the speed the pull asks for, 0 for the contact margin per
+                                 // substep; a body already moving faster isn't slowed by it
+    float angularDamping;
+} SDFDragParams;
+SDFDragParams sdf_default_drag_params(void);
+SDFDragParams sdf_world_drag_params(const SDFWorld *world);
+// Negative and NaN values are ignored; an infinite force or speed is a pull without that limit
+void sdf_world_set_drag_params(SDFWorld *world, SDFDragParams params);
+
+// Picks the closest dynamic body on the ray and holds it at the hit point, which then follows
+// sdf_world_drag_to. Returns the picked body or 0.
 SDFBodyID sdf_world_begin_drag(SDFWorld *world, const float origin[3], const float direction[3], float hit[3]);
+// Holds a dynamic body at a world space point, for a hand that targets the body itself. Returns
+// false, and drags nothing, for a body that doesn't exist or isn't dynamic.
+bool sdf_world_begin_drag_body(SDFWorld *world, SDFBodyID body, const float point[3]);
 void sdf_world_drag_to(SDFWorld *world, const float target[3]);
 void sdf_world_end_drag(SDFWorld *world);
 

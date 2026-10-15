@@ -169,6 +169,19 @@ struct Slider
     Softness spring;
 };
 
+// The drag for one substep, as Box3D's motor joint holds a body to a target: a point constraint
+// between the grabbed point and the target, soft by the hand's frequency and damping ratio, whose
+// accumulated impulse is capped by the greatest force
+struct Drag
+{
+    Mover *mover;
+    float3 r;                  // From the center of mass to the grabbed point, world space
+    float3x3 pointMass;
+    float3 bias;               // The velocity the spring asks of the grabbed point, capped
+    Softness soft;
+    float maxImpulse;
+};
+
 // Erin Catto's soft constraint coefficients for a frequency, a damping ratio and a substep
 void makeSoft(float hertz, float zeta, float h, float &biasRate, float &massScale, float &impulseScale)
 {
@@ -206,13 +219,11 @@ float wrapAngle(float angle)
     return angle - turn * roundf(angle / turn);
 }
 
-// The effective mass of a point constraint, or zero when locks leave nothing to move. Locks
-// along a world axis on both bodies, such as a chain held in a plane, leave K without that axis:
-// the constraint then holds along the others.
-float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
+// The effective mass of a point constraint, the inverse of its K, or zero when locks leave
+// nothing to move. Locks along a world axis on both bodies, such as a chain held in a plane,
+// leave K without that axis: the constraint then holds along the others.
+float3x3 invertPointK(float3x3 k)
 {
-    float3x3 sA = skew(rA), sB = skew(rB);
-    float3x3 k = a.linearMass() + b.linearMass() + sA * a.invInertia * transpose(sA) + sB * b.invInertia * transpose(sB);
     float scale = maxComponent(abs(k[0])) + maxComponent(abs(k[1])) + maxComponent(abs(k[2]));
     float3 free = {1, 1, 1};
     for (int i = 0; i < 3; ++i)
@@ -228,6 +239,20 @@ float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
     if (!(scale > 0) || !(det > 1e-12f * scale * scale * scale))
         return identity3() * 0.0f;
     return diagonal(free) * inverse(k) * diagonal(free);
+}
+
+// Of two bodies' anchors
+float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
+{
+    float3x3 sA = skew(rA), sB = skew(rB);
+    return invertPointK(a.linearMass() + b.linearMass() + sA * a.invInertia * transpose(sA) + sB * b.invInertia * transpose(sB));
+}
+
+// The same for a point of one body held to a point of the world
+float3x3 pointMass(const Mover &m, float3 r)
+{
+    float3x3 sr = skew(r);
+    return invertPointK(m.linearMass() + sr * m.invInertia * transpose(sr));
 }
 
 // The effective mass of a rotation about a direction, or zero when locks leave nothing, or
@@ -561,23 +586,6 @@ void SDFWorld::step()
                 }
             }
         }
-        if (s.dragBody)
-        {
-            // Pull the grabbed point towards the target with a critically damped velocity target
-            Body *body = s.dragBody;
-            float3 r = rotate(body->orientation, s.dragAnchor);
-            float3 anchor = body->position + r;
-            float3 targetVelocity = (s.dragTarget - anchor) * (0.2f / h) - body->pointVelocity(anchor) * 0.85f;
-            float3x3 K = identity3() * body->invMass - skew(r) * body->invInertiaWorld * skew(r);
-            float3 impulse = inverse(K) * targetVelocity;
-            // Upstream limits the pull to 50 m/s², converted to the world's units
-            float maxImpulse = body->mass * (50.0f / metersPerUnit) * h;
-            if (length(impulse) > maxImpulse)
-                impulse = impulse * (maxImpulse / length(impulse));
-            movers[std::find_if(s.bodies.begin(), s.bodies.end(), [&](auto &b) { return b.get() == body; }) - s.bodies.begin()]
-                .applyImpulse(r, impulse);
-        }
-
         // Build the contact constraints and warm start them with the impulses cached in the manifold
         auto solverStart = std::chrono::steady_clock::now();
         std::vector<Contact> contacts;
@@ -697,6 +705,30 @@ void SDFWorld::step()
             hinges.push_back(j);
         }
 
+        // The drag, if its body can be pulled
+        Drag drag = {};
+        if (s.dragBody && s.dragBody->invMass > 0)
+        {
+            Body *body = s.dragBody;
+            drag.mover = &movers[std::find_if(s.bodies.begin(), s.bodies.end(), [&](auto &b) { return b.get() == body; }) - s.bodies.begin()];
+            drag.r = rotate(body->orientation, s.dragAnchor);
+            drag.pointMass = pointMass(*drag.mover, drag.r);
+            drag.soft = makeSoft(min(dragParams.hertz, 0.5f / h), dragParams.dampingRatio, h);
+            drag.bias = (body->position + drag.r - s.dragTarget) * drag.soft.biasRate;
+            float maxSpeed = dragParams.maxSpeed > 0 ? dragParams.maxSpeed : s.params.margin / h;
+            if (lengthSq(drag.bias) > maxSpeed * maxSpeed)
+                drag.bias = normalize(drag.bias) * maxSpeed;
+            float gravity = length(s.gravity) > 0 ? length(s.gravity) : 9.81f / metersPerUnit;
+            float maxForce = dragParams.maxForce > 0 ? dragParams.maxForce : 50 * body->mass * gravity;
+            drag.maxImpulse = maxForce * h;
+            // The impulse carried over from the last substep within this one's limit, which a
+            // lower force or a shorter substep may have shrunk
+            if (lengthSq(dragImpulse) > drag.maxImpulse * drag.maxImpulse)
+                dragImpulse = normalize(dragImpulse) * drag.maxImpulse;
+        }
+        else
+            dragImpulse = {0, 0, 0};
+
         // Approach velocities before any warm start, for restitution
         for (Contact &c : contacts)
             c.relativeVelocity = dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
@@ -773,6 +805,18 @@ void SDFWorld::step()
         };
 
         // The passes over the joints. Each pass runs over the joints after the contacts.
+
+        // The drag, a soft point constraint to a point of the world (Box3D's motor_joint.c),
+        // capped as a whole by the greatest force, and pulling no faster than the greatest speed
+        auto solveDrag = [&] {
+            Body &body = *drag.mover->body;
+            float3 cdot = body.velocity + cross(body.angularVelocity, drag.r);
+            float3 previous = dragImpulse;
+            dragImpulse += (drag.pointMass * (cdot + drag.bias)) * -drag.soft.massScale - previous * drag.soft.impulseScale;
+            if (lengthSq(dragImpulse) > drag.maxImpulse * drag.maxImpulse)
+                dragImpulse = normalize(dragImpulse) * drag.maxImpulse;
+            drag.mover->applyImpulse(drag.r, dragImpulse - previous);
+        };
 
         auto warmStartHinge = [](Hinge &j) {
             JointRecord &joint = *j.joint;
@@ -990,15 +1034,20 @@ void SDFWorld::step()
         // iteration: a jammed chain's contacts must not pull its pins apart. A hinge is cheap
         // next to a contact and a chain of them converges slowly, so each pass sweeps the hinges
         // several times.
-        // The hinge passes take the whole set: the warm start once, the solves swept
+        // The hinge passes take the whole set: the warm start once, the solves swept. The drag
+        // comes first, once a pass, so that the joints hold against it.
         const int hingeSweeps = 4;
         auto warmStartHinges = [&] {
+            if (drag.mover)
+                drag.mover->applyImpulse(drag.r, dragImpulse);
             for (Hinge &j : hinges)
                 warmStartHinge(j);
             for (Slider &j : sliders)
                 warmStartSlider(j);
         };
         auto solveHingeVelocities = [&] {
+            if (drag.mover)
+                solveDrag();
             for (int i = 0; i < hingeSweeps; i++)
             {
                 for (Hinge &j : hinges)
@@ -1130,7 +1179,7 @@ void SDFWorld::step()
                             pool.barrier();
                     }
                     // The joints after every color, on one thread, with the others waiting
-                    if (!hinges.empty() || !sliders.empty())
+                    if (!hinges.empty() || !sliders.empty() || drag.mover)
                     {
                         if (thread == 0)
                             hingePass();
@@ -1158,6 +1207,8 @@ void SDFWorld::step()
                 continue;
             body->velocity *= expf(-m.record->linearDamping * h);
             body->angularVelocity *= expf(-m.record->angularDamping * h);
+            if (body == s.dragBody)
+                body->angularVelocity *= expf(-dragParams.angularDamping * h);
             // No more than half a turn per substep, so that a runaway stays finite: 377 rad/s at
             // 2 substeps of 60 Hz, well past any wheel (Box3D clamps at an eighth of a turn)
             float spin = length(body->angularVelocity), maxSpin = 3.14159265f / h;

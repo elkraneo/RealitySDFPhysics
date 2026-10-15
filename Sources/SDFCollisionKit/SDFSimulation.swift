@@ -485,6 +485,50 @@ public final class SDFSimulation {
 
     // MARK: Dragging
 
+    /// How a drag holds its body: a damped spring from the grabbed point to the target, the
+    /// stiffness of a hand, that pulls with up to a greatest force and at up to a greatest speed.
+    /// The pull is solved after the contacts, so a body that meets resistance stops there, pressing
+    /// with at most that force, rather than being pushed through it; the speed keeps it from flying
+    /// into what resists faster than the contacts catch it.
+    public struct DragOptions: Equatable, Sendable {
+        /// The frequency the spring swings the body at about the target
+        public var hertz: Float
+        /// 1 comes to rest without overshoot
+        public var dampingRatio: Float
+        /// The most force of the pull, in the simulation's units; nil for 50 times the body's
+        /// weight, or `.infinity` for no limit
+        public var maxForce: Float?
+        /// The fastest the spring asks the grabbed point to move, in units per second; nil for the
+        /// contact margin per substep, 2.4 m/s with 2 substeps at 60 Hz, or `.infinity` for no
+        /// limit. It caps the pull, not the body: one already moving faster, thrown or falling,
+        /// is not slowed by it.
+        public var maxSpeed: Float?
+        /// Damps the body's spin while it is held, per second
+        public var angularDamping: Float
+
+        public init(hertz: Float = 5, dampingRatio: Float = 0.7, maxForce: Float? = nil, maxSpeed: Float? = nil,
+                    angularDamping: Float = 2) {
+            self.hertz = hertz
+            self.dampingRatio = dampingRatio
+            self.maxForce = maxForce
+            self.maxSpeed = maxSpeed
+            self.angularDamping = angularDamping
+        }
+    }
+
+    public var dragOptions: DragOptions {
+        get {
+            let p = sdf_world_drag_params(world)
+            return DragOptions(hertz: p.hertz, dampingRatio: p.dampingRatio, maxForce: p.maxForce > 0 ? p.maxForce : nil,
+                               maxSpeed: p.maxSpeed > 0 ? p.maxSpeed : nil, angularDamping: p.angularDamping)
+        }
+        set {
+            sdf_world_set_drag_params(world, SDFDragParams(hertz: newValue.hertz, dampingRatio: newValue.dampingRatio,
+                                                           maxForce: newValue.maxForce ?? 0, maxSpeed: newValue.maxSpeed ?? 0,
+                                                           angularDamping: newValue.angularDamping))
+        }
+    }
+
     /// Picks the closest dynamic body on a ray (in the root's frame) and holds it at the hit point,
     /// which then follows `drag(to:)`. Returns the entity and the hit point.
     public func beginDrag(origin: SIMD3<Float>, direction: SIMD3<Float>) -> (entity: Entity, hit: SIMD3<Float>)? {
@@ -492,6 +536,15 @@ public final class SDFSimulation {
         let id = sdf_world_begin_drag(world, [origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z], &hit)
         guard let entity = entities[id] else { return nil }
         return (entity, SIMD3(hit[0], hit[1], hit[2]))
+    }
+
+    /// Holds an entity's dynamic body at a point (in the root's frame), which then follows
+    /// `drag(to:)`: for a hand or a gesture that targets the entity itself. Returns false for an
+    /// entity without a dynamic body, which may be created only on the next update.
+    @discardableResult
+    public func beginDrag(_ entity: Entity, at point: SIMD3<Float>) -> Bool {
+        guard let id = bodies[entity.id]?.id else { return false }
+        return sdf_world_begin_drag_body(world, id, [point.x, point.y, point.z])
     }
 
     public func drag(to target: SIMD3<Float>) {

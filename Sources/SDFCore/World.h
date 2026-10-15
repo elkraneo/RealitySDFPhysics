@@ -107,6 +107,9 @@ struct SDFWorld
     float metersPerUnit = 1;           // For the physical constants that upstream gives in meters
     float jointHertz = 60, jointDampingRatio = 2; // Box3D's defaults
     bool sleeping = false;             // Puts still islands of touching bodies to sleep
+    // The drag holds upstream's dragBody at dragAnchor, pulled toward dragTarget (solver.h)
+    SDFDragParams dragParams = {5, 0.7f, 0, 0, 2}; // The spring of Box2D's mouse joint
+    float3 dragImpulse = {0, 0, 0};    // Accumulated in the last substep, to warm start the next
     uint32_t nextIsland = 1;
     // The manifolds hold the pairs that overlap at the bodies' poses: nothing has moved, been
     // added, removed or changed since the broad phase found them
