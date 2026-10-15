@@ -51,6 +51,15 @@ SDFShape *sdf_shape_warped_box(SDFWarp warp, float halfX, float halfY, float hal
 SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint32_t *indices, int32_t indexCount,
                          int32_t resolution);
 
+// Baked shapes saved and loaded without baking again. sdf_shape_bake_data writes the data of a
+// shape from sdf_shape_bake when the buffer holds `capacity` bytes or more, and returns its size
+// either way; 0 for the other shapes. sdf_shape_from_data returns NULL for data that isn't that of a
+// baked shape of this version. The version changes with the format and with the baking, so that
+// data saved by another version is baked again.
+#define SDF_BAKED_DATA_VERSION 1
+int64_t sdf_shape_bake_data(const SDFShape *shape, void *buffer, int64_t capacity);
+SDFShape *sdf_shape_from_data(const void *data, int64_t size);
+
 void sdf_shape_release(SDFShape *shape);
 
 // False for baked meshes whose edges are not all shared by two triangles; their inside and

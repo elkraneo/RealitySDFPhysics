@@ -58,7 +58,7 @@ public final class DemoShapes {
         }
         return try await Task.detached(priority: .userInitiated) {
             let mesh = try OBJMesh(contentsOf: url).normalized()
-            return try SDFShape(baking: mesh.positions, indices: mesh.indices)
+            return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices)
         }.value
     }
 }
