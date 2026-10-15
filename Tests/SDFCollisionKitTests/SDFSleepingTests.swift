@@ -116,7 +116,9 @@ import simd
         run(120)
         #expect(simulation.isSleeping(box))
         var impulse: Float = 0
-        let subscription = simulation.subscribe(to: SDFCollisionEvents.Updated.self, on: box) { impulse = $0.impulse }
+        // Pairs are tracked from the first subscription on, so the first step reports the
+        // contact as begun
+        let subscription = simulation.subscribe(to: SDFCollisionEvents.Began.self, on: box) { impulse = $0.impulse }
         run(1)
         _ = subscription
         // About the box's weight over a step: 1000 kg × 9.81 m/s² / 60
