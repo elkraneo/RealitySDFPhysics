@@ -21,7 +21,25 @@ struct SDFShape
     float unitScale = 1;
     Mesh display; // In the caller's frame
     bool watertight = true;
+    float boundingRadius = 0; // Engine frame, about the center of the shape's bounds; encloses the shape
+    bool uniformCurvature = false; // High curvature everywhere, so its seeds point at nothing
 };
+
+// The radius of a sphere about the center of the bounds that encloses the shape: exact for the
+// round primitives, the half diagonal of the bounds otherwise. The broad phase tests the spheres
+// after the boxes, which rejects pairs that overlap only at the corners of their boxes.
+static float boundingRadius(const Shape &shape)
+{
+    if (auto s = dynamic_cast<const Sphere *>(&shape))
+        return s->radius;
+    if (auto t = dynamic_cast<const Torus *>(&shape))
+        return t->majorRadius + t->minorRadius;
+    if (auto c = dynamic_cast<const Capsule *>(&shape))
+        return c->radius + c->halfLength;
+    if (auto c = dynamic_cast<const Cylinder *>(&shape))
+        return sqrtf(c->radius * c->radius + c->halfHeight * c->halfHeight);
+    return 0.5f * length(size(shape.bounds));
+}
 
 static float3 toFloat3(const float v[3]) { return {v[0], v[1], v[2]}; }
 
@@ -30,11 +48,25 @@ static void store(float out[3], float3 v)
     out[0] = v.x, out[1] = v.y, out[2] = v.z;
 }
 
+// The curvature seeds (Sec. 3.5.2) point the random samples at the sharp features of a shape. A
+// torus or a capsule is high curvature everywhere by the engine's threshold, so its seeds are a
+// uniform sampling of its surface, and the engine's fallback, a uniform sample of the overlap,
+// finds contacts as well. The multithreaded narrow phase skips the seeds of a pair of such
+// shapes, since every random sample scans all of them (a torus has 151): on a pile of 400 tori
+// the scan was half of collision detection. The shapes keep their seeds, so the reference path
+// is untouched.
+static bool uniformCurvature(const Shape &shape)
+{
+    return dynamic_cast<const Torus *>(&shape) || dynamic_cast<const Capsule *>(&shape);
+}
+
 static SDFShape *makeShape(Shape *shape)
 {
     shape->finalize();
     SDFShape *handle = new SDFShape();
     handle->shape = ShapePtr(shape);
+    handle->boundingRadius = boundingRadius(*shape);
+    handle->uniformCurvature = uniformCurvature(*shape);
     handle->display = shape->mesh;
     return handle;
 }
@@ -142,6 +174,7 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     voxel->convex = voxel->watertight && isConvex(mesh, 5e-3f * extent);
     SDFShape *handle = new SDFShape();
     handle->shape = voxel;
+    handle->boundingRadius = boundingRadius(*voxel);
     handle->center = center(box);
     handle->unitScale = 1.0f / extent;
     handle->watertight = voxel->watertight;
@@ -279,6 +312,7 @@ SDFWorld *sdf_world_copy(const SDFWorld *world)
     copy->sleeping = world->sleeping;
     copy->nextIsland = world->nextIsland;
     copy->stepMilliseconds = world->stepMilliseconds;
+    copy->solverMilliseconds = world->solverMilliseconds;
     copy->nextID = world->nextID;
     copy->pairs = world->pairs;
     for (const auto &entry : world->records)
@@ -368,6 +402,7 @@ SDFStats sdf_world_stats(const SDFWorld *world)
     stats.queries = s.queries;
     stats.collisionMilliseconds = s.milliseconds;
     stats.stepMilliseconds = world->stepMilliseconds;
+    stats.solverMilliseconds = world->solverMilliseconds;
     stats.sleepingBodies = (int32_t)std::count_if(world->records.begin(), world->records.end(),
                                                   [](const auto &entry) { return entry.second.asleep; });
     return stats;
@@ -395,6 +430,8 @@ SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pos
     SDFBodyID id = world->nextID++;
     BodyRecord record;
     record.body = body, record.mode = mode, record.center = shape->center, record.unitScale = shape->unitScale;
+    record.boundingRadius = shape->boundingRadius * body->scale;
+    record.uniformCurvature = shape->uniformCurvature;
     world->records[id] = record;
     world->ids[body] = id;
     body->updateBounds();

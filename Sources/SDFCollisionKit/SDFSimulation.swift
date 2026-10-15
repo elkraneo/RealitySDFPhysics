@@ -122,8 +122,29 @@ public final class SDFSimulation {
         var orientation: simd_quatf
 
         @MainActor init(of entity: Entity, relativeTo root: Entity) {
-            position = entity.position(relativeTo: root)
-            orientation = entity.orientation(relativeTo: root)
+            // A direct child's local transform is its pose in the root; the general query
+            // composes and decomposes matrices up the chain, several times the cost
+            if entity.parent === root {
+                let transform = entity.transform
+                position = transform.translation
+                orientation = transform.rotation
+            } else {
+                position = entity.position(relativeTo: root)
+                orientation = entity.orientation(relativeTo: root)
+            }
+        }
+
+        /// Writes the pose to the entity, keeping its scale
+        @MainActor func write(to entity: Entity, relativeTo root: Entity) {
+            if entity.parent === root {
+                var transform = entity.transform
+                transform.translation = position
+                transform.rotation = orientation
+                entity.transform = transform
+            } else {
+                entity.setPosition(position, relativeTo: root)
+                entity.setOrientation(orientation, relativeTo: root)
+            }
         }
 
         init(_ pose: SDFPose) {
@@ -184,7 +205,7 @@ public final class SDFSimulation {
 
     private func attach(_ entity: Entity, _ component: SDFBodyComponent, root: Entity, deltaTime: TimeInterval) {
         let pose = Pose(of: entity, relativeTo: root)
-        let scale = entity.scale(relativeTo: root).x
+        let scale = entity.parent === root ? entity.scale.x : entity.scale(relativeTo: root).x
         let motion = entity.components[SDFMotionComponent.self]
         guard var body = bodies[entity.id], body.shape === component.shape, body.mode == component.mode,
               abs(body.scale - scale) <= 1e-5 * scale
@@ -253,8 +274,7 @@ public final class SDFSimulation {
         for entity in dynamic {
             guard var body = bodies[entity.id], !sdf_world_body_rested_through_step(world, body.id) else { continue }
             let pose = Pose(sdf_world_body_pose(world, body.id))
-            entity.setPosition(pose.position, relativeTo: root)
-            entity.setOrientation(pose.orientation, relativeTo: root)
+            pose.write(to: entity, relativeTo: root)
             // Read back, so rounding in the transform is not mistaken for a teleport
             body.pose = Pose(of: entity, relativeTo: root)
             if entity.components.has(SDFMotionComponent.self) {
@@ -409,6 +429,8 @@ public final class SDFSimulation {
         public var queries: Int
         /// Narrow phase time, summed over the substeps
         public var collisionMilliseconds: Double
+        /// Contact solver time, summed over the substeps
+        public var solverMilliseconds: Double
         public var stepMilliseconds: Double
         /// Dynamic bodies asleep after the step
         public var sleepingBodies: Int
@@ -418,7 +440,8 @@ public final class SDFSimulation {
         let s = sdf_world_stats(world)
         return Statistics(bodies: Int(s.bodies), pairs: Int(s.pairs), contacts: Int(s.contacts),
                           optimizerIterations: Int(s.iterations), queries: Int(s.queries),
-                          collisionMilliseconds: s.collisionMilliseconds, stepMilliseconds: s.stepMilliseconds,
+                          collisionMilliseconds: s.collisionMilliseconds, solverMilliseconds: s.solverMilliseconds,
+                          stepMilliseconds: s.stepMilliseconds,
                           sleepingBodies: Int(s.sleepingBodies))
     }
 

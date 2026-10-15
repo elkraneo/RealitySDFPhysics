@@ -8,6 +8,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <cstdlib>
 #include <dispatch/dispatch.h>
 #include <map>
 #include <numeric>
@@ -40,6 +42,8 @@ struct Mover
 
     void applyImpulse(float3 r, float3 impulse)
     {
+        if (body->isStatic) // Nothing to move, and threads must not write to a shared body
+            return;
         if (!locked)
         {
             body->velocity += impulse * body->invMass;
@@ -54,6 +58,8 @@ struct Mover
 
     void applyPseudoImpulse(float3 r, float3 impulse)
     {
+        if (body->isStatic)
+            return;
         if (!locked)
             body->pseudoVelocity += impulse * body->invMass;
         else
@@ -135,6 +141,20 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](int a, int b) { return s.bodies[a]->bounds.min.x < s.bodies[b]->bounds.min.x; });
 
+    // Bounding spheres, tested after the boxes: a box and a sphere each enclose the shape, and a
+    // pair must pass both. The spheres reject pairs whose boxes overlap only at their corners.
+    // Only with threads: there every pair draws its own random samples, so a pair fewer changes
+    // nothing for the others, whereas the reference path draws them from one sequence.
+    std::vector<float3> sphereCenter(world.parallel ? s.bodies.size() : 0);
+    for (size_t i = 0; i < sphereCenter.size(); i++)
+        sphereCenter[i] = s.bodies[i]->toWorld(center(s.bodies[i]->shape->bounds));
+    auto spheresOverlap = [&](int a, int b) {
+        if (sphereCenter.empty())
+            return true;
+        float reach = movers[a].record->boundingRadius + movers[b].record->boundingRadius + 2 * r;
+        return lengthSq(sphereCenter[a] - sphereCenter[b]) <= reach * reach;
+    };
+
     std::vector<std::pair<int, int>> overlapping;
     for (size_t i = 0; i < order.size(); i++)
     {
@@ -145,7 +165,8 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
 
             std::pair<int, int> key = std::minmax(order[i], order[j]);
             if (shouldCollide(*movers[key.first].record, *movers[key.second].record, world.pairOptions) &&
-                overlaps(expand(s.bodies[key.first]->bounds, r), expand(s.bodies[key.second]->bounds, r)))
+                overlaps(expand(s.bodies[key.first]->bounds, r), expand(s.bodies[key.second]->bounds, r)) &&
+                spheresOverlap(key.first, key.second))
                 overlapping.push_back(key);
         }
     }
@@ -207,6 +228,7 @@ void SDFWorld::step()
     }
     for (Mover &m : movers)
         m.record->restedThroughStep = m.record->asleep;
+    solverMilliseconds = 0;
 
     for (int substep = 0; substep < s.substeps; substep++)
     {
@@ -244,9 +266,15 @@ void SDFWorld::step()
             struct Job
             {
                 Manifold *manifold;
+                const CollisionParams *params;
                 Random rng;
                 CollisionStats stats;
             };
+            // A pair of shapes that are high curvature everywhere, such as two tori, skips the
+            // scan of their curvature seeds: those are a uniform sampling of the surfaces, and a
+            // uniform sample of the overlap, the fallback, finds the contacts as well
+            CollisionParams uniform = s.params;
+            uniform.curvatureSampling = false;
             uint64_t seed = (uint64_t)s.rng.next() << 32 | s.rng.next();
             std::vector<Job> jobs;
             jobs.reserve(s.manifolds.size());
@@ -254,14 +282,14 @@ void SDFWorld::step()
             {
                 if (!needsUpdate(entry.first))
                     continue;
-                Job job = {&entry.second};
+                bool skipSeeds = movers[entry.first.first].record->uniformCurvature && movers[entry.first.second].record->uniformCurvature;
+                Job job = {&entry.second, skipSeeds ? &uniform : &s.params};
                 job.rng.state = mix(seed ^ mix((uint64_t)bodyIDs[entry.first.first] << 32 | bodyIDs[entry.first.second]));
                 jobs.push_back(job);
             }
-            const CollisionParams &params = s.params;
             Job *data = jobs.data();
             dispatch_apply(jobs.size(), DISPATCH_APPLY_AUTO, ^(size_t i) {
-                data[i].manifold->update(params, h, data[i].rng, data[i].stats);
+                data[i].manifold->update(*data[i].params, h, data[i].rng, data[i].stats);
             });
             for (const Job &job : jobs)
             {
@@ -358,6 +386,7 @@ void SDFWorld::step()
         }
 
         // Build the contact constraints and warm start them with the impulses cached in the manifold
+        auto solverStart = std::chrono::steady_clock::now();
         std::vector<Contact> contacts;
         size_t index = 0;
         for (auto &entry : s.manifolds)
@@ -411,51 +440,49 @@ void SDFWorld::step()
         // Approach velocities before any warm start, for restitution
         for (Contact &c : contacts)
             c.relativeVelocity = dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
+        for (auto &body : s.bodies)
+            body->pseudoVelocity = body->pseudoAngularVelocity = {0, 0, 0};
 
-        for (Contact &c : contacts)
-        {
+        // The passes over the contacts
+
+        auto warmStart = [](Contact &c) {
             float3 impulse = c.normal * c.normalImpulse + c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
             c.a->applyImpulse(c.rA, -impulse);
             c.b->applyImpulse(c.rB, impulse);
-        }
+        };
 
         // Sequential impulses (projected Gauss-Seidel)
-        for (int it = 0; it < s.iterations; it++)
-        {
-            for (Contact &c : contacts)
-            {
-                // Non-penetration: v_n >= 0 with a non-negative accumulated impulse
-                float3 dv = c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x);
-                float lambda = -dot(dv, c.normal) * c.normalMass;
-                float previous = c.normalImpulse;
-                c.normalImpulse = max(previous + lambda, 0.0f);
-                float3 impulse = c.normal * (c.normalImpulse - previous);
-                c.a->applyImpulse(c.rA, -impulse);
-                c.b->applyImpulse(c.rB, impulse);
+        auto solveVelocity = [](Contact &c) {
+            // Non-penetration: v_n >= 0 with a non-negative accumulated impulse
+            float3 dv = c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x);
+            float lambda = -dot(dv, c.normal) * c.normalMass;
+            float previous = c.normalImpulse;
+            c.normalImpulse = max(previous + lambda, 0.0f);
+            float3 impulse = c.normal * (c.normalImpulse - previous);
+            c.a->applyImpulse(c.rA, -impulse);
+            c.b->applyImpulse(c.rB, impulse);
 
-                // Coulomb friction: sticking within the static cone, sliding at the dynamic one
-                dv = c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x);
-                float t0 = c.tangentImpulse[0] - dot(dv, c.tangent[0]) * c.tangentMass[0];
-                float t1 = c.tangentImpulse[1] - dot(dv, c.tangent[1]) * c.tangentMass[1];
-                float limit = c.staticFriction * c.normalImpulse, len = sqrtf(t0 * t0 + t1 * t1);
-                if (len > limit)
-                {
-                    float sliding = c.dynamicFriction * c.normalImpulse;
-                    t0 *= sliding / len, t1 *= sliding / len;
-                }
-                impulse = c.tangent[0] * (t0 - c.tangentImpulse[0]) + c.tangent[1] * (t1 - c.tangentImpulse[1]);
-                c.tangentImpulse[0] = t0, c.tangentImpulse[1] = t1;
-                c.a->applyImpulse(c.rA, -impulse);
-                c.b->applyImpulse(c.rB, impulse);
+            // Coulomb friction: sticking within the static cone, sliding at the dynamic one
+            dv = c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x);
+            float t0 = c.tangentImpulse[0] - dot(dv, c.tangent[0]) * c.tangentMass[0];
+            float t1 = c.tangentImpulse[1] - dot(dv, c.tangent[1]) * c.tangentMass[1];
+            float limit = c.staticFriction * c.normalImpulse, len = sqrtf(t0 * t0 + t1 * t1);
+            if (len > limit)
+            {
+                float sliding = c.dynamicFriction * c.normalImpulse;
+                t0 *= sliding / len, t1 *= sliding / len;
             }
-        }
+            impulse = c.tangent[0] * (t0 - c.tangentImpulse[0]) + c.tangent[1] * (t1 - c.tangentImpulse[1]);
+            c.tangentImpulse[0] = t0, c.tangentImpulse[1] = t1;
+            c.a->applyImpulse(c.rA, -impulse);
+            c.b->applyImpulse(c.rB, impulse);
+        };
 
         // Restitution (as in Box2D): contacts that approached faster than the threshold leave with
         // the restitution of that speed
-        for (Contact &c : contacts)
-        {
+        auto solveRestitution = [&](Contact &c) {
             if (c.restitution == 0 || c.relativeVelocity > -restitutionThreshold || c.normalImpulse == 0)
-                continue;
+                return;
             float3 dv = c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x);
             float lambda = -(dot(dv, c.normal) + c.restitution * c.relativeVelocity) * c.normalMass;
             float previous = c.normalImpulse;
@@ -463,34 +490,158 @@ void SDFWorld::step()
             float3 impulse = c.normal * (c.normalImpulse - previous);
             c.a->applyImpulse(c.rA, -impulse);
             c.b->applyImpulse(c.rB, impulse);
-        }
+        };
 
         // Store the impulses in the manifold for warm starting the next step, and add them up per pair
-        for (Contact &c : contacts)
-        {
+        auto store = [](Contact &c) {
             c.point->normalImpulse = c.normalImpulse;
             c.point->frictionImpulse = c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
             c.pair->impulse += c.normalImpulse;
             c.pair->impulseVector += c.normal * c.normalImpulse;
-        }
+        };
 
         // Baumgarte stabilization with split impulses: v_n + bias >= 0 is solved for pseudo
         // velocities, which move the bodies in this substep and are then discarded
-        for (auto &body : s.bodies)
-            body->pseudoVelocity = body->pseudoAngularVelocity = {0, 0, 0};
-        for (int it = 0; it < positionIterations; it++)
+        auto solvePosition = [](Contact &c) {
+            float3 dv = c.b->pseudoPointVelocity(c.rB) - c.a->pseudoPointVelocity(c.rA);
+            float lambda = -(dot(dv, c.normal) + c.bias) * c.normalMass;
+            float previous = c.pseudoImpulse;
+            c.pseudoImpulse = max(previous + lambda, 0.0f);
+            float3 impulse = c.normal * (c.pseudoImpulse - previous);
+            c.a->applyPseudoImpulse(c.rA, -impulse);
+            c.b->applyPseudoImpulse(c.rB, impulse);
+        };
+
+        auto solve = [&](auto &&forEach) {
+            forEach(warmStart);
+            for (int it = 0; it < s.iterations; it++)
+                forEach(solveVelocity);
+            forEach(solveRestitution);
+            forEach(store);
+            for (int it = 0; it < positionIterations; it++)
+                forEach(solvePosition);
+        };
+
+        if (!parallel)
         {
-            for (Contact &c : contacts)
-            {
-                float3 dv = c.b->pseudoPointVelocity(c.rB) - c.a->pseudoPointVelocity(c.rA);
-                float lambda = -(dot(dv, c.normal) + c.bias) * c.normalMass;
-                float previous = c.pseudoImpulse;
-                c.pseudoImpulse = max(previous + lambda, 0.0f);
-                float3 impulse = c.normal * (c.pseudoImpulse - previous);
-                c.a->applyPseudoImpulse(c.rA, -impulse);
-                c.b->applyPseudoImpulse(c.rB, impulse);
-            }
+            solve([&](auto &pass) {
+                for (Contact &c : contacts)
+                    pass(c);
+            });
         }
+        else
+        {
+            // Graph coloring, as in Box2D v3: the contacts of a pair are one constraint, and no
+            // two constraints of a color share a body that moves, so the constraints of a color
+            // can be solved at once, in any order, with the same result. Colors are solved one
+            // after the other, and the constraints that fit no color before them, one by one.
+            const int maxColors = 32;
+            std::vector<std::pair<size_t, size_t>> groups; // Ranges of contacts, one per pair
+            for (size_t i = 0; i < contacts.size();)
+            {
+                size_t j = i + 1;
+                while (j < contacts.size() && contacts[j].pair == contacts[i].pair)
+                    j++;
+                groups.push_back({i, j});
+                i = j;
+            }
+            std::vector<uint8_t> used(maxColors * movers.size(), 0);
+            std::vector<int> colorOf(groups.size(), -1);
+            std::vector<int> groupsPerColor(maxColors, 0);
+            size_t overflowGroups = 0;
+            for (size_t g = 0; g < groups.size(); g++)
+            {
+                const Contact &c = contacts[groups[g].first];
+                size_t a = c.a - movers.data(), b = c.b - movers.data();
+                bool dynamicA = !c.bodyA->isStatic, dynamicB = !c.bodyB->isStatic;
+                for (int k = 0; k < maxColors; k++)
+                {
+                    uint8_t *bits = used.data() + k * movers.size();
+                    if ((dynamicA && bits[a]) || (dynamicB && bits[b]))
+                        continue;
+                    if (dynamicA)
+                        bits[a] = 1;
+                    if (dynamicB)
+                        bits[b] = 1;
+                    colorOf[g] = k, groupsPerColor[k]++;
+                    break;
+                }
+                overflowGroups += colorOf[g] < 0;
+            }
+
+            // The contacts in solving order: the overflow, then color by color, with the groups
+            // of each color counted so that threads take whole groups
+            std::vector<Contact> ordered;
+            ordered.reserve(contacts.size());
+            std::vector<std::vector<std::pair<size_t, size_t>>> colorGroups(maxColors);
+            std::pair<size_t, size_t> overflow = {0, 0};
+            auto append = [&](size_t g) {
+                size_t begin = ordered.size();
+                ordered.insert(ordered.end(), contacts.begin() + groups[g].first, contacts.begin() + groups[g].second);
+                return std::make_pair(begin, ordered.size());
+            };
+            for (size_t g = 0; g < groups.size(); g++)
+                if (colorOf[g] < 0)
+                    overflow.second = append(g).second;
+            for (int k = 0; k < maxColors; k++)
+            {
+                colorGroups[k].reserve(groupsPerColor[k]);
+                for (size_t g = 0; g < groups.size(); g++)
+                    if (colorOf[g] == k)
+                        colorGroups[k].push_back(append(g));
+            }
+            contacts.swap(ordered);
+            static bool trace = getenv("SDF_SOLVER_TRACE") != nullptr;
+            if (trace)
+            {
+                static std::atomic<int> printed{0};
+                if (printed++ % 120 == 0)
+                {
+                    fprintf(stderr, "solver: %zu contacts in %zu groups, %zu in overflow; groups per color:", contacts.size(), groups.size(), overflowGroups);
+                    for (int k = 0; k < maxColors && groupsPerColor[k]; k++)
+                        fprintf(stderr, " %d", groupsPerColor[k]);
+                    fprintf(stderr, "\n");
+                }
+            }
+
+            // One thread is enough for a few contacts; the order, and so the result, is the same.
+            // SDF_SOLVER_THREADS overrides the pool's size, for measurements.
+            if (!solverPool)
+            {
+                static int forcedThreads = getenv("SDF_SOLVER_THREADS") ? atoi(getenv("SDF_SOLVER_THREADS")) : 0;
+                solverPool = std::make_unique<WorkerPool>(forcedThreads > 0 ? forcedThreads : WorkerPool::defaultThreads());
+            }
+            WorkerPool &pool = *solverPool;
+            int threads = contacts.size() < 256 ? 1 : pool.threads();
+            auto job = [&](int thread, int threadCount) {
+                auto forEach = [&](auto &pass) {
+                    if (thread == 0)
+                        for (size_t i = overflow.first; i < overflow.second; i++)
+                            pass(contacts[i]);
+                    if (threadCount > 1)
+                        pool.barrier();
+                    for (int k = 0; k < maxColors; k++)
+                    {
+                        const auto &ranges = colorGroups[k];
+                        if (ranges.empty())
+                            break;
+                        size_t from = ranges.size() * thread / threadCount, to = ranges.size() * (thread + 1) / threadCount;
+                        for (size_t g = from; g < to; g++)
+                            for (size_t i = ranges[g].first; i < ranges[g].second; i++)
+                                pass(contacts[i]);
+                        if (threadCount > 1)
+                            pool.barrier();
+                    }
+                };
+                solve(forEach);
+            };
+            if (threads == 1)
+                job(0, 1);
+            else
+                pool.run(job);
+        }
+
+        solverMilliseconds += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - solverStart).count();
 
         // Integrate positions, with damping
         if (std::any_of(movers.begin(), movers.end(), [](const Mover &m) { return canMove(*m.record); }))

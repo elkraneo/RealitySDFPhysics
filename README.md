@@ -111,12 +111,13 @@ vary by up to about 20% between runs.
 
 ## Notes
 
-- **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, so the same bodies
-  and inputs give bit-identical results whatever the number of threads. Turn
-  `isMultithreaded` off for upstream's single random sequence; with `preset: .paper` our solver
-  then takes the same steps as upstream's (`SolverReferenceTests`).
-- **Threads.** The simulation steps on the main actor; its collision detection runs on several
-  threads, and baking in the background.
+- **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, and the solver
+  takes its contacts in a fixed order, so the same bodies and inputs give bit-identical results
+  whatever the number of threads. Turn `isMultithreaded` off for upstream's single random
+  sequence and contact order; with `preset: .paper` our solver then takes the same steps as
+  upstream's (`SolverReferenceTests`).
+- **Threads.** The simulation steps on the main actor; its collision detection and its contact
+  solver run on several threads, and baking in the background.
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies don't push each other;
   give a moving entity one or the other. `entity.addSDFColliders()` gives an entity's RealityKit
   collision shapes to the SDF simulation as static or kinematic bodies, so SDF bodies land on the

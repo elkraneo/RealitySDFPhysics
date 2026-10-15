@@ -127,6 +127,7 @@ typedef struct
     int32_t iterations;          // Optimizer iterations
     int32_t queries;             // Objective evaluations
     double collisionMilliseconds; // Narrow phase time, summed over the substeps
+    double solverMilliseconds;   // Contact solver time, summed over the substeps
     double stepMilliseconds;     // Whole step, including the solver
     int32_t sleepingBodies;
 } SDFStats;
