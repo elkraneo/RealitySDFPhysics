@@ -102,13 +102,20 @@ struct Contact
     float normalImpulse, tangentImpulse[2], pseudoImpulse;
 };
 
+// The least share of a constraint's inverse mass that locks may leave it for it to act. Locks
+// make a direction near a locked axis, such as a contact normal or a hinge's row a rounding error
+// off the plane of a planar chain, all but immovable: the constraint would see a huge mass, and
+// shove the bodies across the plane to resolve an error along the axis they can't move on.
+const float lockedShare = 0.01f;
+
 float effectiveMass(const Mover &a, const Mover &b, float3 rA, float3 rB, float3 dir)
 {
     // At least one of the bodies is dynamic. Locks can still leave it unable to move along the
-    // direction, and then the constraint has no effect.
+    // direction, or nearly, and then the constraint has no effect.
     float3 ra = cross(rA, dir), rb = cross(rB, dir);
     float k = a.linearTerm(dir) + b.linearTerm(dir) + dot(ra, a.invInertia * ra) + dot(rb, b.invInertia * rb);
-    return k > 0 ? 1.0f / k : 0.0f;
+    float free = a.body->invMass + b.body->invMass + dot(ra, a.body->invInertiaWorld * ra) + dot(rb, b.body->invInertiaWorld * rb);
+    return k > lockedShare * free ? 1.0f / k : 0.0f;
 }
 
 // A hinge for one substep: the point constraint, the two rows that keep the axes aligned, and
@@ -141,22 +148,37 @@ void makeSoft(float hertz, float zeta, float h, float &biasRate, float &massScal
     biasRate = omega / a1, massScale = a2 * a3, impulseScale = a3;
 }
 
-// The effective mass of a point constraint, or zero when locks leave nothing to move
+// The effective mass of a point constraint, or zero when locks leave nothing to move. Locks
+// along a world axis on both bodies, such as a chain held in a plane, leave K without that axis:
+// the constraint then holds along the others.
 float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
 {
     float3x3 sA = skew(rA), sB = skew(rB);
     float3x3 k = a.linearMass() + b.linearMass() + sA * a.invInertia * transpose(sA) + sB * b.invInertia * transpose(sB);
-    float det = dot(k[0], cross(k[1], k[2]));
     float scale = maxComponent(abs(k[0])) + maxComponent(abs(k[1])) + maxComponent(abs(k[2]));
-    if (!(det > 1e-12f * scale * scale * scale))
+    float3 free = {1, 1, 1};
+    for (int i = 0; i < 3; ++i)
+    {
+        if (!(maxComponent(abs(k[i])) > 1e-6f * scale))
+        {
+            k[i] = float3{0, 0, 0};
+            k[i][i] = 1;
+            free[i] = 0;
+        }
+    }
+    float det = dot(k[0], cross(k[1], k[2]));
+    if (!(scale > 0) || !(det > 1e-12f * scale * scale * scale))
         return identity3() * 0.0f;
-    return inverse(k);
+    return diagonal(free) * inverse(k) * diagonal(free);
 }
 
+// The effective mass of a rotation about a direction, or zero when locks leave nothing, or
+// next to nothing, to turn
 float angularMass(const Mover &a, const Mover &b, float3 dir)
 {
     float k = dot(dir, a.invInertia * dir) + dot(dir, b.invInertia * dir);
-    return k > 0 ? 1.0f / k : 0.0f;
+    float free = dot(dir, a.body->invInertiaWorld * dir) + dot(dir, b.body->invInertiaWorld * dir);
+    return k > lockedShare * free ? 1.0f / k : 0.0f;
 }
 
 bool isDynamic(const BodyRecord &r) { return r.mode == SDFBodyDynamic; }

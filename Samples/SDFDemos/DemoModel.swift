@@ -69,7 +69,9 @@ final class DemoModel {
             errorMessage = "Could not load \(DemoScene.all[index].name): \(error.localizedDescription)"
         }
         simulation = SDFSimulation()
-        settings = settings.with(simulation)
+        var settings = settings.with(simulation)
+        DemoScene.all[index].configure(&settings)
+        self.settings = settings
         camera = OrbitCamera(for: DemoScene.all[index])
         camera.place(cameraEntity)
     }
