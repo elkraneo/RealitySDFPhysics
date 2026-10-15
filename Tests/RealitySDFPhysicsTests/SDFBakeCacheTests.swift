@@ -116,11 +116,15 @@ import simd
     @Test func cacheKeepsTheMostRecentlyUsedBakes() throws {
         try Self.withTemporaryDirectory { directory in
             let shape = try SDFShape(baking: Self.positions, indices: Self.torus.indices, resolution: 16)
-            let size = try #require(shape.bakedData()).count
             func cache(_ key: String, limit: Int = .max) throws { _ = try SDFShape.cached(key: key, in: directory, sizeLimit: limit) { shape } }
             func keys() throws -> Set<String> {
                 Set(try FileManager.default.contentsOfDirectory(atPath: directory.path).map { ($0 as NSString).deletingPathExtension })
             }
+            // The size on disk, as the trimming counts it
+            try cache("size")
+            let sizeURL = directory.appending(path: "size.sdf")
+            let size = try #require(sizeURL.resourceValues(forKeys: [.totalFileAllocatedSizeKey]).totalFileAllocatedSize)
+            try FileManager.default.removeItem(at: sizeURL)
             // Each file's date a second apart, as file systems keep them only so finely
             for (index, key) in ["a", "b", "c"].enumerated() {
                 try cache(key)
@@ -131,11 +135,17 @@ import simd
             try cache("a")
             let other = directory.appending(path: "notes.txt")
             try Data(count: size * 4).write(to: other)
+            // Neither a folder nor a link named as a bake is touched
+            try FileManager.default.createDirectory(at: directory.appending(path: "folder.sdf"), withIntermediateDirectories: false)
+            try FileManager.default.createSymbolicLink(at: directory.appending(path: "link.sdf"), withDestinationURL: other)
             try cache("d", limit: size * 3 + size / 2)
-            #expect(try keys() == ["a", "c", "d", "notes"])
+            #expect(try keys() == ["a", "c", "d", "notes", "folder", "link"])
 
+            // The bake just saved stays even when it alone is over the limit
+            try cache("e", limit: 1)
+            #expect(try keys() == ["e", "notes", "folder", "link"])
             SDFShape.trimCache(in: directory, to: 0)
-            #expect(try keys() == ["notes"])
+            #expect(try keys() == ["notes", "folder", "link"])
         }
     }
 }
