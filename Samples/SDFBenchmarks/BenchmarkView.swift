@@ -1,16 +1,18 @@
 import RealityKit
 import RealitySDFPhysics
 import SDFDemoScenes
-import SDFMechanicsScenes
 import SwiftUI
 
 /// Runs the standard table of `sdf-bench` on the machine at hand and shows it: the pile of tori
 /// at each count, with the real-time preset, the paper's settings on threads and on one thread,
-/// and RealityKit's physics. The report is also printed, for the console.
+/// and RealityKit's physics. The report is also printed, for the console. Scenes times each of
+/// `scenes` instead, the paper's by default.
 public struct BenchmarkView: View {
-    @State private var model = BenchmarkModel()
+    @State private var model: BenchmarkModel
 
-    public init() {}
+    public init(scenes: [DemoScene] = DemoScene.all) {
+        _model = State(initialValue: BenchmarkModel(scenes: scenes))
+    }
 
     public var body: some View {
         ScrollView {
@@ -47,8 +49,13 @@ public struct BenchmarkView: View {
 @Observable
 final class BenchmarkModel {
     let device = DeviceInfo.current
+    let scenes: [DemoScene]
     private(set) var isRunning = false
     private(set) var report = ""
+
+    init(scenes: [DemoScene]) {
+        self.scenes = scenes
+    }
 
     func run(scenes: Bool = false) {
         guard !isRunning else { return }
@@ -60,12 +67,12 @@ final class BenchmarkModel {
         }
     }
 
-    /// The mechanics scenes stepped with the real-time preset: step time, mean and worst
+    /// The scenes stepped with the real-time preset: step time, mean and worst
     private func runScenes() async {
         emit("\(device.text)")
         emit("ms/step, mean / worst over 300 steps, real-time preset. Load is the baking.")
-        emit("scene         bodies   load ms   step   contacts")
-        for scene in MechanicsScenes.all {
+        emit("scene                     bodies   load ms   step   contacts")
+        for scene in scenes {
             await Task.yield()
             let simulation = SDFSimulation(), root = Entity()
             var settings = SDFPhysicsSimulationComponent(simulation: simulation)
@@ -81,7 +88,7 @@ final class BenchmarkModel {
                 times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
             }
             let stats = simulation.statistics
-            emit(String(format: "%-13@ %6d %9.0f   %5.2f / %5.2f   %5d", scene.name, stats.bodies, load,
+            emit(String(format: "%-25@ %6d %9.0f   %5.2f / %5.2f   %5d", scene.name, stats.bodies, load,
                         times.reduce(0, +) / Double(times.count), times.max() ?? 0, stats.contacts))
         }
         emit("thermal state at the end: \(DeviceInfo.current.thermalState)")

@@ -1,7 +1,5 @@
 import RealityKit
 import RealitySDFPhysics
-import SDFDemoScenes
-import SDFMechanicsScenes
 import Testing
 import simd
 
@@ -77,17 +75,20 @@ import simd
         #expect(farthest > 1.0, report)
     }
 
-    /// The gears of SDFGearTests: 20 and 10 teeth of module 0.1 on hinges to a static base
+    /// Two spiky wheels about y, of 10 spikes each, as gears on hinges to a static base: the
+    /// spikes reach 0.9 from the axle, the axles are 1.5 apart, and the driven wheel is turned half
+    /// a spike so that the spikes interleave, their tips 0.2 short of the other hub
     func addGears(driverMotor: SDFPhysicsRevoluteJoint.Motor?) throws -> (driver: Entity, driven: Entity) {
         let base = addBox("base", halfExtents: [1, 0.1, 1], at: [0, -5, 0], mode: .static)
         let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
+        let shape = SDFShape.spikyWheel(hubRadius: 0.4, hubHalfWidth: 0.2, spikeRadius: 0.12, spikeLength: 0.5, spikes: 10)
         var gears: [Entity] = []
-        for (name, teeth, x, turn) in [("driver", 20, Float(0), Float(0)), ("driven", 10, 1.58, Float.pi / 10)] {
+        for (name, x, turn) in [("driver", Float(0), Float(0)), ("driven", 1.5, Float.pi / 10)] {
             let gear = Entity()
             gear.name = name
             gear.position = [x, 0, 0]
             gear.orientation = simd_quatf(angle: turn, axis: [0, 1, 0])
-            var body = SDFPhysicsBodyComponent(shape: try GearMesh.shape(teeth: teeth, module: 0.1, thickness: 0.4))
+            var body = SDFPhysicsBodyComponent(shape: shape)
             body.material = SDFPhysicsMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
             gear.components.set(body)
             gear.components.set(SDFPhysicsMotionComponent())
@@ -113,8 +114,9 @@ import simd
         let (driver, driven) = try addGears(driverMotor: .init(targetVelocity: 0, maxTorque: 1e6))
         simulation.step(root: root)
         let start = driven.orientation
-        // A point on the driven gear's pitch circle, pulled along the tangent, 2 m on
-        let grip = driven.position + [0, 0, 0.5]
+        // A point on the driven gear's pitch circle, where the spikes meet, pulled along the
+        // tangent, 2 m on
+        let grip = driven.position + [0, 0, 0.75]
         #expect(simulation.beginDrag(driven, at: grip))
         simulation.drag(to: grip + [-2, 0, 0])
         var deepest = Float.infinity
@@ -132,7 +134,7 @@ import simd
         let (driver, driven) = try addGears(driverMotor: nil)
         simulation.step(root: root)
         let driverStart = driver.orientation, drivenStart = driven.orientation
-        let grip = driven.position + [0, 0, 0.5]
+        let grip = driven.position + [0, 0, 0.75]
         #expect(simulation.beginDrag(driven, at: grip))
         simulation.drag(to: grip + [-2, 0, 0])
         var deepest = Float.infinity
@@ -142,19 +144,56 @@ import simd
         }
         let drivenTurn = turn(of: driven, from: drivenStart), driverTurn = turn(of: driver, from: driverStart)
         let report = Comment(rawValue: "driven turned \(drivenTurn) rad, driver \(driverTurn) rad, least separation \(deepest)")
-        // Toward the target, about 1.3 rad round, and the driver half as far the other way
+        // Toward the target, about 1.2 rad round, and the driver about as far the other way
         #expect(abs(drivenTurn) > 0.8, report)
         #expect(driverTurn * drivenTurn < 0 && abs(driverTurn) > 0.3 * abs(drivenTurn), report)
         #expect(deepest > -0.05, report)
     }
 
-    @Test func chainLinkPulledAwayKeepsItsPins() async throws {
-        root.components[SDFPhysicsSimulationComponent.self]!.isSleepingEnabled = false
-        try await MechanicsScenes.all.first { $0.name == "Chain" }!.load(into: root)
+    /// A chain of 12 capsule links on hinges about z, hung in a V from two static anchors 5.2
+    /// apart: each half straight, 30° below the horizontal. The returned links are in order.
+    func addChain() throws -> [Entity] {
+        let pitch: Float = 0.5, count = 12, slope = Float.pi / 6
+        let anchors = addBox("anchors", halfExtents: [0.1, 0.1, 0.1], at: [0, 4, 0], mode: .static)
+        let axle = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0]) // The pin's x axis along z
+        let shape = SDFShape.capsule(radius: 0.06, halfLength: pitch / 2)
+        // The pins from the left anchor: down to the middle, then up to the right anchor
+        let span = Float(count) * pitch * cos(slope)
+        var pins: [SIMD3<Float>] = [[-span / 2, 4, 0]]
+        for i in 0..<count {
+            let down = i < count / 2
+            pins.append(pins[i] + pitch * SIMD3(cos(slope), down ? -sin(slope) : sin(slope), 0))
+        }
+        var links: [Entity] = []
+        for i in 0..<count {
+            let link = Entity()
+            link.name = "link \(i)"
+            link.position = (pins[i] + pins[i + 1]) / 2
+            // The capsule's y axis along the link, from pin i to pin i + 1
+            link.orientation = simd_quatf(from: [0, 1, 0], to: simd_normalize(pins[i + 1] - pins[i]))
+            link.components.set(SDFPhysicsBodyComponent(shape: shape))
+            link.components.set(SDFPhysicsMotionComponent())
+            root.addChild(link)
+            links.append(link)
+        }
+        func pin(_ entity: Entity, _ name: String, at position: SIMD3<Float>) -> GeometricPin {
+            entity.pins.set(named: name, position: position, orientation: axle, relativeTo: root)
+        }
+        // Each link pinned to the one before, the first and the last to the anchors
+        var previous = pin(anchors, "left", at: pins[0])
+        for (i, link) in links.enumerated() {
+            try SDFPhysicsRevoluteJoint(pin0: previous, pin1: pin(link, "start", at: pins[i])).addToSimulation()
+            previous = pin(link, "end", at: pins[i + 1])
+        }
+        try SDFPhysicsRevoluteJoint(pin0: pin(anchors, "right", at: pins[count]), pin1: previous).addToSimulation()
+        return links
+    }
+
+    @Test func chainLinkPulledAwayKeepsItsPins() throws {
+        let links = try addChain()
         for _ in 0..<60 { simulation.step(root: root) }
-        let links = root.children.filter { $0.name.hasPrefix("link") }
-        // The lowest link, pulled down and out of the loop
-        let link = links.min { $0.position.y < $1.position.y }!
+        // The third link, pulled down, out of the hanging chain
+        let link = links[2]
         let start = link.position
         #expect(simulation.beginDrag(link, at: start))
         simulation.drag(to: start + [0, -1.5, 0])
