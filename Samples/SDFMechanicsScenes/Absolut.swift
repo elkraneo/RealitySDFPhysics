@@ -32,7 +32,7 @@ extension DemoBuilder {
 
     /// The mass of an inner link of the chain, the heavier kind, with its rollers
     private var linkMass: Float {
-        Self.linkDensity * root.findEntity(named: "link 0")!.components[SDFBodyComponent.self]!.shape.volume
+        Self.linkDensity * root.findEntity(named: "link 0")!.components[SDFPhysicsBodyComponent.self]!.shape.volume
     }
 
     /// Two crank arms drawn on the plato, half a turn apart, the front one at `angle`, and at the
@@ -55,13 +55,13 @@ extension DemoBuilder {
             let end = axis + direction * length + [0, 0, depth * 1.4]
             let pedal = spawn(.box(halfExtents: [1.05, 0.125, 0.15]), mesh: .generateBox(size: [2.1, 0.25, 0.3]),
                               named: "pedal \(side)", at: end)
-            pedal.components[SDFBodyComponent.self]!.massProperties = .init(mass: mass)
-            pedal.components[SDFBodyComponent.self]!.angularDamping = 2
-            pedal.components[SDFBodyComponent.self]!.filter = Self.pedalFilter
-            pedal.components[SDFBodyComponent.self]!.lockToPlane()
+            pedal.components[SDFPhysicsBodyComponent.self]!.massProperties = .init(mass: mass)
+            pedal.components[SDFPhysicsBodyComponent.self]!.angularDamping = 2
+            pedal.components[SDFPhysicsBodyComponent.self]!.filter = Self.pedalFilter
+            pedal.components[SDFPhysicsBodyComponent.self]!.lockToPlane()
             let pin0 = plato.pins.set(named: "pedal \(side)", position: end, orientation: Self.axle, relativeTo: root)
             let pin1 = pedal.pins.set(named: "axle", orientation: Self.axle)
-            joints.append(SDFRevoluteJoint(pin0: pin0, pin1: pin1))
+            joints.append(SDFPhysicsRevoluteJoint(pin0: pin0, pin1: pin1))
         }
     }
 
@@ -80,13 +80,13 @@ extension DemoBuilder {
             let board = spawn(.box(halfExtents: [object.size.x / 2, object.size.y / 2, 0.05]),
                               mesh: .generateBox(size: [object.size.x, object.size.y, 0.1]),
                               named: object.name, at: center, orientation: orientation)
-            board.components[SDFBodyComponent.self]!.massProperties = .init(mass: mass)
-            board.components[SDFBodyComponent.self]!.angularDamping = 1.5
-            board.components[SDFBodyComponent.self]!.filter = Self.hungFilter
-            board.components[SDFBodyComponent.self]!.lockToPlane()
+            board.components[SDFPhysicsBodyComponent.self]!.massProperties = .init(mass: mass)
+            board.components[SDFPhysicsBodyComponent.self]!.angularDamping = 1.5
+            board.components[SDFPhysicsBodyComponent.self]!.filter = Self.hungFilter
+            board.components[SDFPhysicsBodyComponent.self]!.lockToPlane()
             let pin0 = link.pins.set(named: "clip", position: [0, 0, front], orientation: Self.axle)
             let pin1 = board.pins.set(named: "clip", position: [0, -reach, 0], orientation: Self.axle)
-            joints.append(SDFRevoluteJoint(pin0: pin0, pin1: pin1, angularLimit: -swing...swing))
+            joints.append(SDFPhysicsRevoluteJoint(pin0: pin0, pin1: pin1, angularLimit: -swing...swing))
         }
     }
 
@@ -97,7 +97,7 @@ extension DemoBuilder {
         let zone = Entity()
         zone.name = CarrierZone.zoneName
         zone.position = plato.position(relativeTo: root) + [0.3, height, 0.25]
-        var body = SDFBodyComponent(shape: shape, mode: .static)
+        var body = SDFPhysicsBodyComponent(shape: shape, mode: .static)
         body.isTrigger = true
         body.filter = Self.zoneFilter
         zone.components.set(body)
@@ -105,7 +105,7 @@ extension DemoBuilder {
     }
 }
 
-extension SDFBodyComponent {
+extension SDFPhysicsBodyComponent {
     /// Moves only in the x-y plane and turns only about z
     mutating func lockToPlane() {
         isTranslationLocked = (false, false, true)
@@ -163,7 +163,7 @@ public struct PedalDrive: Equatable, Sendable {
     }
 
     /// The hinge's motor for the crank at an angle
-    public func motor(crankAngle: Float) -> SDFRevoluteJoint.Motor {
+    public func motor(crankAngle: Float) -> SDFPhysicsRevoluteJoint.Motor {
         guard let target else { return .init(targetVelocity: 0, maxTorque: coastTorque) }
         let speed = gain * Self.wrap(target - crankAngle)
         return .init(targetVelocity: min(max(speed, -maxSpeed), maxSpeed), maxTorque: maxTorque)
@@ -173,7 +173,7 @@ public struct PedalDrive: Equatable, Sendable {
     /// root's joints
     @MainActor
     public static func crank(in root: Entity) -> (entity: Entity, hinge: Int)? {
-        guard let joints = root.components[SDFJointsComponent.self]?.joints,
+        guard let joints = root.components[SDFPhysicsJointsComponent.self]?.joints,
               let crank = joints.first(where: { $0.pin1.entity?.name.hasPrefix("pedal") == true })?.pin0.entity,
               let hinge = joints.firstIndex(where: { $0.pin1.entity == crank })
         else { return nil }

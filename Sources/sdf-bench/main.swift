@@ -42,7 +42,7 @@ let environment = ProcessInfo.processInfo.environment
 /// Collision detection overrides for experiments: SDF_BENCH_CURVATURE=0 turns curvature sampling
 /// off, SDF_BENCH_SAMPLES=n sets the random samples per pair and step, SDF_BENCH_ITERATIONS=n the
 /// optimizer's limit and SDF_BENCH_CACHE=n the cached points
-func applyEnvironment(to settings: inout SDFSimulationComponent) {
+func applyEnvironment(to settings: inout SDFPhysicsSimulationComponent) {
     if environment["SDF_BENCH_CURVATURE"] == "0" {
         settings.collisionDetection.usesCurvatureSampling = false
     }
@@ -66,7 +66,7 @@ struct Setting {
 @MainActor
 func quality(count: Int, setting: Setting) -> String {
     let simulation = SDFSimulation()
-    var settings = SDFSimulationComponent(simulation: simulation)
+    var settings = SDFPhysicsSimulationComponent(simulation: simulation)
     settings.substeps = setting.substeps
     settings.solverIterations = .init(positionIterations: setting.positionIterations, velocityIterations: setting.velocityIterations)
     settings.isSleepingEnabled = setting.isSleepingEnabled
@@ -83,11 +83,11 @@ func quality(count: Int, setting: Setting) -> String {
         deepest = max(deepest, overlap)
         if step >= steps - 30 {
             deepestAtRest = max(deepestAtRest, overlap)
-            endSpeed += bodies.map { length($0.components[SDFMotionComponent.self]!.linearVelocity) }.reduce(0, +) / Float(bodies.count) / 30
+            endSpeed += bodies.map { length($0.components[SDFPhysicsMotionComponent.self]!.linearVelocity) }.reduce(0, +) / Float(bodies.count) / 30
         }
         if step == steps - 1 {
-            fastest = bodies.map { length($0.components[SDFMotionComponent.self]!.linearVelocity) }.max() ?? 0
-            spinning = bodies.map { length($0.components[SDFMotionComponent.self]!.angularVelocity) }.max() ?? 0
+            fastest = bodies.map { length($0.components[SDFPhysicsMotionComponent.self]!.linearVelocity) }.max() ?? 0
+            spinning = bodies.map { length($0.components[SDFPhysicsMotionComponent.self]!.angularVelocity) }.max() ?? 0
         }
     }
     let name = setting.name.padding(toLength: 34, withPad: " ", startingAt: 0)
@@ -112,7 +112,7 @@ func footprintMB() -> Double {
 @MainActor
 func soak(count: Int, minutes: Int, isSleepingEnabled: Bool) {
     let simulation = SDFSimulation()
-    var settings = SDFSimulationComponent(simulation: simulation)
+    var settings = SDFPhysicsSimulationComponent(simulation: simulation)
     settings.isSleepingEnabled = isSleepingEnabled
     let (root, bodies) = TorusPile.makeSDF(count: count, settings: settings, motion: true)
     print("\(count) tori, sleeping \(isSleepingEnabled ? "on" : "off"): footprint and step time per simulated minute, drift of the pile since 20 s")
@@ -134,7 +134,7 @@ func soak(count: Int, minutes: Int, isSleepingEnabled: Bool) {
             if !t.translation.x.isFinite || !t.translation.y.isFinite || !t.translation.z.isFinite { invalid += 1; continue }
             drift = max(drift, simd_distance(t.translation, rest.translation))
             turn = max(turn, abs(simd_quatf(from: rest.rotation.act([0, 1, 0]), to: t.rotation.act([0, 1, 0])).angle))
-            speed = max(speed, length(body.components[SDFMotionComponent.self]!.linearVelocity))
+            speed = max(speed, length(body.components[SDFPhysicsMotionComponent.self]!.linearVelocity))
         }
         print(String(format: "%6d   %6.1f MB   %8.2f ms       %8d   %6d   %6.2f mm   %6.3f°   %7.2f mm/s   %7d", minute + 1, footprintMB(), time,
                      simulation.statistics.contacts, simulation.statistics.sleepingBodies, drift * 1000, turn * 180 / .pi, speed * 1000, invalid)
@@ -160,7 +160,7 @@ if mode == "phases" {
     for count in countArguments.isEmpty ? [100, 400, 800] : countArguments {
         let multi = Benchmark.phases(count: count, steps: steps, isMultithreaded: true, configure: applyEnvironment)
         let single = Benchmark.phases(count: count, steps: steps, isMultithreaded: false, configure: applyEnvironment)
-        let substeps = Double(SDFSimulationComponent().substeps)
+        let substeps = Double(SDFPhysicsSimulationComponent().substeps)
         print(String(format: "%4d   %5d   %8d   %10.1f   %8.2f / %8.2f   %6.2f   %8.2f   %6.2f   %6.2f", count,
                      multi.pairs, multi.contacts, Double(multi.iterations) / Double(max(1, multi.pairs)) / substeps,
                      multi.collision, single.collision, multi.solver, multi.rest, multi.swift, multi.step))

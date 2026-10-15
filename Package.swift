@@ -9,7 +9,7 @@ let package = Package(
         .library(name: "RealitySDFPhysics", targets: ["RealitySDFPhysics"]),
         .executable(name: "SDFDemos", targets: ["SDFDemos"]),
         .executable(name: "SDFMechanics", targets: ["SDFMechanics"]),
-        .executable(name: "RealityKitSamples", targets: ["RealityKitSamples"]),
+        .executable(name: "SDFRealityKitSamples", targets: ["SDFRealityKitSamples"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
         .executable(name: "sdf-video", targets: ["sdf-video"]),
         .executable(name: "Benchmarks", targets: ["Benchmarks"]),
@@ -61,16 +61,16 @@ let package = Package(
         // Apple's RealityKit physics samples, ported to SDF bodies: the scenes, shared by the app and
         // the video renderer, and the app
         .target(
-            name: "RealityKitSampleScenes",
+            name: "SDFRealityKitSampleScenes",
             dependencies: ["RealitySDFPhysics"],
-            path: "Samples/RealityKitSampleScenes",
+            path: "Samples/SDFRealityKitSampleScenes",
             exclude: ["Dice/Models/LICENSE.txt"],
             resources: [.copy("Dice/Models")]
         ),
         .executableTarget(
-            name: "RealityKitSamples",
-            dependencies: ["RealityKitSampleScenes"],
-            path: "Samples/RealityKitSamples"
+            name: "SDFRealityKitSamples",
+            dependencies: ["SDFRealityKitSampleScenes"],
+            path: "Samples/SDFRealityKitSamples"
         ),
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(
@@ -97,7 +97,7 @@ let package = Package(
         // Showcase video of the demo scenes, rendered offscreen
         .executableTarget(
             name: "sdf-video",
-            dependencies: ["SDFDemoScenes", "SDFMechanicsScenes", "RealityKitSampleScenes"]
+            dependencies: ["SDFDemoScenes", "SDFMechanicsScenes", "SDFRealityKitSampleScenes"]
         ),
         .testTarget(
             name: "RealitySDFPhysicsTests",

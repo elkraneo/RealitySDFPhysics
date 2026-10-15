@@ -18,11 +18,11 @@ public enum MechanicsScenes {
                 let shape = try GearMesh.shape(teeth: teeth, module: module, thickness: thickness)
                 let gear = b.spawn(shape, mesh: try MeshResource.generate(from: shape), named: name, at: [x, 0.5, 0],
                                    orientation: simd_quatf(angle: turn, axis: [0, 1, 0]))
-                gear.components[SDFBodyComponent.self]!.material = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+                gear.components[SDFPhysicsBodyComponent.self]!.material = SDFPhysicsMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
                 let pin0 = base.pins.set(named: name, position: gear.position, orientation: axle, relativeTo: b.root)
                 let pin1 = gear.pins.set(named: "hub", orientation: gear.orientation.inverse * axle)
-                var joint = SDFRevoluteJoint(pin0: pin0, pin1: pin1)
-                if name == "driver" { joint.motor = SDFRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 500) }
+                var joint = SDFPhysicsRevoluteJoint(pin0: pin0, pin1: pin1)
+                if name == "driver" { joint.motor = SDFPhysicsRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 500) }
                 b.joints.append(joint)
             }
         },
@@ -65,32 +65,32 @@ extension DemoBuilder {
     @MainActor
     public mutating func buildChain(chain: ChainMesh = ChainMesh(), links: Int = 48, teethA: Int = 20, teethB: Int = 10,
                                     height: Float = 3, motored: ChainSprocket = .a,
-                                    motor: SDFRevoluteJoint.Motor = .init(targetVelocity: 1, maxTorque: 5000),
-                                    sprocketMass: SDFMassProperties = .default, linkMass: SDFMassProperties = .default,
+                                    motor: SDFPhysicsRevoluteJoint.Motor = .init(targetVelocity: 1, maxTorque: 5000),
+                                    sprocketMass: SDFPhysicsMassProperties = .default, linkMass: SDFPhysicsMassProperties = .default,
                                     linkDamping: (linear: Float, angular: Float)? = nil,
                                     isPlanar: Bool = false) async throws {
         let layout = ChainLayout(chain: chain, links: links, teethA: teethA, teethB: teethB)
         let origin = SIMD3<Float>(0, height, 0)
         let axle = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0]) // The pin's x axis along z
-        let steel = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+        let steel = SDFPhysicsMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
         let base = try await spawn("Box", at: [layout.centerDistance / 2, -1, 0], scale: 0.5, mode: .static, isVisible: false)
 
         let phases = layout.phases
         func makePlanar(_ entity: Entity) {
-            if isPlanar { entity.components[SDFBodyComponent.self]!.lockToPlane() }
+            if isPlanar { entity.components[SDFPhysicsBodyComponent.self]!.lockToPlane() }
         }
         for (name, teeth, x, phase, sprocketID) in [("sprocket A", teethA, Float(0), phases.a, ChainSprocket.a),
                                                      ("sprocket B", teethB, layout.centerDistance, phases.b, .b)] {
             let shape = try chain.sprocketShape(teeth: teeth)
             let sprocket = spawn(shape, mesh: try MeshResource.generate(from: shape), named: name, at: origin + [x, 0, 0],
                                  orientation: simd_quatf(angle: phase, axis: [0, 0, 1]))
-            sprocket.components[SDFBodyComponent.self]!.material = steel
-            sprocket.components[SDFBodyComponent.self]!.massProperties = sprocketMass
-            sprocket.components.set(SDFMotionComponent())
+            sprocket.components[SDFPhysicsBodyComponent.self]!.material = steel
+            sprocket.components[SDFPhysicsBodyComponent.self]!.massProperties = sprocketMass
+            sprocket.components.set(SDFPhysicsMotionComponent())
             makePlanar(sprocket)
             let pin0 = base.pins.set(named: name, position: sprocket.position, orientation: axle, relativeTo: root)
             let pin1 = sprocket.pins.set(named: "hub", orientation: sprocket.orientation.inverse * axle)
-            var joint = SDFRevoluteJoint(pin0: pin0, pin1: pin1)
+            var joint = SDFPhysicsRevoluteJoint(pin0: pin0, pin1: pin1)
             if sprocketID == motored { joint.motor = motor }
             joints.append(joint)
         }
@@ -106,11 +106,11 @@ extension DemoBuilder {
             let middle = (from + to) / 2, direction = to - from
             let link = spawn(shapes[k % 2], mesh: meshes[k % 2], named: "link \(k)", at: origin + [middle.x, middle.y, 0],
                              orientation: simd_quatf(angle: atan2(direction.y, direction.x), axis: [0, 0, 1]))
-            link.components[SDFBodyComponent.self]!.material = steel
-            link.components[SDFBodyComponent.self]!.massProperties = linkMass
+            link.components[SDFPhysicsBodyComponent.self]!.material = steel
+            link.components[SDFPhysicsBodyComponent.self]!.massProperties = linkMass
             if let linkDamping {
-                link.components[SDFBodyComponent.self]!.linearDamping = linkDamping.linear
-                link.components[SDFBodyComponent.self]!.angularDamping = linkDamping.angular
+                link.components[SDFPhysicsBodyComponent.self]!.linearDamping = linkDamping.linear
+                link.components[SDFPhysicsBodyComponent.self]!.angularDamping = linkDamping.angular
             }
             makePlanar(link)
             link.pins.set(named: "left", position: [-chain.pitch / 2, 0, 0], orientation: axle)
@@ -118,7 +118,7 @@ extension DemoBuilder {
             linkEntities.append(link)
         }
         for k in 0..<links {
-            joints.append(SDFRevoluteJoint(pin0: linkEntities[k].pins["right"]!, pin1: linkEntities[(k + 1) % links].pins["left"]!))
+            joints.append(SDFPhysicsRevoluteJoint(pin0: linkEntities[k].pins["right"]!, pin1: linkEntities[(k + 1) % links].pins["left"]!))
         }
     }
 }
@@ -143,7 +143,7 @@ extension DemoBuilder {
         let sunTeeth = 12, planetTeeth = 12, ringTeeth = sunTeeth + 2 * planetTeeth
         let center = SIMD3<Float>(0, 0.8, 0)
         let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
-        let steel = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+        let steel = SDFPhysicsMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
         // Fine bakes: some 0.009 units a cell for the gears and 0.011 for the ring, against the
         // contact skin of 0.02. At the gear pair's 0.014 and 0.019 the teeth wedge now and then,
         // and one wedged mesh of six stops the set.
@@ -152,12 +152,12 @@ extension DemoBuilder {
         let orbit = Float(sunTeeth + planetTeeth) * module / 2
 
         /// A body on a hinge to `holder`, about the body's y axis through its position
-        func hinge(_ body: Entity, to holder: Entity, motor: SDFRevoluteJoint.Motor? = nil) -> SDFRevoluteJoint {
-            body.components[SDFBodyComponent.self]!.material = steel
-            body.components.set(SDFMotionComponent())
+        func hinge(_ body: Entity, to holder: Entity, motor: SDFPhysicsRevoluteJoint.Motor? = nil) -> SDFPhysicsRevoluteJoint {
+            body.components[SDFPhysicsBodyComponent.self]!.material = steel
+            body.components.set(SDFPhysicsMotionComponent())
             let pin0 = holder.pins.set(named: body.name, position: body.position, orientation: axle, relativeTo: root)
             let pin1 = body.pins.set(named: "hub", orientation: body.orientation.inverse * axle)
-            return SDFRevoluteJoint(pin0: pin0, pin1: pin1, motor: motor)
+            return SDFPhysicsRevoluteJoint(pin0: pin0, pin1: pin1, motor: motor)
         }
 
         // Phases, as angles about y; turning an entity by θ moves its outline by −θ in the x-z

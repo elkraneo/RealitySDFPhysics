@@ -10,17 +10,17 @@ import simd
     let ground: Entity
 
     init() {
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
         ground = Entity()
         ground.position = [0, -0.5, 0]
-        ground.components.set(SDFBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
+        ground.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
         root.addChild(ground)
     }
 
     func addBox(at position: SIMD3<Float>, mode: PhysicsBodyMode = .dynamic) -> Entity {
         let entity = Entity()
         entity.position = position
-        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: [0.5, 0.5, 0.5]), mode: mode))
+        entity.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [0.5, 0.5, 0.5]), mode: mode))
         root.addChild(entity)
         return entity
     }
@@ -44,7 +44,7 @@ import simd
         let bottom = addBox(at: [0, 0.6, 0]), top = addBox(at: [0, 1.8, 0])
         run(240)
         let height = top.position.y
-        top.sdfPhysics.applyLinearImpulse([0, 2000, 0], relativeTo: root) // 2 m/s up
+        top.sdf.applyLinearImpulse([0, 2000, 0], relativeTo: root) // 2 m/s up
         run(1)
         #expect(!simulation.isSleeping(top) && !simulation.isSleeping(bottom))
         #expect(top.position.y > height + 0.02)
@@ -101,7 +101,7 @@ import simd
     @Test func bodiesFilteredOutDoNotWakeAPile() {
         let box = addBox(at: [0, 0.6, 0])
         let ghost = addBox(at: [0, 0.6, 0], mode: .static)
-        ghost.components[SDFBodyComponent.self]!.filter = CollisionFilter(group: .init(rawValue: 2), mask: .init(rawValue: 2))
+        ghost.components[SDFPhysicsBodyComponent.self]!.filter = CollisionFilter(group: .init(rawValue: 2), mask: .init(rawValue: 2))
         run(120)
         #expect(simulation.isSleeping(box))
         for _ in 0..<30 {
@@ -129,27 +129,27 @@ import simd
         let box = addBox(at: [0, 0.6, 0])
         run(120)
         #expect(simulation.isSleeping(box))
-        root.components[SDFSimulationComponent.self]!.collisionDetection.contactMargin = 0.01
+        root.components[SDFPhysicsSimulationComponent.self]!.collisionDetection.contactMargin = 0.01
         run(1)
         #expect(!simulation.isSleeping(box))
     }
 
     @Test func aBodyThatWakesAndSleepsInOneStepIsWrittenBack() {
-        var settings = SDFSimulationComponent(simulation: simulation)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation)
         settings.timeStep = 0.5
         root.components.set(settings)
         let box = addBox(at: [0, 0.6, 0])
         run(20)
         #expect(simulation.isSleeping(box))
         let x = box.position.x
-        simulation.setMotion(SDFMotionComponent(linearVelocity: [0.04, 0, 0]), of: box)
+        simulation.setMotion(SDFPhysicsMotionComponent(linearVelocity: [0.04, 0, 0]), of: box)
         run(1)
         #expect(simulation.isSleeping(box))
         #expect(box.position.x > x)
     }
 
     @Test func thePaperPresetNeverSleeps() {
-        root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper))
         let box = addBox(at: [0, 0.6, 0])
         run(240)
         #expect(!simulation.isSleeping(box))

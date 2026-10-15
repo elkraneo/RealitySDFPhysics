@@ -28,19 +28,19 @@ import simd
     /// Mean angular speeds about y over the last two of seven seconds, with the scene's backlash
     func run(brakingRing: Bool) async throws -> (sun: Float, carrier: Float, ring: Float, report: String) {
         let root = Entity(), simulation = SDFSimulation()
-        var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper)
         settings.isSleepingEnabled = false
         root.components.set(settings)
         var builder = DemoBuilder(root: root)
         try await builder.spawn("Ground", at: [0, -1, 0], mode: .static, isVisible: false)
         try await builder.buildPlanetary(brakingRing: brakingRing)
-        root.components.set(SDFJointsComponent(joints: builder.joints))
+        root.components.set(SDFPhysicsJointsComponent(joints: builder.joints))
         let names = ["sun", "carrier", "ring"]
         var speeds = [[Float]](repeating: [], count: names.count)
         for _ in 0..<420 {
             simulation.step(root: root)
             for (i, name) in names.enumerated() {
-                speeds[i].append(root.findEntity(named: name)!.components[SDFMotionComponent.self]!.angularVelocity.y)
+                speeds[i].append(root.findEntity(named: name)!.components[SDFPhysicsMotionComponent.self]!.angularVelocity.y)
             }
         }
         let summaries = speeds.map { all in

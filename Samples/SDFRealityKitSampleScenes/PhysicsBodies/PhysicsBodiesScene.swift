@@ -4,7 +4,7 @@
 // Apple's 16 metallic spheres float without gravity in an invisible containment box, attract each
 // other, and follow drags with a spring-like force. Differences from Apple's sample:
 //
-// - Bodies are `SDFBodyComponent`s in an `SDFSimulationComponent` root, in place of
+// - Bodies are `SDFPhysicsBodyComponent`s in an `SDFPhysicsSimulationComponent` root, in place of
 //   `PhysicsBodyComponent` and `CollisionComponent`.
 // - The root is scaled to a tenth, so bodies are modeled in decimeters. RealitySDFPhysics's default
 //   contact margin and tolerances suit objects about 1 unit across; the spheres are 6 to 30 cm
@@ -53,7 +53,7 @@ package final class PhysicsBodiesScene {
 
     package init() {
         root.scale = SIMD3(repeating: 0.1)
-        root.components.set(SDFSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
         root.addChild(makeContainment())
         root.addChild(bodies)
         content.addChild(root)
@@ -66,7 +66,7 @@ package final class PhysicsBodiesScene {
 
         content.addChild(camera.makeEntity())
 
-        dragSubscription = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in
+        dragSubscription = simulation.subscribe(to: SDFPhysicsSimulationEvents.WillSimulate.self) { [unowned self] _ in
             if let drag { pull(drag.entity, towards: drag.target) }
         }
     }
@@ -89,12 +89,12 @@ package final class PhysicsBodiesScene {
         // undo. They appear one at a time, every 12 steps, each where the simulation's overlap query
         // finds room.
         var spawned = 0, steps = 0
-        spawning = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { [unowned self] _ in
+        spawning = simulation.subscribe(to: SDFPhysicsSimulationEvents.DidSimulate.self) { [unowned self] _ in
             steps += 1
             guard steps % 12 == 0 else { return }
             let body = Self.makeBody(shape)
             body.name = "\(shape.rawValue)_\(spawned)"
-            guard let component = body.components[SDFBodyComponent.self] else { return }
+            guard let component = body.components[SDFPhysicsBodyComponent.self] else { return }
             for _ in 0..<50 {
                 let position = root.convert(position: SIMD3<Float>.random(in: -0.3...0.3), from: nil)
                 let place = Transform(rotation: body.orientation, translation: position)
@@ -132,7 +132,7 @@ package final class PhysicsBodiesScene {
         entity.orientation = simd_quatf(angle: .random(in: 0...(2 * .pi)), axis: normalize(.random(in: -1...1)))
 
         // Apple's density of 10,000 kg/m³ is 10 kg per cubic decimeter
-        var body = SDFBodyComponent(shape: shape, massProperties: .init(density: 10))
+        var body = SDFPhysicsBodyComponent(shape: shape, massProperties: .init(density: 10))
         // Make each body float in the air by turning off gravity
         body.isAffectedByGravity = false
         entity.components.set(body)
@@ -168,7 +168,7 @@ package final class PhysicsBodiesScene {
                 position[axis] = side * (half + thickness / 2)
                 let face = Entity()
                 face.position = position
-                var body = SDFBodyComponent(shape: .box(halfExtents: extents), mode: .static)
+                var body = SDFPhysicsBodyComponent(shape: .box(halfExtents: extents), mode: .static)
                 body.filter = CollisionFilter(group: Self.walls, mask: .all)
                 face.components.set(body)
                 box.addChild(face)
@@ -238,7 +238,7 @@ package final class PhysicsBodiesScene {
             strength *= strength
         }
         let forceFactor: Float = 3000
-        entity.sdfPhysics.addForce(forceFactor * strength * normalize(direction), relativeTo: nil)
+        entity.sdf.addForce(forceFactor * strength * normalize(direction), relativeTo: nil)
     }
 }
 

@@ -71,7 +71,7 @@ extension Entity {
     /// Lets SDF bodies collide with the entity's RealityKit collision shapes: adds a body for each
     /// shape of its `CollisionComponent`, on a child entity named `SDFCollider`, and removes those
     /// this method added before, or only removes them when the entity has no collision shapes
-    /// anymore. The entity has to be in an `SDFSimulationComponent`'s subtree.
+    /// anymore. The entity has to be in an `SDFPhysicsSimulationComponent`'s subtree.
     ///
     /// Bodies are static by default. Make them kinematic for colliders that move, such as the
     /// app's own kinematic bodies or a hand; RealityKit's physics keeps simulating the entity.
@@ -83,7 +83,7 @@ extension Entity {
     ///
     /// - Returns: The child entities with the bodies
     @MainActor @discardableResult
-    public func addSDFColliders(mode: PhysicsBodyMode = .static, material: SDFMaterial = .default,
+    public func addSDFColliders(mode: PhysicsBodyMode = .static, material: SDFPhysicsMaterial = .default,
                                 resolution: Int = 100) async throws -> [Entity] {
         ImportedColliderComponent.registerComponent()
         let generation = (importGenerations[id] ?? 0) + 1
@@ -95,7 +95,7 @@ extension Entity {
             // The simulation takes one scale per body, so a scale that isn't uniform goes into the
             // shapes, and the child undoes it
             var root: Entity? = parent
-            while let entity = root, !entity.components.has(SDFSimulationComponent.self) { root = entity.parent }
+            while let entity = root, !entity.components.has(SDFPhysicsSimulationComponent.self) { root = entity.parent }
             var scale = self.scale(relativeTo: root)
             scale = abs(scale.max() - scale.min()) <= 1e-5 * scale.max() ? .one : scale
             for collisionShape in collision.shapes {
@@ -108,7 +108,7 @@ extension Entity {
                 let collider = Entity()
                 collider.name = SDFColliderName
                 collider.transform = transform
-                var body = SDFBodyComponent(shape: shape, material: material, mode: mode)
+                var body = SDFPhysicsBodyComponent(shape: shape, material: material, mode: mode)
                 body.filter = collision.filter
                 body.isTrigger = collision.mode == .trigger
                 collider.components.set(body)

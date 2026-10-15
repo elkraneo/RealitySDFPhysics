@@ -29,14 +29,14 @@ import simd
     }
 
     /// The scene loaded under a preset, with its sprockets and links
-    func load(_ preset: SDFSimulationComponent.Preset) async throws
+    func load(_ preset: SDFPhysicsSimulationComponent.Preset) async throws
         -> (root: Entity, simulation: SDFSimulation, piñon: Entity, plato: Entity, links: [Entity]) {
         let root = Entity(), simulation = SDFSimulation()
-        var settings = SDFSimulationComponent(simulation: simulation, preset: preset)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation, preset: preset)
         settings.isSleepingEnabled = false
         root.components.set(settings)
         try await MechanicsScenes.all.first { $0.name == "Absolut" }!.load(into: root)
-        #expect(root.components[SDFSimulationComponent.self]!.gravity == [0, -3, 0])
+        #expect(root.components[SDFPhysicsSimulationComponent.self]!.gravity == [0, -3, 0])
         let links = root.children.filter { $0.name.hasPrefix("link") }
         #expect(links.count == 48)
         return (root, simulation, root.findEntity(named: "sprocket A")!, root.findEntity(named: "sprocket B")!, links)
@@ -44,19 +44,19 @@ import simd
 
     /// The farthest any two pins of a joint are apart
     func worstPin(_ root: Entity) -> Float {
-        root.components[SDFJointsComponent.self]!.joints.map {
+        root.components[SDFPhysicsJointsComponent.self]!.joints.map {
             simd_distance($0.pin0.position(relativeTo: root)!, $0.pin1.position(relativeTo: root)!)
         }.max()!
     }
 
-    @Test(arguments: [SDFSimulationComponent.Preset.realTime, .paper])
-    func platoDrivesThePiñonThroughTheChain(preset: SDFSimulationComponent.Preset) async throws {
+    @Test(arguments: [SDFPhysicsSimulationComponent.Preset.realTime, .paper])
+    func platoDrivesThePiñonThroughTheChain(preset: SDFPhysicsSimulationComponent.Preset) async throws {
         let scene = try await load(preset)
         var speedsA: [Float] = [], speedsB: [Float] = [], pins: [Float] = []
         for _ in 0..<420 {
             scene.simulation.step(root: scene.root)
-            speedsA.append(scene.piñon.components[SDFMotionComponent.self]!.angularVelocity.z)
-            speedsB.append(scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z)
+            speedsA.append(scene.piñon.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z)
+            speedsB.append(scene.plato.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z)
             pins.append(worstPin(scene.root))
         }
         let lastA = speedsA.suffix(120), lastB = speedsB.suffix(120)
@@ -81,14 +81,14 @@ import simd
     /// would stay.
     @Test func noToothSkippedInAMinute() async throws {
         let scene = try await load(.realTime)
-        let timeStep = scene.root.components[SDFSimulationComponent.self]!.timeStep
+        let timeStep = scene.root.components[SDFPhysicsSimulationComponent.self]!.timeStep
         let tooth = 2 * Float.pi / 18
         var angleA: Float = 0, angleB: Float = 0, worst: Float = 0
         var slips: [Float] = [] // In teeth of the piñon, every second
         for step in 1...3600 {
             scene.simulation.step(root: scene.root)
-            angleA += scene.piñon.components[SDFMotionComponent.self]!.angularVelocity.z * timeStep
-            angleB += scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z * timeStep
+            angleA += scene.piñon.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z * timeStep
+            angleB += scene.plato.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z * timeStep
             // After the first second, which lays the laid out runs straight
             if step > 60 { worst = max(worst, worstPin(scene.root)) }
             if step % 60 == 0 { slips.append((angleA - Self.ratio * angleB) / tooth) }
@@ -114,12 +114,12 @@ import simd
     @Test func pedalsStayLevel() async throws {
         let scene = try await load(.realTime)
         let pedals = ["pedal front", "pedal back"].map { scene.root.findEntity(named: $0)! }
-        let timeStep = scene.root.components[SDFSimulationComponent.self]!.timeStep
+        let timeStep = scene.root.components[SDFPhysicsSimulationComponent.self]!.timeStep
         var turned: Float = 0, worst: Float = 0
         // A full turn of the plato at 1 rad/s
         while turned > -2 * .pi {
             scene.simulation.step(root: scene.root)
-            turned += scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z * timeStep
+            turned += scene.plato.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z * timeStep
             worst = max(worst, pedals.map { abs(PedalDrive.wrap(roll($0, in: scene.root))) }.max()!)
         }
         let report = Comment(rawValue: "a turn of the plato: pedals up to \(worst) rad off level; pins up to \(worstPin(scene.root)) apart")
@@ -159,12 +159,12 @@ import simd
     /// A pointer circling the plato at 1 rad/s clockwise: the crank follows it
     @Test func crankFollowsThePointer() async throws {
         let scene = try await load(.realTime)
-        let timeStep = scene.root.components[SDFSimulationComponent.self]!.timeStep
+        let timeStep = scene.root.components[SDFPhysicsSimulationComponent.self]!.timeStep
         let (crank, hinge) = try #require(PedalDrive.crank(in: scene.root))
         #expect(crank == scene.plato)
         var drive = PedalDrive()
-        var crankHinge: SDFRevoluteJoint {
-            get throws { try #require(scene.root.components[SDFJointsComponent.self]!.joints[hinge].revolute) }
+        var crankHinge: SDFPhysicsRevoluteJoint {
+            get throws { try #require(scene.root.components[SDFPhysicsJointsComponent.self]!.joints[hinge].revolute) }
         }
         scene.simulation.step(root: scene.root)
         var pointer: Float = 0.3
@@ -177,9 +177,9 @@ import simd
             let angle = scene.simulation.angle(of: joint)!
             if step >= 120 { lags.append(PedalDrive.wrap(drive.target! - angle)) }
             joint.motor = drive.motor(crankAngle: angle)
-            scene.root.components[SDFJointsComponent.self]!.joints[hinge] = .revolute(joint)
+            scene.root.components[SDFPhysicsJointsComponent.self]!.joints[hinge] = .revolute(joint)
             scene.simulation.step(root: scene.root)
-            speeds.append(scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z)
+            speeds.append(scene.plato.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z)
         }
         let speed = speeds.suffix(120).reduce(0, +) / 120
         let report = Comment(rawValue: "following at 1 rad/s: after 2 s the crank lags \(lags.min()!) to \(lags.max()!) rad, turns at \(speed) rad/s")
@@ -195,7 +195,7 @@ import simd
         let scene = try await load(.realTime)
         let names = ["bike", "saddle", "handlebar", "Gaudí"]
         let boards = names.map { scene.root.findEntity(named: $0)! }
-        let hinges = scene.root.components[SDFJointsComponent.self]!.joints.compactMap(\.revolute).filter { $0.angularLimit != nil }
+        let hinges = scene.root.components[SDFPhysicsJointsComponent.self]!.joints.compactMap(\.revolute).filter { $0.angularLimit != nil }
         #expect(hinges.count == 4)
         let carrier = try #require(CarrierZone(root: scene.root, simulation: scene.simulation))
         var entries: [String] = [], exits: [String] = [], changes = 0, crowded = 0
@@ -207,12 +207,12 @@ import simd
             exits.append((event.entityA == carrier.zone ? event.entityB : event.entityA).name)
         })
         carrier.onChange = { _ in changes += 1 }
-        let timeStep = scene.root.components[SDFSimulationComponent.self]!.timeStep
+        let timeStep = scene.root.components[SDFPhysicsSimulationComponent.self]!.timeStep
         var angleA: Float = 0, angleB: Float = 0, swing: Float = 0, stretch: Float = 0, hanging: Float = 0
         for i in 0..<1200 {
             scene.simulation.step(root: scene.root)
-            angleA += scene.piñon.components[SDFMotionComponent.self]!.angularVelocity.z * timeStep
-            angleB += scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z * timeStep
+            angleA += scene.piñon.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z * timeStep
+            angleB += scene.plato.components[SDFPhysicsMotionComponent.self]!.angularVelocity.z * timeStep
             if carrier.inside.count > 1 { crowded += 1 }
             // Under the straight of the bottom run the outward normal is straight down. The run sags
             // and waves, its links tilting up to 0.3 either way, and the hinges' limit
@@ -243,8 +243,8 @@ import simd
     }
 }
 
-private extension SDFJoint {
-    var revolute: SDFRevoluteJoint? {
+private extension SDFPhysicsJoint {
+    var revolute: SDFPhysicsRevoluteJoint? {
         if case .revolute(let joint) = self { joint } else { nil }
     }
 }

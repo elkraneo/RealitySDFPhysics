@@ -10,10 +10,10 @@ import simd
 /// ```swift
 /// let hinge = door.pins.set(named: "hinge", position: [-0.5, 0, 0], orientation: simd_quatf(angle: .pi / 2, axis: [0, 0, 1]))
 /// let frame = wall.pins.set(named: "frame", position: [0, 0, 0], orientation: hinge.offsetOrientation)
-/// var joint = SDFRevoluteJoint(pin0: frame, pin1: hinge, angularLimit: -.pi / 2 ... 0)
+/// var joint = SDFPhysicsRevoluteJoint(pin0: frame, pin1: hinge, angularLimit: -.pi / 2 ... 0)
 /// try joint.addToSimulation()
 /// ```
-public struct SDFRevoluteJoint: Equatable {
+public struct SDFPhysicsRevoluteJoint: Equatable {
     /// Drives the rotation at a speed, with up to a torque
     public struct Motor: Equatable, Sendable {
         /// Radians per second of `pin1`'s entity relative to `pin0`'s, about the axis
@@ -63,12 +63,12 @@ public struct SDFRevoluteJoint: Equatable {
         self.checksForInternalCollisions = checksForInternalCollisions
     }
 
-    /// Adds the joint to the nearest simulation above `pin0`'s entity, in its `SDFJointsComponent`,
+    /// Adds the joint to the nearest simulation above `pin0`'s entity, in its `SDFPhysicsJointsComponent`,
     /// and returns that entity. Throws when a pin has no entity or no simulation holds it.
     @discardableResult
     @MainActor
     public func addToSimulation() throws -> Entity {
-        try SDFJoint.revolute(self).addToSimulation()
+        try SDFPhysicsJoint.revolute(self).addToSimulation()
     }
 }
 
@@ -82,10 +82,10 @@ public struct SDFRevoluteJoint: Equatable {
 /// ```swift
 /// let rail = base.pins.set(named: "rail", orientation: simd_quatf(angle: .pi / 2, axis: [0, 0, 1]))
 /// let slide = block.pins.set(named: "slide", orientation: rail.offsetOrientation)
-/// var joint = SDFPrismaticJoint(pin0: rail, pin1: slide, linearLimit: -1 ... 1)
+/// var joint = SDFPhysicsPrismaticJoint(pin0: rail, pin1: slide, linearLimit: -1 ... 1)
 /// try joint.addToSimulation()
 /// ```
-public struct SDFPrismaticJoint: Equatable {
+public struct SDFPhysicsPrismaticJoint: Equatable {
     /// Drives the translation at a speed, with up to a force
     public struct Motor: Equatable, Sendable {
         /// Units per second of `pin1` relative to `pin0`, along the axis
@@ -99,7 +99,7 @@ public struct SDFPrismaticJoint: Equatable {
         }
     }
 
-    /// Pulls the translation toward a target position, as ``SDFRevoluteJoint/Spring`` does the angle
+    /// Pulls the translation toward a target position, as ``SDFPhysicsRevoluteJoint/Spring`` does the angle
     public struct Spring: Equatable, Sendable {
         /// Units of `pin1` from `pin0` along the axis
         public var targetPosition: Float
@@ -132,19 +132,19 @@ public struct SDFPrismaticJoint: Equatable {
         self.checksForInternalCollisions = checksForInternalCollisions
     }
 
-    /// Adds the joint to the nearest simulation above `pin0`'s entity, in its `SDFJointsComponent`,
+    /// Adds the joint to the nearest simulation above `pin0`'s entity, in its `SDFPhysicsJointsComponent`,
     /// and returns that entity. Throws when a pin has no entity or no simulation holds it.
     @discardableResult
     @MainActor
     public func addToSimulation() throws -> Entity {
-        try SDFJoint.prismatic(self).addToSimulation()
+        try SDFPhysicsJoint.prismatic(self).addToSimulation()
     }
 }
 
 /// A joint of either kind
-public enum SDFJoint: Equatable {
-    case revolute(SDFRevoluteJoint)
-    case prismatic(SDFPrismaticJoint)
+public enum SDFPhysicsJoint: Equatable {
+    case revolute(SDFPhysicsRevoluteJoint)
+    case prismatic(SDFPhysicsPrismaticJoint)
 
     public var pin0: GeometricPin {
         switch self {
@@ -167,7 +167,7 @@ public enum SDFJoint: Equatable {
         }
     }
 
-    /// Adds the joint to the nearest simulation above `pin0`'s entity, in its `SDFJointsComponent`,
+    /// Adds the joint to the nearest simulation above `pin0`'s entity, in its `SDFPhysicsJointsComponent`,
     /// and returns that entity. Throws when a pin has no entity or no simulation holds it.
     @discardableResult
     @MainActor
@@ -175,8 +175,8 @@ public enum SDFJoint: Equatable {
         guard let entity = pin0.entity, pin1.entity != nil else { throw SDFJointError.pinWithoutEntity }
         var ancestor: Entity? = entity
         while let current = ancestor {
-            if current.components.has(SDFSimulationComponent.self) {
-                var joints = current.components[SDFJointsComponent.self] ?? SDFJointsComponent()
+            if current.components.has(SDFPhysicsSimulationComponent.self) {
+                var joints = current.components[SDFPhysicsJointsComponent.self] ?? SDFPhysicsJointsComponent()
                 joints.joints.append(self)
                 current.components.set(joints)
                 return current
@@ -222,18 +222,18 @@ public enum SDFJointError: Error {
     case noSimulation
 }
 
-/// The joints of a simulation, on the entity that has its ``SDFSimulationComponent``
-public struct SDFJointsComponent: Component, Equatable {
-    public var joints: [SDFJoint]
+/// The joints of a simulation, on the entity that has its ``SDFPhysicsSimulationComponent``
+public struct SDFPhysicsJointsComponent: Component, Equatable {
+    public var joints: [SDFPhysicsJoint]
 
-    public init(joints: [SDFJoint] = []) {
+    public init(joints: [SDFPhysicsJoint] = []) {
         _ = registration
         self.joints = joints
     }
 
     /// Hinges only
-    public init<Hinges: Sequence>(joints: Hinges) where Hinges.Element == SDFRevoluteJoint {
-        self.init(joints: joints.map(SDFJoint.revolute))
+    public init<Hinges: Sequence>(joints: Hinges) where Hinges.Element == SDFPhysicsRevoluteJoint {
+        self.init(joints: joints.map(SDFPhysicsJoint.revolute))
     }
 }
 
@@ -250,15 +250,15 @@ extension SDFSimulation {
     struct JointState {
         var id: SDFJointID
         var bodyA: SDFBodyID, bodyB: SDFBodyID
-        var joint: SDFJoint
+        var joint: SDFPhysicsJoint
     }
 
-    /// Creates, updates and removes the engine's joints from the root's ``SDFJointsComponent``.
+    /// Creates, updates and removes the engine's joints from the root's ``SDFPhysicsJointsComponent``.
     /// Runs after the bodies, which the pins' entities must have. A joint whose pins' entities
     /// have no body yet waits for them.
     func synchronizeJoints(root: Entity) {
         var seen: Set<JointKey> = []
-        let joints = root.components[SDFJointsComponent.self]?.joints ?? []
+        let joints = root.components[SDFPhysicsJointsComponent.self]?.joints ?? []
         for joint in joints {
             guard let entityA = joint.pin0.entity, let entityB = joint.pin1.entity,
                   let bodyA = bodies[entityA.id]?.id, let bodyB = bodies[entityB.id]?.id
@@ -359,13 +359,13 @@ extension SDFSimulation {
 
     /// The angle of a joint: the rotation of `pin1`'s entity relative to `pin0`'s about the axis,
     /// in radians, or nil while the joint isn't in the simulation
-    public func angle(of joint: SDFRevoluteJoint) -> Float? {
+    public func angle(of joint: SDFPhysicsRevoluteJoint) -> Float? {
         jointID(joint.pin0, joint.pin1, revolute: true).map { sdf_world_joint_angle(world, $0) }
     }
 
     /// The translation of a joint: how far `pin1` is from `pin0` along the axis, or nil while the
     /// joint isn't in the simulation
-    public func translation(of joint: SDFPrismaticJoint) -> Float? {
+    public func translation(of joint: SDFPhysicsPrismaticJoint) -> Float? {
         jointID(joint.pin0, joint.pin1, revolute: false).map { sdf_world_joint_translation(world, $0) }
     }
 }

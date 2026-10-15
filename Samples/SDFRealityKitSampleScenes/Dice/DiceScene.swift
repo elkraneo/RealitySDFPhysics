@@ -80,9 +80,9 @@ package final class DiceScene {
     /// Loads Apple's dice models and bakes their shapes
     package func load() async throws {
         // A table 1 m across and its rim, in centimeters
-        var tableBody = SDFBodyComponent(shape: .cylinder(radius: Self.tableRadius, halfHeight: 5), mode: .static)
+        var tableBody = SDFPhysicsBodyComponent(shape: .cylinder(radius: Self.tableRadius, halfHeight: 5), mode: .static)
         tableBody.filter = CollisionFilter(group: Self.tableGroup, mask: .all)
-        tableBody.material = SDFMaterial(friction: 0.6, restitution: 0.3)
+        tableBody.material = SDFPhysicsMaterial(friction: 0.6, restitution: 0.3)
         table.components.set(tableBody)
         table.position = [0, -5, 0]
         let top = ModelEntity(mesh: .generateCylinder(height: 1, radius: Self.tableRadius),
@@ -106,7 +106,7 @@ package final class DiceScene {
             let wall = Entity()
             wall.position = [cos(angle) * (Self.tableRadius + 1), 7.5, sin(angle) * (Self.tableRadius + 1)]
             wall.orientation = simd_quatf(angle: -angle + .pi / 2, axis: [0, 1, 0])
-            var body = SDFBodyComponent(shape: wallShape, mode: .static)
+            var body = SDFPhysicsBodyComponent(shape: wallShape, mode: .static)
             body.filter = tableBody.filter
             body.material = tableBody.material
             wall.components.set(body)
@@ -138,10 +138,10 @@ package final class DiceScene {
 
     /// The bodies of a simulation: the table, the walls and the dice, always in this order, so that
     /// two simulations built from the same poses and velocities run identically
-    private func makeRoot(bodies: [(entity: Entity, component: SDFBodyComponent, motion: SDFMotionComponent?)]) -> Entity {
+    private func makeRoot(bodies: [(entity: Entity, component: SDFPhysicsBodyComponent, motion: SDFPhysicsMotionComponent?)]) -> Entity {
         let root = Entity()
         root.scale = SIMD3(repeating: 0.01)
-        var settings = SDFSimulationComponent(metersPerUnit: 0.01, preset: .paper)
+        var settings = SDFPhysicsSimulationComponent(metersPerUnit: 0.01, preset: .paper)
         // Dice bounce from slower approaches than the default 1 m/s
         settings.restitutionThreshold = 10
         root.components.set(settings)
@@ -153,9 +153,9 @@ package final class DiceScene {
         return root
     }
 
-    private func dieBody(_ die: Die) -> SDFBodyComponent {
+    private func dieBody(_ die: Die) -> SDFPhysicsBodyComponent {
         // Plastic: 1.2 g, or 0.0012 kg, per cubic centimeter of the root
-        var body = SDFBodyComponent(shape: die.shape, massProperties: .init(density: 0.0012),
+        var body = SDFPhysicsBodyComponent(shape: die.shape, massProperties: .init(density: 0.0012),
                                     material: .init(friction: 0.5, restitution: 0.35))
         body.filter = CollisionFilter(group: .default, mask: .all)
         // Real dice stop within a second or two, from rolling resistance, which the engine doesn't
@@ -166,11 +166,11 @@ package final class DiceScene {
     }
 
     /// Replaces the simulation with a new one, with the bodies at their current poses
-    private func startSimulation(motions: [Int: SDFMotionComponent]) {
+    private func startSimulation(motions: [Int: SDFPhysicsMotionComponent]) {
         let fixed = [table] + walls
-        let bodies = fixed.map { ($0, $0.components[SDFBodyComponent.self]!, nil as SDFMotionComponent?) }
+        let bodies = fixed.map { ($0, $0.components[SDFPhysicsBodyComponent.self]!, nil as SDFPhysicsMotionComponent?) }
             + dice.enumerated().map { index, die in
-                (die.entity, dieBody(die), motions[index] ?? SDFMotionComponent())
+                (die.entity, dieBody(die), motions[index] ?? SDFPhysicsMotionComponent())
             }
         root.removeFromParent()
         root = makeRoot(bodies: bodies.map { ($0.0, $0.1, $0.2) })
@@ -179,8 +179,8 @@ package final class DiceScene {
 
     // MARK: Picking up and tossing
 
-    private var simulation: SDFSimulation { root.components[SDFSimulationComponent.self]!.simulation }
-    private var gravity: SIMD3<Float> { root.components[SDFSimulationComponent.self]!.gravity }
+    private var simulation: SDFSimulation { root.components[SDFPhysicsSimulationComponent.self]!.simulation }
+    private var gravity: SIMD3<Float> { root.components[SDFPhysicsSimulationComponent.self]!.gravity }
     /// The held die, and the others pulled around it with "Toss all"
     @ObservationIgnored private var held: [(index: Int, offset: SIMD3<Float>)] = []
     /// The grabbed point, in the held die's frame, and where the pointer wants it, in the root's
@@ -214,7 +214,7 @@ package final class DiceScene {
         }
         let entity = dice[index].entity
         grab = (entity.convert(position: point, from: root), point)
-        holding = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
+        holding = simulation.subscribe(to: SDFPhysicsSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
         stopWatchingRoll()
     }
 
@@ -237,7 +237,7 @@ package final class DiceScene {
     private func hold() {
         guard let grab, let (index, _) = held.first else { return }
         let entity = dice[index].entity
-        guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFMotionComponent.self] else { return }
+        guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFPhysicsMotionComponent.self] else { return }
         let frequency: Float = 15 // Radians per second: the die follows within about a tenth of a second
         let anchor = entity.convert(position: grab.anchor, to: root)
         let anchorVelocity = motion.linearVelocity + cross(motion.angularVelocity, anchor - entity.position)
@@ -249,7 +249,7 @@ package final class DiceScene {
         let center = entity.position
         for (other, offset) in held.dropFirst() {
             let entity = dice[other].entity
-            guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFMotionComponent.self] else { continue }
+            guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFPhysicsMotionComponent.self] else { continue }
             let pull = frequency * frequency * (center + offset - entity.position) - 2 * frequency * motion.linearVelocity
             simulation.addForce(mass * (pull - gravity), to: entity)
         }
@@ -262,7 +262,7 @@ package final class DiceScene {
         grab = nil
         for (index, _) in held {
             let entity = dice[index].entity
-            var motion = entity.components[SDFMotionComponent.self] ?? SDFMotionComponent()
+            var motion = entity.components[SDFPhysicsMotionComponent.self] ?? SDFPhysicsMotionComponent()
             // At most 2 m/s, so that 2 cm dice don't pass through each other between substeps
             if length(motion.linearVelocity) > 200 { motion.linearVelocity = normalize(motion.linearVelocity) * 200 }
             motion.angularVelocity += SIMD3<Float>.random(in: -15...15)
@@ -273,7 +273,7 @@ package final class DiceScene {
         watchRoll(tossed: tossed, forecast: simulation.forecast(), maxScore: maxScore)
     }
 
-    private static func isAtRest(_ motion: SDFMotionComponent?) -> Bool {
+    private static func isAtRest(_ motion: SDFPhysicsMotionComponent?) -> Bool {
         guard let motion else { return true }
         return length(motion.linearVelocity) < 0.5 && length(motion.angularVelocity) < 0.05
     }
@@ -289,7 +289,7 @@ package final class DiceScene {
         rolled = nil
         isRolling = true
         var forecastResting = 0, resting = 0
-        rollSubscription = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { [unowned self] _ in
+        rollSubscription = simulation.subscribe(to: SDFPhysicsSimulationEvents.DidSimulate.self) { [unowned self] _ in
             if predicted == nil {
                 // A few milliseconds of each step, so that the roll stays smooth
                 let budget = Date().addingTimeInterval(0.004)
@@ -309,7 +309,7 @@ package final class DiceScene {
                     predicted = zip(tossed, landings).map { read(index: $0, orientation: $1) }
                 }
             }
-            resting = dice.allSatisfy { Self.isAtRest($0.entity.components[SDFMotionComponent.self]) } ? resting + 1 : 0
+            resting = dice.allSatisfy { Self.isAtRest($0.entity.components[SDFPhysicsMotionComponent.self]) } ? resting + 1 : 0
             guard predicted != nil, resting >= 30 else { return }
             rolled = tossed.map { read(index: $0, orientation: dice[$0].entity.orientation) }
             isRolling = false

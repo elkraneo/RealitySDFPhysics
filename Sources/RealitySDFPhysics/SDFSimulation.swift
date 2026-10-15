@@ -6,8 +6,8 @@ import simd
 /// A rigid body world whose collision detection is SDF-SDF optimization with temporal caching and
 /// importance sampling (Giles and Andrews, Pacific Graphics 2026).
 ///
-/// Set it on a root entity with `SDFSimulationComponent`, which also holds its settings. Every frame
-/// it adds, updates and removes bodies for the root's descendants with an `SDFBodyComponent`,
+/// Set it on a root entity with `SDFPhysicsSimulationComponent`, which also holds its settings. Every frame
+/// it adds, updates and removes bodies for the root's descendants with an `SDFPhysicsBodyComponent`,
 /// advances in fixed steps and writes the poses of dynamic bodies back to their entities. Positions,
 /// directions and distances of the simulation are in the root's local frame and units.
 ///
@@ -60,7 +60,7 @@ public final class SDFSimulation {
     /// steps. `SDFSimulationSystem` calls this every frame. Does nothing when called from an event
     /// handler of this simulation.
     public func update(root: Entity, deltaTime: TimeInterval) {
-        guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
+        guard !isStepping, let settings = root.components[SDFPhysicsSimulationComponent.self] else { return }
         // Event handlers, including those of contacts that end when bodies are removed, can't step
         isStepping = true
         defer { isStepping = false }
@@ -82,7 +82,7 @@ public final class SDFSimulation {
     /// Synchronizes and takes exactly one step, also while paused. Does nothing when called from an
     /// event handler of this simulation, or when the time step isn't positive.
     public func step(root: Entity) {
-        guard !isStepping, let settings = root.components[SDFSimulationComponent.self] else { return }
+        guard !isStepping, let settings = root.components[SDFPhysicsSimulationComponent.self] else { return }
         isStepping = true
         defer { isStepping = false }
         let timeStep = TimeInterval(settings.timeStep)
@@ -94,7 +94,7 @@ public final class SDFSimulation {
 
     /// Applies the settings, synchronizes the bodies, and takes the forces added since the last
     /// update. Returns the entities of dynamic bodies.
-    private func prepare(root: Entity, settings: SDFSimulationComponent, deltaTime: TimeInterval) -> [Entity] {
+    private func prepare(root: Entity, settings: SDFPhysicsSimulationComponent, deltaTime: TimeInterval) -> [Entity] {
         sdf_world_set_params(world, settings.engine)
         metersPerUnit = settings.metersPerUnit
         let dynamic = synchronize(root: root, deltaTime: deltaTime)
@@ -107,7 +107,7 @@ public final class SDFSimulation {
 
     /// Takes one step; `isStepping` is set
     private func step(root: Entity, dynamic: [Entity], timeStep: TimeInterval) {
-        send(SDFSimulationEvents.WillSimulate(deltaTime: timeStep, simulationEntity: root))
+        send(SDFPhysicsSimulationEvents.WillSimulate(deltaTime: timeStep, simulationEntity: root))
         let pushes = stepPushes
         stepPushes = [:]
         applyForces(activePushes, pushes)
@@ -115,7 +115,7 @@ public final class SDFSimulation {
         stepCount += 1
         writeBack(dynamic, root: root)
         sendCollisionEvents()
-        send(SDFSimulationEvents.DidSimulate(deltaTime: timeStep, simulationEntity: root))
+        send(SDFPhysicsSimulationEvents.DidSimulate(deltaTime: timeStep, simulationEntity: root))
     }
 
     // MARK: Bodies
@@ -178,12 +178,12 @@ public final class SDFSimulation {
         var shape: SDFShape
         var mode: PhysicsBodyMode
         var scale: Float
-        var massProperties: SDFMassProperties
-        var options: SDFBodyComponent.Options
+        var massProperties: SDFPhysicsMassProperties
+        var options: SDFPhysicsBodyComponent.Options
         /// The entity's pose when last read or written
         var pose: Pose
         /// The motion component when last read or written
-        var motion: SDFMotionComponent?
+        var motion: SDFPhysicsMotionComponent?
     }
 
     /// Updates the bodies from the root's descendants. Returns the entities of dynamic bodies.
@@ -191,8 +191,8 @@ public final class SDFSimulation {
         var dynamic: [Entity] = []
         var attached: Set<Entity.ID> = []
         func visit(_ entity: Entity) {
-            for child in entity.children where !child.components.has(SDFSimulationComponent.self) {
-                if let component = child.components[SDFBodyComponent.self] {
+            for child in entity.children where !child.components.has(SDFPhysicsSimulationComponent.self) {
+                if let component = child.components[SDFPhysicsBodyComponent.self] {
                     attach(child, component, root: root, deltaTime: deltaTime)
                     attached.insert(child.id)
                     if component.mode == .dynamic { dynamic.append(child) }
@@ -212,10 +212,10 @@ public final class SDFSimulation {
         return dynamic
     }
 
-    private func attach(_ entity: Entity, _ component: SDFBodyComponent, root: Entity, deltaTime: TimeInterval) {
+    private func attach(_ entity: Entity, _ component: SDFPhysicsBodyComponent, root: Entity, deltaTime: TimeInterval) {
         let pose = Pose(of: entity, relativeTo: root)
         let scale = entity.parent === root ? entity.scale.x : entity.scale(relativeTo: root).x
-        let motion = entity.components[SDFMotionComponent.self]
+        let motion = entity.components[SDFPhysicsMotionComponent.self]
         guard var body = bodies[entity.id], body.shape === component.shape, body.mode == component.mode,
               abs(body.scale - scale) <= 1e-5 * scale
         else {
@@ -250,8 +250,8 @@ public final class SDFSimulation {
         bodies[entity.id] = body
     }
 
-    private func addBody(of entity: Entity, _ component: SDFBodyComponent, pose: Pose, scale: Float,
-                         motion: SDFMotionComponent?) {
+    private func addBody(of entity: Entity, _ component: SDFPhysicsBodyComponent, pose: Pose, scale: Float,
+                         motion: SDFPhysicsMotionComponent?) {
         let mode: SDFBodyMode = switch component.mode {
         case .dynamic: SDFBodyDynamic
         case .kinematic: SDFBodyKinematic
@@ -286,10 +286,10 @@ public final class SDFSimulation {
             pose.write(to: entity, relativeTo: root)
             // Read back, so rounding in the transform is not mistaken for a teleport
             body.pose = Pose(of: entity, relativeTo: root)
-            if entity.components.has(SDFMotionComponent.self) {
+            if entity.components.has(SDFPhysicsMotionComponent.self) {
                 var linear: [Float] = [0, 0, 0], angular: [Float] = [0, 0, 0]
                 sdf_world_body_velocity(world, body.id, &linear, &angular)
-                let motion = SDFMotionComponent(linearVelocity: SIMD3(linear[0], linear[1], linear[2]),
+                let motion = SDFPhysicsMotionComponent(linearVelocity: SIMD3(linear[0], linear[1], linear[2]),
                                                 angularVelocity: SIMD3(angular[0], angular[1], angular[2]))
                 entity.components.set(motion)
                 body.motion = motion
@@ -298,7 +298,7 @@ public final class SDFSimulation {
         }
     }
 
-    private func setVelocity(of id: SDFBodyID, _ motion: SDFMotionComponent) {
+    private func setVelocity(of id: SDFBodyID, _ motion: SDFPhysicsMotionComponent) {
         let v = motion.linearVelocity, w = motion.angularVelocity
         sdf_world_set_body_velocity(world, id, [v.x, v.y, v.z], [w.x, w.y, w.z])
     }
@@ -321,15 +321,15 @@ public final class SDFSimulation {
         bodies.mapValues(\.id)
     }
 
-    /// Whether an entity's dynamic body is asleep (see ``SDFSimulationComponent/isSleepingEnabled``)
+    /// Whether an entity's dynamic body is asleep (see ``SDFPhysicsSimulationComponent/isSleepingEnabled``)
     public func isSleeping(_ entity: Entity) -> Bool {
         guard let id = bodies[entity.id]?.id else { return false }
         return sdf_world_body_is_asleep(world, id)
     }
 
     /// Sets a dynamic body's velocities now, rather than on the next update as setting its
-    /// `SDFMotionComponent` does, and sets that component too. For example before a forecast.
-    public func setMotion(_ motion: SDFMotionComponent, of entity: Entity) {
+    /// `SDFPhysicsMotionComponent` does, and sets that component too. For example before a forecast.
+    public func setMotion(_ motion: SDFPhysicsMotionComponent, of entity: Entity) {
         entity.components.set(motion)
         guard var body = bodies[entity.id] else { return }
         setVelocity(of: body.id, motion)

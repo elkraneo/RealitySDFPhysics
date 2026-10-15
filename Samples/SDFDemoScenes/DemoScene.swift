@@ -37,21 +37,21 @@ public struct DemoScene: Identifiable, Sendable {
         try await builder.spawn("Ground", at: [0, -1, 0], mode: .static, isVisible: false)
         try await build(&builder)
         // Swap in the finished scene at once, so a half built scene never simulates
-        for child in Array(root.children) where child.components.has(SDFBodyComponent.self) {
+        for child in Array(root.children) where child.components.has(SDFPhysicsBodyComponent.self) {
             child.removeFromParent()
         }
         for child in Array(builder.root.children) {
             root.addChild(child)
         }
-        root.components.set(SDFJointsComponent(joints: builder.joints))
-        if var settings = root.components[SDFSimulationComponent.self] {
+        root.components.set(SDFPhysicsJointsComponent(joints: builder.joints))
+        if var settings = root.components[SDFPhysicsSimulationComponent.self] {
             configure(&settings)
             root.components.set(settings)
         }
     }
 
     /// Sets the scene's own simulation settings, for a simulation added after `load(into:)`
-    public func configure(_ settings: inout SDFSimulationComponent) {
+    public func configure(_ settings: inout SDFPhysicsSimulationComponent) {
         settings.gravity = [0, -gravity / settings.metersPerUnit, 0]
     }
 }
@@ -62,7 +62,7 @@ public struct DemoBuilder {
     public let root: Entity
     public var random: SeededRandom
     /// The joints of the scene, set on the simulation entity once the bodies are in place
-    public var joints: [SDFRevoluteJoint] = []
+    public var joints: [SDFPhysicsRevoluteJoint] = []
 
     /// Bodies are added as children of `root`
     public init(root: Entity, seed: UInt64 = 0x853c49e6748fea9b) {
@@ -89,7 +89,7 @@ public struct DemoBuilder {
         let entity = ModelEntity(mesh: mesh, materials: [material])
         entity.name = name
         entity.transform = Transform(scale: SIMD3(repeating: scale), rotation: orientation, translation: position)
-        entity.components.set(SDFBodyComponent(shape: shape, mode: mode))
+        entity.components.set(SDFPhysicsBodyComponent(shape: shape, mode: mode))
         root.addChild(entity)
         return entity
     }
@@ -112,7 +112,7 @@ public struct DemoBuilder {
         }
         entity.name = shapeName
         entity.transform = Transform(scale: SIMD3(repeating: scale), rotation: orientation, translation: position)
-        entity.components.set(SDFBodyComponent(shape: shape, mode: mode))
+        entity.components.set(SDFPhysicsBodyComponent(shape: shape, mode: mode))
         root.addChild(entity)
         return entity
     }
@@ -161,8 +161,8 @@ extension DemoScene {
                                           scale: 1.2)
             // A heavy wheel, four times the mass of its volume of water
             let volume = try await DemoShapes.shared.shape(named: "Spiky Wheel").volume
-            wheel.components[SDFBodyComponent.self]?.massProperties = .init(mass: 4 * 1000 * volume * pow(1.2, 3))
-            wheel.components.set(SDFMotionComponent(linearVelocity: [6, 0, 0], angularVelocity: [0, 0, -4]))
+            wheel.components[SDFPhysicsBodyComponent.self]?.massProperties = .init(mass: 4 * 1000 * volume * pow(1.2, 3))
+            wheel.components.set(SDFPhysicsMotionComponent(linearVelocity: [6, 0, 0], angularVelocity: [0, 0, -4]))
             for row in 0..<4 {
                 for i in 0...row {
                     try await b.spawn("Capsule", at: [3 + Float(row) * 0.8, 0.7, (Float(i) - 0.5 * Float(row)) * 0.9])

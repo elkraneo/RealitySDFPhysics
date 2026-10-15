@@ -40,19 +40,19 @@ pairs, the contacts and the work of the optimizer for the last step.
 
 ## Solver settings
 
-``SDFSimulationComponent/substeps`` (2) runs the collision detection and the contact solver that
+``SDFPhysicsSimulationComponent/substeps`` (2) runs the collision detection and the contact solver that
 many times per step. More substeps make fast and stacked bodies more stable at a proportional
-cost. ``SDFSimulationComponent/solverIterations`` sets the contact iterations of each substep:
+cost. ``SDFPhysicsSimulationComponent/solverIterations`` sets the contact iterations of each substep:
 `velocityIterations` (10) for contacts and friction, `positionIterations` (4) for pushing
 penetrating bodies apart. Fewer iterations are faster and make tall stacks softer.
 
-The defaults are those of ``SDFSimulationComponent/Preset/realTime``. In a box of tori, they
+The defaults are those of ``SDFPhysicsSimulationComponent/Preset/realTime``. In a box of tori, they
 settled 400 bodies at rest without overlap at less than half the cost of the paper's settings,
-``SDFSimulationComponent/Preset/paper`` (4 substeps, 20 and 20 iterations); with 1 substep the
+``SDFPhysicsSimulationComponent/Preset/paper`` (4 substeps, 20 and 20 iterations); with 1 substep the
 same pile sank into itself. Run `swift run -c release sdf-bench quality` to compare settings.
-Choose ``SDFSimulationComponent/Preset/paper`` to reproduce the paper, and for small, fast bodies
+Choose ``SDFPhysicsSimulationComponent/Preset/paper`` to reproduce the paper, and for small, fast bodies
 that would pass through each other between substeps.
 
-``SDFSimulationComponent/timeStep`` is the length of a step (1/60 s). Each frame takes as many
-steps as the elapsed time covers, up to ``SDFSimulationComponent/maximumStepsPerFrame``; time
+``SDFPhysicsSimulationComponent/timeStep`` is the length of a step (1/60 s). Each frame takes as many
+steps as the elapsed time covers, up to ``SDFPhysicsSimulationComponent/maximumStepsPerFrame``; time
 beyond that is dropped, so a slow frame slows the simulation down instead of spiraling.

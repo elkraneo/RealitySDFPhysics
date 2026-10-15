@@ -23,11 +23,11 @@ over with few changes:
 
 ```swift
 let root = Entity()
-root.components.set(SDFSimulationComponent())
+root.components.set(SDFPhysicsSimulationComponent())
 content.add(root)
 
 let gear = try await Entity(named: "Gear")
-gear.components.set(SDFBodyComponent(shape: try await .bake(from: gear)))
+gear.components.set(SDFPhysicsBodyComponent(shape: try await .bake(from: gear)))
 root.addChild(gear)
 ```
 
@@ -40,17 +40,17 @@ root.addChild(gear)
 
 ### Simulations
 
-- ``SDFSimulationComponent``
+- ``SDFPhysicsSimulationComponent``
 - ``SDFSimulation``
 - ``SDFSimulationSystem``
 - ``SDFCollisionDetection``
 
 ### Bodies
 
-- ``SDFBodyComponent``
-- ``SDFMaterial``
-- ``SDFMassProperties``
-- ``SDFMotionComponent``
+- ``SDFPhysicsBodyComponent``
+- ``SDFPhysicsMaterial``
+- ``SDFPhysicsMassProperties``
+- ``SDFPhysicsMotionComponent``
 - ``SDFPhysics``
 
 ### Shapes
@@ -62,7 +62,7 @@ root.addChild(gear)
 
 - ``SDFSimulationEvent``
 - ``SDFCollisionEvents``
-- ``SDFSimulationEvents``
+- ``SDFPhysicsSimulationEvents``
 
 ### Tuning and performance
 

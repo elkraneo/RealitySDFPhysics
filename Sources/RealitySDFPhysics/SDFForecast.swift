@@ -51,11 +51,11 @@ public final class SDFForecast {
     }
 
     /// The velocities an entity's body has in the forecast, in the simulation root's frame
-    public func motion(of entity: Entity) -> SDFMotionComponent? {
+    public func motion(of entity: Entity) -> SDFPhysicsMotionComponent? {
         guard let id = ids[entity.id] else { return nil }
         var linear: [Float] = [0, 0, 0], angular: [Float] = [0, 0, 0]
         sdf_world_body_velocity(world, id, &linear, &angular)
-        return SDFMotionComponent(linearVelocity: SIMD3(linear[0], linear[1], linear[2]),
+        return SDFPhysicsMotionComponent(linearVelocity: SIMD3(linear[0], linear[1], linear[2]),
                                   angularVelocity: SIMD3(angular[0], angular[1], angular[2]))
     }
 }

@@ -2,7 +2,7 @@
 // physics with collisions in your visionOS app":
 // https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app
 //
-// The forces are Apple's, in world space, through `entity.sdfPhysics.addForce` in place of
+// The forces are Apple's, in world space, through `entity.sdf.addForce` in place of
 // `ModelEntity.addForce`. One difference: the inverse-square law assumes spheres, whose centers
 // stay at least 6 cm apart (the two smallest ones touching). Concave bodies can nearly share a
 // center, where the force would explode, so distances are clamped to those 6 cm. Apple's spheres
@@ -39,7 +39,7 @@ package struct AttractionSystem: System {
                 aggregateForce += forceFactor * (offset / distance) / pow(max(distance, minimumDistance), 2)
             }
 
-            body.sdfPhysics.addForce(aggregateForce, relativeTo: nil)
+            body.sdf.addForce(aggregateForce, relativeTo: nil)
         }
     }
 }

@@ -5,10 +5,10 @@ extension Entity {
     /// `HasPhysicsBody`:
     ///
     /// ```swift
-    /// gear.sdfPhysics.addTorque([0, 5, 0], relativeTo: nil)
-    /// ball.sdfPhysics.applyLinearImpulse([0, 2, 0], relativeTo: nil)
+    /// gear.sdf.addTorque([0, 5, 0], relativeTo: nil)
+    /// ball.sdf.applyLinearImpulse([0, 2, 0], relativeTo: nil)
     /// ```
-    public var sdfPhysics: SDFPhysics { SDFPhysics(entity: self) }
+    public var sdf: SDFPhysics { SDFPhysics(entity: self) }
 }
 
 /// The forces and impulses of an entity's SDF body. Vectors and points are in the space of
@@ -22,10 +22,10 @@ extension Entity {
 public struct SDFPhysics {
     public let entity: Entity
 
-    /// The simulation of the nearest ancestor with an `SDFSimulationComponent`, and that ancestor
+    /// The simulation of the nearest ancestor with an `SDFPhysicsSimulationComponent`, and that ancestor
     private var simulation: (SDFSimulation, root: Entity)? {
-        guard let parent = entity.parent, let root = SDFSimulationComponent.nearestSimulationEntity(for: parent),
-              let component = root.components[SDFSimulationComponent.self] else { return nil }
+        guard let parent = entity.parent, let root = SDFPhysicsSimulationComponent.nearestSimulationEntity(for: parent),
+              let component = root.components[SDFPhysicsSimulationComponent.self] else { return nil }
         return (component.simulation, root)
     }
 

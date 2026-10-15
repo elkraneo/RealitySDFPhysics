@@ -32,9 +32,9 @@ public enum Benchmark {
 
     @MainActor
     public static func timeSDF(count: Int, steps: Int = steps, isMultithreaded: Bool,
-                               preset: SDFSimulationComponent.Preset = .paper,
-                               configure: (inout SDFSimulationComponent) -> Void = { _ in }) -> StepTiming {
-        var settings = SDFSimulationComponent(simulation: SDFSimulation(), preset: preset)
+                               preset: SDFPhysicsSimulationComponent.Preset = .paper,
+                               configure: (inout SDFPhysicsSimulationComponent) -> Void = { _ in }) -> StepTiming {
+        var settings = SDFPhysicsSimulationComponent(simulation: SDFSimulation(), preset: preset)
         settings.isMultithreaded = isMultithreaded
         configure(&settings)
         let (root, tori) = TorusPile.makeSDF(count: count, settings: settings)
@@ -52,8 +52,8 @@ public enum Benchmark {
     /// Mean milliseconds per step of each phase, with the real-time preset without sleeping
     @MainActor
     public static func phases(count: Int, steps: Int = steps, isMultithreaded: Bool,
-                              configure: (inout SDFSimulationComponent) -> Void = { _ in }) -> Phases {
-        var settings = SDFSimulationComponent(simulation: SDFSimulation())
+                              configure: (inout SDFPhysicsSimulationComponent) -> Void = { _ in }) -> Phases {
+        var settings = SDFPhysicsSimulationComponent(simulation: SDFSimulation())
         settings.isSleepingEnabled = false
         settings.isMultithreaded = isMultithreaded
         configure(&settings)

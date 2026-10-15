@@ -11,14 +11,14 @@ import simd
     let simulation = SDFSimulation()
 
     init() {
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
     }
 
     func addBody(_ shape: SDFShape = .sphere(radius: 0.25), mode: PhysicsBodyMode = .dynamic, at position: SIMD3<Float>,
-                 configure: (inout SDFBodyComponent) -> Void = { _ in }) -> Entity {
+                 configure: (inout SDFPhysicsBodyComponent) -> Void = { _ in }) -> Entity {
         let entity = Entity()
         entity.position = position
-        var body = SDFBodyComponent(shape: shape, mode: mode)
+        var body = SDFPhysicsBodyComponent(shape: shape, mode: mode)
         configure(&body)
         entity.components.set(body)
         root.addChild(entity)
@@ -30,7 +30,7 @@ import simd
             $0.isAffectedByGravity = false
             $0.linearDamping = 0
         }
-        ball.components.set(SDFMotionComponent())
+        ball.components.set(SDFPhysicsMotionComponent())
         simulation.step(root: root)
         return ball
     }
@@ -38,13 +38,13 @@ import simd
     @Test func forcesFromWillSimulateActOncePerStep() {
         let ball = floatingBall()
         let mass = simulation.mass(of: ball)!
-        let subscription = simulation.subscribe(to: SDFSimulationEvents.WillSimulate.self) { _ in
-            ball.sdfPhysics.addForce([mass * 60, 0, 0], relativeTo: nil) // 1 unit/s per step
+        let subscription = simulation.subscribe(to: SDFPhysicsSimulationEvents.WillSimulate.self) { _ in
+            ball.sdf.addForce([mass * 60, 0, 0], relativeTo: nil) // 1 unit/s per step
         }
         withExtendedLifetime(subscription) {
             simulation.update(root: root, deltaTime: 2.0 / 60 + 1e-6) // Two steps in one update
         }
-        let velocity = ball.components[SDFMotionComponent.self]!.linearVelocity.x
+        let velocity = ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.x
         #expect(abs(velocity - 2) < 0.01, "velocity \(velocity)")
     }
 
@@ -52,25 +52,25 @@ import simd
         let ball = floatingBall()
         let mass = simulation.mass(of: ball)!
         var added = false
-        let subscription = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { _ in
-            if !added { ball.sdfPhysics.addForce([mass * 60, 0, 0], relativeTo: nil) }
+        let subscription = simulation.subscribe(to: SDFPhysicsSimulationEvents.DidSimulate.self) { _ in
+            if !added { ball.sdf.addForce([mass * 60, 0, 0], relativeTo: nil) }
             added = true
         }
         withExtendedLifetime(subscription) {
             simulation.step(root: root) // Adds the force after this step
-            #expect(ball.components[SDFMotionComponent.self]!.linearVelocity.x == 0)
+            #expect(ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.x == 0)
             simulation.step(root: root)
         }
-        #expect(abs(ball.components[SDFMotionComponent.self]!.linearVelocity.x - 1) < 0.01)
+        #expect(abs(ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.x - 1) < 0.01)
     }
 
     @Test func clearingForcesKeepsImpulses() {
         let ball = addBody(at: [0, 2, 0]) { $0.isAffectedByGravity = false }
-        ball.components.set(SDFMotionComponent())
-        ball.sdfPhysics.applyLinearImpulse([0, 0, 1], relativeTo: nil)
-        ball.sdfPhysics.clearForcesAndTorques()
+        ball.components.set(SDFPhysicsMotionComponent())
+        ball.sdf.applyLinearImpulse([0, 0, 1], relativeTo: nil)
+        ball.sdf.clearForcesAndTorques()
         simulation.step(root: root)
-        #expect(ball.components[SDFMotionComponent.self]!.linearVelocity.z > 0)
+        #expect(ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.z > 0)
     }
 
     @Test func fastBodiesThroughTriggersReportBothEvents() {
@@ -78,7 +78,7 @@ import simd
         // 2.8625, and only the third is within the contact margin of the trigger.
         let trigger = addBody(.box(halfExtents: [1, 0.02, 1]), mode: .static, at: [0, 3, 0]) { $0.isTrigger = true }
         let ball = addBody(.sphere(radius: 0.05), at: [0, 3.2375, 0]) { $0.isAffectedByGravity = false }
-        ball.components.set(SDFMotionComponent(linearVelocity: [0, -30, 0]))
+        ball.components.set(SDFPhysicsMotionComponent(linearVelocity: [0, -30, 0]))
         var events: [String] = []
         let subscriptions = [
             simulation.subscribe(to: SDFCollisionEvents.Began.self, on: trigger) { _ in events.append("began") },
@@ -114,7 +114,7 @@ import simd
         do {
             let token = Token()
             weakToken = token
-            subscription = simulation.subscribe(to: SDFSimulationEvents.DidSimulate.self) { _ in _ = token }
+            subscription = simulation.subscribe(to: SDFPhysicsSimulationEvents.DidSimulate.self) { _ in _ = token }
         }
         subscription?.cancel()
         simulation.step(root: root)
@@ -136,20 +136,20 @@ import simd
             let world = Entity(), root = Entity(), simulation = SDFSimulation()
             world.addChild(root)
             root.scale = SIMD3(repeating: rootScale)
-            root.components.set(SDFSimulationComponent(simulation: simulation))
+            root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
             let ball = Entity()
             ball.position = [0, 2, 0]
-            var body = SDFBodyComponent(shape: .sphere(radius: 0.5), massProperties: .init(mass: 1))
+            var body = SDFPhysicsBodyComponent(shape: .sphere(radius: 0.5), massProperties: .init(mass: 1))
             body.isAffectedByGravity = false
             ball.components.set(body)
-            ball.components.set(SDFMotionComponent())
+            ball.components.set(SDFPhysicsMotionComponent())
             root.addChild(ball)
             simulation.step(root: root)
             // A world space impulse: the ball is 10 times larger in world units at full scale
             let worldScale = pow(rootScale, 2) // Inertia of a fixed mass grows with the square of size
-            ball.sdfPhysics.applyAngularImpulse([0, worldScale, 0], relativeTo: nil)
+            ball.sdf.applyAngularImpulse([0, worldScale, 0], relativeTo: nil)
             simulation.step(root: root)
-            return ball.components[SDFMotionComponent.self]!.angularVelocity.y
+            return ball.components[SDFPhysicsMotionComponent.self]!.angularVelocity.y
         }
         let full = spin(rootScale: 1), tenth = spin(rootScale: 0.1)
         #expect(abs(full - tenth) < 1e-3 * abs(full), "full \(full), tenth \(tenth)")
@@ -160,32 +160,32 @@ import simd
         let ball = floatingBall()
         let mass = simulation.mass(of: ball)!
         for _ in 0..<120 {
-            ball.sdfPhysics.addForce([mass, 0, 0], relativeTo: nil) // 1 unit/s²
+            ball.sdf.addForce([mass, 0, 0], relativeTo: nil) // 1 unit/s²
             simulation.update(root: root, deltaTime: 1.0 / 120)
         }
-        let velocity = ball.components[SDFMotionComponent.self]!.linearVelocity.x
+        let velocity = ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.x
         #expect(abs(velocity - 1) < 0.05, "velocity \(velocity)")
     }
 
     @Test func forcesDoNotPileUpWhilePaused() {
         let ball = floatingBall()
         let mass = simulation.mass(of: ball)!
-        root.components[SDFSimulationComponent.self]!.isPaused = true
+        root.components[SDFPhysicsSimulationComponent.self]!.isPaused = true
         for _ in 0..<100 {
-            ball.sdfPhysics.addForce([mass * 60, 0, 0], relativeTo: nil)
+            ball.sdf.addForce([mass * 60, 0, 0], relativeTo: nil)
             simulation.update(root: root, deltaTime: 1.0 / 60)
         }
         simulation.step(root: root) // One step of the latest frame's force: 1 unit/s
-        let velocity = ball.components[SDFMotionComponent.self]!.linearVelocity.x
+        let velocity = ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.x
         #expect(abs(velocity - 1) < 0.01, "velocity \(velocity)")
     }
 
     @Test func aZeroTimeStepPausesUntilFixed() {
         let ball = addBody(at: [0, 2, 0])
-        root.components[SDFSimulationComponent.self]!.timeStep = 0
+        root.components[SDFPhysicsSimulationComponent.self]!.timeStep = 0
         for _ in 0..<10 { simulation.update(root: root, deltaTime: 1.0 / 60) }
         #expect(simulation.stepCount == 0)
-        root.components[SDFSimulationComponent.self]!.timeStep = 1.0 / 60
+        root.components[SDFPhysicsSimulationComponent.self]!.timeStep = 1.0 / 60
         for _ in 0..<10 { simulation.update(root: root, deltaTime: 1.0 / 60) }
         #expect(simulation.stepCount > 5)
         #expect(ball.position.y < 2)

@@ -32,7 +32,7 @@ import simd
 
     @Test func aBodyRestsOnARealityKitFloor() async throws {
         let root = Entity(), simulation = SDFSimulation()
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
         let floor = Entity()
         floor.position = [0, -0.05, 0]
         floor.components.set(CollisionComponent(shapes: [.generateBox(size: [10, 0.1, 10])]))
@@ -45,7 +45,7 @@ import simd
 
         let box = Entity()
         box.position = [0, 1, 0]
-        box.components.set(SDFBodyComponent(shape: .box(halfExtents: [0.5, 0.5, 0.5])))
+        box.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [0.5, 0.5, 0.5])))
         root.addChild(box)
         for _ in 0..<120 { simulation.step(root: root) }
         #expect(box.position.y > 0.5 && box.position.y < 0.54, "rests at \(box.position.y)")
@@ -67,7 +67,7 @@ import simd
 
     @Test func aScaleThatIsNotUniformGoesIntoTheShapes() async throws {
         let root = Entity(), simulation = SDFSimulation()
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
         let floor = Entity()
         floor.transform = Transform(scale: [10, 0.1, 10], translation: [0, -0.05, 0])
         floor.components.set(CollisionComponent(shapes: [.generateBox(size: [1, 1, 1])]))
@@ -77,7 +77,7 @@ import simd
 
         let box = Entity()
         box.position = [4, 1, 0]
-        box.components.set(SDFBodyComponent(shape: .box(halfExtents: [0.5, 0.5, 0.5])))
+        box.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [0.5, 0.5, 0.5])))
         root.addChild(box)
         for _ in 0..<120 { simulation.step(root: root) }
         #expect(box.position.y > 0.5 && box.position.y < 0.54, "rests at \(box.position.y)")
@@ -91,7 +91,7 @@ import simd
         entity.addChild(other)
 
         let colliders = try await entity.addSDFColliders()
-        #expect(colliders[0].components[SDFBodyComponent.self]?.isTrigger == true)
+        #expect(colliders[0].components[SDFPhysicsBodyComponent.self]?.isTrigger == true)
         #expect(entity.children.count == 2)
 
         // Without collision shapes, the bodies go, and children it didn't add stay

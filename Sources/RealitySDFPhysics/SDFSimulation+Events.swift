@@ -55,11 +55,11 @@ public enum SDFCollisionEvents {
 }
 
 /// Events around every simulation step. The counterparts of `PhysicsSimulationEvents`.
-public enum SDFSimulationEvents {
+public enum SDFPhysicsSimulationEvents {
     /// Sent before a step. Forces added now act during it.
     public struct WillSimulate: SDFSimulationEvent {
         public let deltaTime: TimeInterval
-        /// The entity with the `SDFSimulationComponent`
+        /// The entity with the `SDFPhysicsSimulationComponent`
         public let simulationEntity: Entity
 
         public func involves(_ entity: Entity) -> Bool { simulationEntity == entity }

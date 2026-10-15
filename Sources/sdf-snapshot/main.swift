@@ -43,7 +43,7 @@ do {
         let scene = scenes[index]
         let simulation = SDFSimulation()
         let root = Entity()
-        var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper)
         settings.isMultithreaded = isMultithreaded
         root.components.set(settings)
 

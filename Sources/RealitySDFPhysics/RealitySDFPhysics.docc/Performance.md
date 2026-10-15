@@ -5,7 +5,7 @@ What a step costs, where it runs, and the current limits.
 ## Overview
 
 The simulation steps on the main actor, inside RealityKit's update. With
-``SDFSimulationComponent/isMultithreaded``, collision detection, which takes most of a step, runs
+``SDFPhysicsSimulationComponent/isMultithreaded``, collision detection, which takes most of a step, runs
 on several threads, and so does the contact solver: its contacts are colored so that no two of a
 color share a moving body, and each color is solved at once on the performance cores but one.
 Baking runs in the background.
@@ -20,8 +20,8 @@ single random sequence and solves the contacts in the order of the pairs.
 
 The demo scenes of the paper, rebuilt on this package, on an Apple M1 (4 performance and 4
 efficiency cores) in a release build: 240 steps at 60 steps per second with the paper's settings
-(``SDFSimulationComponent/Preset/paper``: 4 substeps of 20 and 20 iterations). The default
-``SDFSimulationComponent/Preset/realTime`` costs about half as much. Times
+(``SDFPhysicsSimulationComponent/Preset/paper``: 4 substeps of 20 and 20 iterations). The default
+``SDFPhysicsSimulationComponent/Preset/realTime`` costs about half as much. Times
 vary by up to about 20% from run to run on the same machine; run
 `swift run -c release sdf-snapshot out/` to measure yours, and add `--single-threaded` for the
 other column.
@@ -45,12 +45,12 @@ cheap to begin with.
 
 - Use analytical shapes where they fit; they are cheaper to query than baked voxel shapes.
 - Separate bodies that never touch with collision filters, so their pairs are skipped.
-- Lower ``SDFSimulationComponent/substeps`` and the solver iterations for scenes that don't stack.
+- Lower ``SDFPhysicsSimulationComponent/substeps`` and the solver iterations for scenes that don't stack.
 - Bake each mesh once and share the shape.
-- Keep ``SDFSimulationComponent/isSleepingEnabled`` on. In a box of tori, a pile of 400 asleep
+- Keep ``SDFPhysicsSimulationComponent/isSleepingEnabled`` on. In a box of tori, a pile of 400 asleep
   takes 1.7 ms a step on an M1, against about 10 ms awake. While every body is asleep or static,
   the broad phase and the collision detection are skipped.
-- Keep ``SDFSimulationComponent/isMultithreaded`` on. Besides the threads, it lets the broad phase
+- Keep ``SDFPhysicsSimulationComponent/isMultithreaded`` on. Besides the threads, it lets the broad phase
   test bounding spheres after the boxes, which rejects more than half of the pairs of a pile of
   tori before the narrow phase, and it skips the scan of the curvature seeds for a pair of tori
   or capsules, whose seeds cover the whole surface and add nothing over uniform samples. The

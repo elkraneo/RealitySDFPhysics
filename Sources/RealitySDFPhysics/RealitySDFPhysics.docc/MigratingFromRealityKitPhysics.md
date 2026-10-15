@@ -18,34 +18,34 @@ exact analytical shapes; other shapes are baked from their meshes with
 
 | RealityKit | RealitySDFPhysics |
 | --- | --- |
-| `PhysicsSimulationComponent` | ``SDFSimulationComponent`` |
-| `PhysicsBodyComponent` with `CollisionComponent` | ``SDFBodyComponent``, whose ``SDFBodyComponent/shape`` replaces the collision shapes |
+| `PhysicsSimulationComponent` | ``SDFPhysicsSimulationComponent`` |
+| `PhysicsBodyComponent` with `CollisionComponent` | ``SDFPhysicsBodyComponent``, whose ``SDFPhysicsBodyComponent/shape`` replaces the collision shapes |
 | `ShapeResource` | ``SDFShape`` |
-| `PhysicsMaterialResource.generate(staticFriction:dynamicFriction:restitution:)` | ``SDFMaterial/init(staticFriction:dynamicFriction:restitution:)`` |
-| `PhysicsMassProperties` | ``SDFMassProperties`` |
-| `PhysicsMotionComponent` | ``SDFMotionComponent`` |
-| `CollisionComponent.Mode.trigger` | ``SDFBodyComponent/isTrigger`` |
-| `HasPhysicsBody` forces and impulses | ``SDFPhysics``, from `entity.sdfPhysics` |
+| `PhysicsMaterialResource.generate(staticFriction:dynamicFriction:restitution:)` | ``SDFPhysicsMaterial/init(staticFriction:dynamicFriction:restitution:)`` |
+| `PhysicsMassProperties` | ``SDFPhysicsMassProperties`` |
+| `PhysicsMotionComponent` | ``SDFPhysicsMotionComponent`` |
+| `CollisionComponent.Mode.trigger` | ``SDFPhysicsBodyComponent/isTrigger`` |
+| `HasPhysicsBody` forces and impulses | ``SDFPhysics``, from `entity.sdf` |
 | `CollisionEvents` | ``SDFCollisionEvents`` |
-| `PhysicsSimulationEvents` | ``SDFSimulationEvents`` |
+| `PhysicsSimulationEvents` | ``SDFPhysicsSimulationEvents`` |
 | `scene.subscribe(to:on:_:)` | ``SDFSimulation/subscribe(to:on:_:)`` |
 | `scene.raycast(origin:direction:length:query:mask:relativeTo:)` | ``SDFSimulation/raycast(origin:direction:length:query:mask:)`` |
 | `scene.convexCast(...)` | ``SDFSimulation/overlaps(of:at:margin:mask:)`` tests a pose rather than sweeping a path |
 
 ## Step by step
 
-1. Put an ``SDFSimulationComponent`` on the entity that contains the bodies. Move the settings of a
+1. Put an ``SDFPhysicsSimulationComponent`` on the entity that contains the bodies. Move the settings of a
    `PhysicsSimulationComponent`: `gravity`, `solverIterations` and `collisionOptions` keep their
    names and types.
-2. Replace each `PhysicsBodyComponent` and `CollisionComponent` pair with an ``SDFBodyComponent``.
+2. Replace each `PhysicsBodyComponent` and `CollisionComponent` pair with an ``SDFPhysicsBodyComponent``.
    Bake the entity's meshes with ``SDFShape/bake(from:resolution:)``, or use an analytical shape.
    `mode`, `massProperties`, `material`, the translation and rotation locks,
    `isAffectedByGravity`, `linearDamping` and `angularDamping` keep their names. The collision
-   filter moves from `CollisionComponent` to ``SDFBodyComponent/filter``.
+   filter moves from `CollisionComponent` to ``SDFPhysicsBodyComponent/filter``.
 3. Remove the RealityKit components from those entities, so that RealityKit doesn't simulate
    them too.
-4. Replace `PhysicsMotionComponent` with ``SDFMotionComponent``, and calls such as
-   `entity.addForce(_:relativeTo:)` with `entity.sdfPhysics.addForce(_:relativeTo:)`.
+4. Replace `PhysicsMotionComponent` with ``SDFPhysicsMotionComponent``, and calls such as
+   `entity.addForce(_:relativeTo:)` with `entity.sdf.addForce(_:relativeTo:)`.
 5. Subscribe to collision events through the simulation instead of the scene.
 
 ## Differences
@@ -55,14 +55,14 @@ exact analytical shapes; other shapes are baked from their meshes with
   reference entity's space as RealityKit does.
 - **Object size.** RealityKit's physics works for objects of any size in meters. Here the
   collision tolerances suit objects about 1 unit across: model small or large objects at about
-  that size in a scaled root, and set ``SDFSimulationComponent/metersPerUnit``.
+  that size in a scaled root, and set ``SDFPhysicsSimulationComponent/metersPerUnit``.
 - **Defaults.** 60 steps per second of 2 substeps each, 10 velocity and 4 position iterations
-  (``SDFSimulationComponent/Preset/realTime``; ``SDFSimulationComponent/Preset/paper`` has the
+  (``SDFPhysicsSimulationComponent/Preset/realTime``; ``SDFPhysicsSimulationComponent/Preset/paper`` has the
   paper's 4 substeps and 20 and 20 iterations), friction 0.5, no restitution, linear damping 0.05 and angular
   damping 0.3 per second, and the mass of the shape's volume of water.
 - **Material combination.** A contact's friction is the geometric mean of the two bodies'
   coefficients, and its restitution the larger of the two. Contacts approaching slower than
-  ``SDFSimulationComponent/restitutionThreshold`` don't bounce.
+  ``SDFPhysicsSimulationComponent/restitutionThreshold`` don't bounce.
 - **Mass properties.** The center of mass and inertia always come from the shape at a uniform
   density; you set the mass or the density.
 - **Scale.** Bodies scale with their entities, but the scale must be uniform.
@@ -74,6 +74,6 @@ exact analytical shapes; other shapes are baked from their meshes with
 - **Not yet available:** joints, continuous collision detection (fast thin bodies can pass
   through others), sweeps of a shape along a path, and the simulation `clock`.
 - **Sleeping.** Bodies at rest fall asleep and wake when touched, moved or pushed. Turn it off
-  with ``SDFSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``.
+  with ``SDFPhysicsSimulationComponent/isSleepingEnabled``, and ask ``SDFSimulation/isSleeping(_:)``.
   While asleep, a pair in contact keeps reporting `Updated` with the contacts and impulses it had
   when it fell asleep.

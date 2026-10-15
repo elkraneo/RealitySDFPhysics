@@ -12,7 +12,7 @@ import simd
     var axis: SIMD3<Float> { tilt.act([1, 0, 0]) }
 
     init() {
-        var settings = SDFSimulationComponent(simulation: simulation)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation)
         settings.isSleepingEnabled = false
         root.components.set(settings)
     }
@@ -21,7 +21,7 @@ import simd
     func addBody(_ shape: SDFShape, mode: PhysicsBodyMode = .dynamic, at position: SIMD3<Float>) -> Entity {
         let entity = Entity()
         entity.position = position
-        entity.components.set(SDFBodyComponent(shape: shape, mode: mode))
+        entity.components.set(SDFPhysicsBodyComponent(shape: shape, mode: mode))
         root.addChild(entity)
         return entity
     }
@@ -31,13 +31,13 @@ import simd
     }
 
     /// A block on a rail down the tilted axis from a static base, the block's pin at its center
-    func blockOnRail() -> (block: Entity, joint: SDFPrismaticJoint) {
+    func blockOnRail() -> (block: Entity, joint: SDFPhysicsPrismaticJoint) {
         let base = addBody(.box(halfExtents: [0.2, 0.2, 0.2]), mode: .static, at: [0, 2, 0])
         let block = addBody(.box(halfExtents: [0.1, 0.1, 0.1]), at: [0.5, 2, 0])
-        block.components.set(SDFMotionComponent())
+        block.components.set(SDFPhysicsMotionComponent())
         let rail = base.pins.set(named: "rail", position: [0.5, 0, 0], orientation: tilt)
         let slide = block.pins.set(named: "slide", orientation: tilt)
-        return (block, SDFPrismaticJoint(pin0: rail, pin1: slide))
+        return (block, SDFPhysicsPrismaticJoint(pin0: rail, pin1: slide))
     }
 
     /// How far the block has turned, in radians
@@ -55,7 +55,7 @@ import simd
         run(2)
         #expect(simulation.translation(of: slider) != nil)
         // A hinge on the same pins is not in the simulation
-        #expect(simulation.angle(of: SDFRevoluteJoint(pin0: slider.pin0, pin1: slider.pin1)) == nil)
+        #expect(simulation.angle(of: SDFPhysicsRevoluteJoint(pin0: slider.pin0, pin1: slider.pin1)) == nil)
     }
 
     @Test func slidesDownToItsLimit() throws {
@@ -77,17 +77,17 @@ import simd
     @Test func motorReachesItsSpeed() throws {
         var (block, joint) = blockOnRail()
         // Up the rail, against gravity
-        joint.motor = SDFPrismaticJoint.Motor(targetVelocity: -0.5, maxForce: 1000)
+        joint.motor = SDFPhysicsPrismaticJoint.Motor(targetVelocity: -0.5, maxForce: 1000)
         try joint.addToSimulation()
         run(60)
-        let speed = simd_dot(block.components[SDFMotionComponent.self]!.linearVelocity, axis)
+        let speed = simd_dot(block.components[SDFPhysicsMotionComponent.self]!.linearVelocity, axis)
         #expect(abs(speed + 0.5) < 0.025, "slides at \(speed)")
         #expect(turn(block) < 0.01, "turned \(turn(block))")
     }
 
     @Test func springHoldsItsTarget() throws {
         var (block, joint) = blockOnRail()
-        joint.spring = SDFPrismaticJoint.Spring(targetPosition: 0.5, hertz: 5, dampingRatio: 1)
+        joint.spring = SDFPhysicsPrismaticJoint.Spring(targetPosition: 0.5, hertz: 5, dampingRatio: 1)
         try joint.addToSimulation()
         run(180)
         let translation = try #require(simulation.translation(of: joint))
@@ -100,7 +100,7 @@ import simd
         try joint.addToSimulation()
         var worstTurn: Float = 0
         for _ in 0..<120 {
-            block.sdfPhysics.addTorque([0.05, 0.05, 0.05], relativeTo: nil)
+            block.sdf.addTorque([0.05, 0.05, 0.05], relativeTo: nil)
             run(1)
             worstTurn = max(worstTurn, turn(block))
         }
@@ -116,7 +116,7 @@ import simd
         // The same joint with a shorter rail: the block is pushed back to it
         var shorter = joint
         shorter.linearLimit = 0...0.3
-        simulationRoot.components.set(SDFJointsComponent(joints: [.prismatic(shorter)]))
+        simulationRoot.components.set(SDFPhysicsJointsComponent(joints: [.prismatic(shorter)]))
         run(120)
         let translation = try #require(simulation.translation(of: shorter))
         #expect(abs(translation - 0.3) < 0.01, "stopped at \(translation)")
@@ -128,10 +128,10 @@ import simd
         try slider.addToSimulation()
         // A pendulum hanging from the block: the hinge rides the slider
         let bob = addBody(.box(halfExtents: [0.05, 0.3, 0.05]), at: [0.5, 1.6, 0])
-        let hinge = SDFRevoluteJoint(pin0: block.pins.set(named: "hook", position: [0, -0.1, 0]),
+        let hinge = SDFPhysicsRevoluteJoint(pin0: block.pins.set(named: "hook", position: [0, -0.1, 0]),
                                      pin1: bob.pins.set(named: "top", position: [0, 0.3, 0]))
         try hinge.addToSimulation()
-        #expect(root.components[SDFJointsComponent.self]?.joints.count == 2)
+        #expect(root.components[SDFPhysicsJointsComponent.self]?.joints.count == 2)
         run(120)
         let gap = simd_distance(hinge.pin0.position(relativeTo: root)!, hinge.pin1.position(relativeTo: root)!)
         #expect(gap < 0.02, "hinge pins \(gap) apart")

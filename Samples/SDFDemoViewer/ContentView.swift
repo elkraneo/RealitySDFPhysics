@@ -81,7 +81,7 @@ private struct Sidebar: View {
 }
 
 private struct ParametersSection: View {
-    @Binding var settings: SDFSimulationComponent
+    @Binding var settings: SDFPhysicsSimulationComponent
     let reset: () -> Void
 
     private var parameters: Binding<SDFCollisionDetection> { $settings.collisionDetection }

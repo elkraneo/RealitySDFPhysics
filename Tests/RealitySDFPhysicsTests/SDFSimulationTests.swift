@@ -9,7 +9,7 @@ import simd
     let simulation = SDFSimulation()
 
     init() {
-        root.components.set(SDFSimulationComponent(simulation: simulation))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
         // Ground with its top face at y = 0
         addBody(.box(halfExtents: [5, 0.5, 5]), mode: .static, at: [0, -0.5, 0])
     }
@@ -19,7 +19,7 @@ import simd
                  parent: Entity? = nil) -> Entity {
         let entity = Entity()
         entity.position = position
-        entity.components.set(SDFBodyComponent(shape: shape, mode: mode))
+        entity.components.set(SDFPhysicsBodyComponent(shape: shape, mode: mode))
         (parent ?? root).addChild(entity)
         return entity
     }
@@ -116,13 +116,13 @@ import simd
     @Test func kinematicPlatformCarriesABody() {
         let platform = addBody(.box(halfExtents: [1, 0.1, 1]), mode: .kinematic, at: [0, 1, 0])
         let box = addBody(.box(halfExtents: [0.25, 0.25, 0.25]), at: [0, 1.4, 0])
-        box.components.set(SDFMotionComponent())
+        box.components.set(SDFPhysicsMotionComponent())
         run(60)
         for _ in 0..<60 {
             platform.position.x += 1.0 / 60 // 1 unit per second
             simulation.update(root: root, deltaTime: 1.0 / 60)
         }
-        let velocity = box.components[SDFMotionComponent.self]!.linearVelocity
+        let velocity = box.components[SDFPhysicsMotionComponent.self]!.linearVelocity
         #expect(velocity.x > 0.5, "friction should carry the box, velocity \(velocity)")
         #expect(box.position(relativeTo: root).x > 0.5)
     }
@@ -138,16 +138,16 @@ import simd
 
     @Test func motionComponentSetsVelocity() {
         let ball = addBody(.sphere(radius: 0.5), at: [0, 3, 0])
-        ball.components.set(SDFMotionComponent(linearVelocity: [2, 0, 0]))
+        ball.components.set(SDFPhysicsMotionComponent(linearVelocity: [2, 0, 0]))
         run(30) // Half a second, before landing
         #expect(abs(ball.position.x - 1) < 0.05)
-        #expect(abs(ball.components[SDFMotionComponent.self]!.linearVelocity.x - 2) < 0.05)
+        #expect(abs(ball.components[SDFPhysicsMotionComponent.self]!.linearVelocity.x - 2) < 0.05)
     }
 
     @Test func changingTheShapeRecreatesTheBody() {
         let body = addBody(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 0.52, 0])
         run(30)
-        body.components[SDFBodyComponent.self]!.shape = .box(halfExtents: [1, 1, 1])
+        body.components[SDFPhysicsBodyComponent.self]!.shape = .box(halfExtents: [1, 1, 1])
         run(180)
         expectResting(body, atHeight: 1)
         #expect(simulation.statistics.bodies == 2)
@@ -157,17 +157,17 @@ import simd
         let box = addBody(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 2, 0])
         run(1)
         #expect(abs(simulation.mass(of: box)! - 1000) < 30) // Integrated over a voxelization
-        box.components[SDFBodyComponent.self]!.massProperties = .init(mass: 5)
+        box.components[SDFPhysicsBodyComponent.self]!.massProperties = .init(mass: 5)
         run(1)
         #expect(simulation.mass(of: box) == 5)
     }
 
     @Test func presetsSetSubstepsAndIterations() {
-        let realTime = SDFSimulationComponent()
+        let realTime = SDFPhysicsSimulationComponent()
         #expect(realTime.substeps == 2)
         #expect(realTime.solverIterations.velocityIterations == 10)
         #expect(realTime.solverIterations.positionIterations == 4)
-        let paper = SDFSimulationComponent(preset: .paper)
+        let paper = SDFPhysicsSimulationComponent(preset: .paper)
         #expect(paper.substeps == 4)
         #expect(paper.solverIterations.velocityIterations == 20)
         #expect(paper.solverIterations.positionIterations == 20)
@@ -177,18 +177,18 @@ import simd
     func simulationIsDeterministic(isMultithreaded: Bool) {
         func pile() -> [SIMD3<Float>] {
             let root = Entity(), simulation = SDFSimulation()
-            var settings = SDFSimulationComponent(simulation: simulation)
+            var settings = SDFPhysicsSimulationComponent(simulation: simulation)
             settings.isMultithreaded = isMultithreaded
             root.components.set(settings)
             let ground = Entity()
             ground.position = [0, -0.5, 0]
-            ground.components.set(SDFBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
+            ground.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
             root.addChild(ground)
             let bodies = (0..<6).map { i in
                 let entity = Entity()
                 entity.position = [Float(i % 2) * 0.3, 1 + Float(i) * 1.1, 0]
                 entity.orientation = simd_quatf(angle: Float(i), axis: normalize([1, 1, 0]))
-                entity.components.set(SDFBodyComponent(shape: .torus(majorRadius: 0.5, minorRadius: 0.2)))
+                entity.components.set(SDFPhysicsBodyComponent(shape: .torus(majorRadius: 0.5, minorRadius: 0.2)))
                 root.addChild(entity)
                 return entity
             }

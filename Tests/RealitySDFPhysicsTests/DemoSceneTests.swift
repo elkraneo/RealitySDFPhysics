@@ -12,9 +12,9 @@ import Testing
     @Test(arguments: DemoScene.all + MechanicsScenes.all) func sceneSettles(_ scene: DemoScene) async throws {
         let simulation = SDFSimulation()
         let root = Entity()
-        root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper))
         try await scene.load(into: root)
-        let dynamic = root.children.filter { $0.components[SDFBodyComponent.self]?.mode == .dynamic }
+        let dynamic = root.children.filter { $0.components[SDFPhysicsBodyComponent.self]?.mode == .dynamic }
 
         // Four seconds: every scene has landed and is in contact by then. Contacts are those of
         // the last substep, and a pair of gears has none between two teeth, so the last second's

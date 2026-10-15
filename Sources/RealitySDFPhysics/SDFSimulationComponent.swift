@@ -1,7 +1,7 @@
 import RealityKit
 internal import SDFCore
 
-/// Runs an SDF rigid body simulation for the entity's descendants that have an `SDFBodyComponent`,
+/// Runs an SDF rigid body simulation for the entity's descendants that have an `SDFPhysicsBodyComponent`,
 /// in the entity's local frame. The counterpart of `PhysicsSimulationComponent`.
 ///
 /// Everything happens in the root's local frame and units: scale the root to scale the whole
@@ -10,13 +10,13 @@ internal import SDFCore
 /// The collision tolerances suit objects about 1 unit across, so model your objects at about that
 /// size and scale the root to show them at theirs; then say how long a unit is with
 /// `metersPerUnit`, for the physical constants.
-public struct SDFSimulationComponent: Component {
+public struct SDFPhysicsSimulationComponent: Component {
     /// The simulation's state: its bodies, statistics, contacts, queries and events
     public let simulation: SDFSimulation
 
     /// The length of a unit of the root, in meters. It sets the defaults that are physical rather
     /// than relative to the objects' size: gravity, the restitution threshold, the density of
-    /// `SDFMassProperties.default`, and, without gravity, the force of `SDFSimulation.drag(to:)`. For
+    /// `SDFPhysicsMassProperties.default`, and, without gravity, the force of `SDFSimulation.drag(to:)`. For
     /// dice modeled in centimeters, in a root scaled to 0.01, it is 0.01.
     public let metersPerUnit: Float
 
@@ -115,12 +115,12 @@ public struct SDFSimulationComponent: Component {
         isMultithreaded = true
     }
 
-    /// The nearest ancestor of an entity, or the entity itself, that has an `SDFSimulationComponent`
+    /// The nearest ancestor of an entity, or the entity itself, that has an `SDFPhysicsSimulationComponent`
     @MainActor
     public static func nearestSimulationEntity(for entity: Entity) -> Entity? {
         var current: Entity? = entity
         while let candidate = current {
-            if candidate.components.has(SDFSimulationComponent.self) { return candidate }
+            if candidate.components.has(SDFPhysicsSimulationComponent.self) { return candidate }
             current = candidate.parent
         }
         return nil
@@ -232,22 +232,22 @@ public struct SDFCollisionDetection: Equatable, Sendable {
 
 /// Registers the components on first use. The system is registered with the first simulation.
 let registration: Void = {
-    SDFBodyComponent.registerComponent()
-    SDFMotionComponent.registerComponent()
-    SDFSimulationComponent.registerComponent()
-    SDFJointsComponent.registerComponent()
+    SDFPhysicsBodyComponent.registerComponent()
+    SDFPhysicsMotionComponent.registerComponent()
+    SDFPhysicsSimulationComponent.registerComponent()
+    SDFPhysicsJointsComponent.registerComponent()
 }()
 
 /// Advances every simulation in the scene with the frame time. Order your own systems after it with
 /// `.after(SDFSimulationSystem.self)` to see the poses of the current frame.
 public struct SDFSimulationSystem: System {
-    private static let query = EntityQuery(where: .has(SDFSimulationComponent.self))
+    private static let query = EntityQuery(where: .has(SDFPhysicsSimulationComponent.self))
 
     public init(scene: RealityKit.Scene) {}
 
     public mutating func update(context: SceneUpdateContext) {
         for root in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
-            root.components[SDFSimulationComponent.self]?.simulation.update(root: root, deltaTime: context.deltaTime)
+            root.components[SDFPhysicsSimulationComponent.self]?.simulation.update(root: root, deltaTime: context.deltaTime)
         }
     }
 }

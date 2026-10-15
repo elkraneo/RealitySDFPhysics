@@ -45,13 +45,13 @@ import simd
         func drop(_ shape: SDFShape) -> Transform {
             let root = Entity()
             let simulation = SDFSimulation()
-            root.components.set(SDFSimulationComponent(simulation: simulation))
+            root.components.set(SDFPhysicsSimulationComponent(simulation: simulation))
             let ground = Entity()
             ground.position = [0, -2, 0]
-            ground.components.set(SDFBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
+            ground.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
             let body = Entity()
             body.orientation = simd_quatf(angle: 0.4, axis: normalize([1, 0, 1]))
-            body.components.set(SDFBodyComponent(shape: shape))
+            body.components.set(SDFPhysicsBodyComponent(shape: shape))
             root.addChild(ground)
             root.addChild(body)
             for _ in 0..<120 { simulation.step(root: root) }

@@ -13,7 +13,7 @@ import simd
     let simulation = SDFSimulation()
 
     init() {
-        var settings = SDFSimulationComponent(simulation: simulation)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation)
         settings.isSleepingEnabled = false
         root.components.set(settings)
     }
@@ -22,7 +22,7 @@ import simd
         let box = Entity()
         box.name = name
         box.position = position
-        box.components.set(SDFBodyComponent(shape: .box(halfExtents: halfExtents), mode: mode))
+        box.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: halfExtents), mode: mode))
         root.addChild(box)
         return box
     }
@@ -78,7 +78,7 @@ import simd
     }
 
     /// The gears of SDFGearTests: 20 and 10 teeth of module 0.1 on hinges to a static base
-    func addGears(driverMotor: SDFRevoluteJoint.Motor?) throws -> (driver: Entity, driven: Entity) {
+    func addGears(driverMotor: SDFPhysicsRevoluteJoint.Motor?) throws -> (driver: Entity, driven: Entity) {
         let base = addBox("base", halfExtents: [1, 0.1, 1], at: [0, -5, 0], mode: .static)
         let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
         var gears: [Entity] = []
@@ -87,14 +87,14 @@ import simd
             gear.name = name
             gear.position = [x, 0, 0]
             gear.orientation = simd_quatf(angle: turn, axis: [0, 1, 0])
-            var body = SDFBodyComponent(shape: try GearMesh.shape(teeth: teeth, module: 0.1, thickness: 0.4))
-            body.material = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+            var body = SDFPhysicsBodyComponent(shape: try GearMesh.shape(teeth: teeth, module: 0.1, thickness: 0.4))
+            body.material = SDFPhysicsMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
             gear.components.set(body)
-            gear.components.set(SDFMotionComponent())
+            gear.components.set(SDFPhysicsMotionComponent())
             root.addChild(gear)
             base.pins.set(named: name, position: gear.position, orientation: axle)
             gear.pins.set(named: "hub", orientation: gear.orientation.inverse * axle)
-            var joint = SDFRevoluteJoint(pin0: base.pins[name]!, pin1: gear.pins["hub"]!)
+            var joint = SDFPhysicsRevoluteJoint(pin0: base.pins[name]!, pin1: gear.pins["hub"]!)
             if name == "driver" { joint.motor = driverMotor }
             try joint.addToSimulation()
             gears.append(gear)
@@ -149,7 +149,7 @@ import simd
     }
 
     @Test func chainLinkPulledAwayKeepsItsPins() async throws {
-        root.components[SDFSimulationComponent.self]!.isSleepingEnabled = false
+        root.components[SDFPhysicsSimulationComponent.self]!.isSleepingEnabled = false
         try await MechanicsScenes.all.first { $0.name == "Chain" }!.load(into: root)
         for _ in 0..<60 { simulation.step(root: root) }
         let links = root.children.filter { $0.name.hasPrefix("link") }
@@ -158,7 +158,7 @@ import simd
         let start = link.position
         #expect(simulation.beginDrag(link, at: start))
         simulation.drag(to: start + [0, -1.5, 0])
-        let joints = root.components[SDFJointsComponent.self]!.joints
+        let joints = root.components[SDFPhysicsJointsComponent.self]!.joints
         var worst: Float = 0
         for _ in 0..<120 {
             simulation.step(root: root)

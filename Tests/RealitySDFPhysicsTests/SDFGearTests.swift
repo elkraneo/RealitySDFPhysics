@@ -15,7 +15,7 @@ import simd
     let friction: Float = 0.1
 
     init() {
-        var settings = SDFSimulationComponent(simulation: simulation)
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation)
         settings.isSleepingEnabled = false
         root.components.set(settings)
     }
@@ -26,11 +26,11 @@ import simd
         gear.name = name
         gear.position = position
         gear.orientation = simd_quatf(angle: angle, axis: [0, 1, 0])
-        var body = SDFBodyComponent(shape: try GearMesh.shape(teeth: teeth, module: module, thickness: thickness))
+        var body = SDFPhysicsBodyComponent(shape: try GearMesh.shape(teeth: teeth, module: module, thickness: thickness))
         // Steel on steel, oiled: the default 0.5 is a friction cone wider than the pressure angle
-        body.material = SDFMaterial(staticFriction: friction, dynamicFriction: friction, restitution: 0)
+        body.material = SDFPhysicsMaterial(staticFriction: friction, dynamicFriction: friction, restitution: 0)
         gear.components.set(body)
-        gear.components.set(SDFMotionComponent())
+        gear.components.set(SDFPhysicsMotionComponent())
         root.addChild(gear)
         let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
         base.pins.set(named: name, position: position, orientation: axle)
@@ -53,21 +53,21 @@ import simd
         let clearance: Float = 0.08
         let base = Entity()
         base.position = [0, -5, 0]
-        base.components.set(SDFBodyComponent(shape: .box(halfExtents: [1, 0.1, 1]), mode: .static))
+        base.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [1, 0.1, 1]), mode: .static))
         root.addChild(base)
         // Pitch circles touching: radii 1 and 0.5; the small gear turned by half a tooth to mesh
         let driver = try addGear(teeth: 20, at: [0, 0, 0], turned: 0, base: base, name: "driver")
         let driven = try addGear(teeth: 10, at: [1.5 + clearance, 0, 0], turned: .pi / 10, base: base, name: "driven")
-        var motored = SDFRevoluteJoint(pin0: base.pins["driver"]!, pin1: driver.pins["hub"]!)
-        motored.motor = SDFRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 500)
+        var motored = SDFPhysicsRevoluteJoint(pin0: base.pins["driver"]!, pin1: driver.pins["hub"]!)
+        motored.motor = SDFPhysicsRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 500)
         try motored.addToSimulation()
-        try SDFRevoluteJoint(pin0: base.pins["driven"]!, pin1: driven.pins["hub"]!).addToSimulation()
+        try SDFPhysicsRevoluteJoint(pin0: base.pins["driven"]!, pin1: driven.pins["hub"]!).addToSimulation()
 
         var speeds: [Float] = [], driverSpeeds: [Float] = [], contacts = 0
         for step in 0..<300 {
             simulation.step(root: root)
-            speeds.append(driven.components[SDFMotionComponent.self]!.angularVelocity.y)
-            driverSpeeds.append(driver.components[SDFMotionComponent.self]!.angularVelocity.y)
+            speeds.append(driven.components[SDFPhysicsMotionComponent.self]!.angularVelocity.y)
+            driverSpeeds.append(driver.components[SDFPhysicsMotionComponent.self]!.angularVelocity.y)
             if step >= 240 { contacts += simulation.statistics.contacts }
         }
         let settled = speeds.suffix(120), driverSettled = driverSpeeds.suffix(120)

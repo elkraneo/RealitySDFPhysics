@@ -14,7 +14,7 @@ import CoreMedia
 import CoreText
 import Metal
 import RealityKit
-import RealityKitSampleScenes
+import SDFRealityKitSampleScenes
 import RealitySDFPhysics
 import SDFDemoScenes
 import SDFMechanicsScenes
@@ -122,7 +122,7 @@ func renderDemos(_ recorder: Recorder, mechanics: Bool = false) async throws {
         let scene = scenes[item.scene]
         let simulation = SDFSimulation()
         let root = Entity()
-        root.components.set(SDFSimulationComponent(simulation: simulation, preset: .paper))
+        root.components.set(SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper))
         try await scene.load(into: root)
         if item.contacts { root.addChild(ContactMarkers.makeEntity()) }
         // The Absolut scene's hung objects light up over the plato
@@ -174,7 +174,7 @@ func renderTori(_ recorder: Recorder) async throws {
     let scene = PhysicsBodiesScene()
     scene.reset(shape: .tori)
     let renderer = try makeRenderer(for: scene.content)
-    let timeStep = TimeInterval(SDFSimulationComponent().timeStep)
+    let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
     for _ in 0..<Int(9 * Double(framesPerSecond)) {
         try await recorder.render(renderer, deltaTime: timeStep)
         let stats = scene.simulation.statistics
@@ -192,7 +192,7 @@ func renderDice(_ recorder: Recorder) async throws {
     let scene = DiceScene()
     try await scene.load()
     let renderer = try makeRenderer(for: scene.content)
-    let timeStep = TimeInterval(SDFSimulationComponent().timeStep)
+    let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
     func describe(_ rolls: [DiceScene.Roll]) -> String {
         rolls.map { "\($0.kind.label) \($0.value)" }.joined(separator: " · ") + " = \(rolls.map(\.value).reduce(0, +))"
     }
@@ -297,14 +297,14 @@ func renderComparison(_ recorder: Recorder) async throws {
     right.position = [0.45, 0, 0]
     right.scale = SIMD3(repeating: 0.1)
     let simulation = SDFSimulation()
-    right.components.set(SDFSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
+    right.components.set(SDFPhysicsSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
     let sdfGround = Entity()
     sdfGround.position = [0, -5, 0]
-    sdfGround.components.set(SDFBodyComponent(shape: .box(halfExtents: [20, 5, 20]), mode: .static))
+    sdfGround.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [20, 5, 20]), mode: .static))
     let rightPeg = ModelEntity(mesh: pegMesh, materials: [pegMaterial])
     rightPeg.scale = SIMD3(repeating: 10)
     rightPeg.position = [0, 10 * pegHeight / 2, 0]
-    rightPeg.components.set(SDFBodyComponent(shape: .box(halfExtents: [pegHalfWidth, pegHeight / 2, pegHalfWidth]), mode: .static))
+    rightPeg.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [pegHalfWidth, pegHeight / 2, pegHalfWidth]), mode: .static))
     right.addChild(sdfGround)
     right.addChild(rightPeg)
     right.addChild(ContactMarkers.makeEntity())
@@ -317,7 +317,7 @@ func renderComparison(_ recorder: Recorder) async throws {
         ring.scale = SIMD3(repeating: 10)
         ring.position = 10 * (drop.offset + [0, drop.height, 0])
         ring.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
-        ring.components.set(SDFBodyComponent(shape: torus))
+        ring.components.set(SDFPhysicsBodyComponent(shape: torus))
         right.addChild(ring)
         rightRings.append(ring)
     }
@@ -347,7 +347,7 @@ func renderComparison(_ recorder: Recorder) async throws {
         }.count
     }
 
-    let timeStep = TimeInterval(SDFSimulationComponent().timeStep)
+    let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
     for frame in 1...Int(6 * Double(framesPerSecond)) {
         realityKitContacts = []
         CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(frame), timescale: framesPerSecond))

@@ -68,7 +68,7 @@ final class BenchmarkModel {
         for scene in MechanicsScenes.all {
             await Task.yield()
             let simulation = SDFSimulation(), root = Entity()
-            var settings = SDFSimulationComponent(simulation: simulation)
+            var settings = SDFPhysicsSimulationComponent(simulation: simulation)
             settings.isSleepingEnabled = false
             root.components.set(settings)
             let loadStart = Date()

@@ -31,13 +31,13 @@ public enum TorusPile {
     /// The pile as SDF bodies under a root with the settings. With `motion`, every torus gets a
     /// motion component, so its velocities can be read.
     @MainActor
-    public static func makeSDF(count: Int, settings: SDFSimulationComponent, motion: Bool = false) -> (root: Entity, tori: [Entity]) {
+    public static func makeSDF(count: Int, settings: SDFPhysicsSimulationComponent, motion: Bool = false) -> (root: Entity, tori: [Entity]) {
         let root = Entity()
         root.components.set(settings)
         for wall in walls {
             let entity = Entity()
             entity.position = wall.center
-            entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
+            entity.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
             root.addChild(entity)
         }
         let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
@@ -45,8 +45,8 @@ public enum TorusPile {
         for placement in placements(count) {
             let entity = Entity()
             entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
-            entity.components.set(SDFBodyComponent(shape: torus))
-            if motion { entity.components.set(SDFMotionComponent()) }
+            entity.components.set(SDFPhysicsBodyComponent(shape: torus))
+            if motion { entity.components.set(SDFPhysicsMotionComponent()) }
             root.addChild(entity)
             tori.append(entity)
         }

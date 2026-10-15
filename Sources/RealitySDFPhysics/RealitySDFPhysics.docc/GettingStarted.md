@@ -16,14 +16,14 @@ so your targets don't need C++ interoperability.
 
 ## Create a simulation
 
-A simulation runs for the descendants of an entity with an ``SDFSimulationComponent``, in that
+A simulation runs for the descendants of an entity with an ``SDFPhysicsSimulationComponent``, in that
 entity's local frame. ``SDFSimulationSystem`` steps it every frame; it registers itself when you
 create the first simulation.
 
 ```swift
 RealityView { content in
     let root = Entity()
-    root.components.set(SDFSimulationComponent())
+    root.components.set(SDFPhysicsSimulationComponent())
     content.add(root)
 }
 ```
@@ -35,31 +35,31 @@ its units, and gravity points down its y axis, as with RealityKit's `PhysicsSimu
 
 The collision tolerances suit objects about 1 unit across. For objects of another size, model them
 at about that size in the root, scale the root to show them at theirs, and give the length of a
-unit in ``SDFSimulationComponent/metersPerUnit``. That sets the defaults that are physical rather
+unit in ``SDFPhysicsSimulationComponent/metersPerUnit``. That sets the defaults that are physical rather
 than relative to the objects, such as gravity and the density of water:
 
 ```swift
 // Dice 2 cm across, modeled in centimeters
 let root = Entity()
 root.scale = SIMD3(repeating: 0.01)
-root.components.set(SDFSimulationComponent(metersPerUnit: 0.01)) // Gravity is 981 units/s²
+root.components.set(SDFPhysicsSimulationComponent(metersPerUnit: 0.01)) // Gravity is 981 units/s²
 ```
 
 ## Add bodies
 
-An entity becomes a body of the nearest ancestor simulation when it gets an ``SDFBodyComponent``.
+An entity becomes a body of the nearest ancestor simulation when it gets an ``SDFPhysicsBodyComponent``.
 Every body has a shape, its geometry in the entity's frame:
 
 ```swift
 // A static floor whose top face is at y = 0
 let floor = Entity()
 floor.position = [0, -0.5, 0]
-floor.components.set(SDFBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
+floor.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
 root.addChild(floor)
 
 // A model, its meshes baked into a voxel distance field
 let gear = try await Entity(named: "Gear", in: realityKitContentBundle)
-gear.components.set(SDFBodyComponent(shape: try await .bake(from: gear)))
+gear.components.set(SDFPhysicsBodyComponent(shape: try await .bake(from: gear)))
 gear.position = [0, 2, 0]
 root.addChild(gear)
 ```
@@ -72,7 +72,7 @@ teleports it.
 Configure a body like a `PhysicsBodyComponent`:
 
 ```swift
-var body = SDFBodyComponent(shape: shape, massProperties: .init(mass: 2),
+var body = SDFPhysicsBodyComponent(shape: shape, massProperties: .init(mass: 2),
                             material: .init(staticFriction: 0.8, dynamicFriction: 0.6, restitution: 0.3))
 body.linearDamping = 0.1
 body.isRotationLocked = (x: true, y: false, z: true)
@@ -82,18 +82,18 @@ entity.components.set(body)
 
 ## Push bodies
 
-Read and set velocities with ``SDFMotionComponent``. Apply forces and impulses through
+Read and set velocities with ``SDFPhysicsMotionComponent``. Apply forces and impulses through
 ``SDFPhysics``, which has the methods of RealityKit's `HasPhysicsBody`:
 
 ```swift
-ball.sdfPhysics.applyLinearImpulse([0, 3, 0], relativeTo: nil)
-wheel.sdfPhysics.addTorque([0, 0, -20], relativeTo: wheel)
+ball.sdf.applyLinearImpulse([0, 3, 0], relativeTo: nil)
+wheel.sdf.addTorque([0, 0, -20], relativeTo: wheel)
 ```
 
 A force added from your own code acts during every step of the next simulation update, and is
 then cleared. A force added from a handler of the simulation's events acts during the next step,
 so for a continuous push, add it before every step from a handler of
-``SDFSimulationEvents/WillSimulate``.
+``SDFPhysicsSimulationEvents/WillSimulate``.
 
 ## React to contacts
 
@@ -101,13 +101,13 @@ Subscribe to ``SDFCollisionEvents`` through the simulation, for all bodies or fo
 the returned value for as long as you want the events:
 
 ```swift
-let simulation = root.components[SDFSimulationComponent.self]!.simulation
+let simulation = root.components[SDFPhysicsSimulationComponent.self]!.simulation
 subscription = simulation.subscribe(to: SDFCollisionEvents.Began.self, on: gear) { event in
     playClick(at: event.position, strength: event.impulse)
 }
 ```
 
-Set ``SDFBodyComponent/isTrigger`` on a body to detect what enters it without stopping it.
+Set ``SDFPhysicsBodyComponent/isTrigger`` on a body to detect what enters it without stopping it.
 
 ## Ask whether a shape fits
 

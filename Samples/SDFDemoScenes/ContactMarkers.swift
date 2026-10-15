@@ -43,7 +43,7 @@ struct ContactMarkersSystem: System {
 
     func update(context: SceneUpdateContext) {
         for markers in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
-            guard let simulation = markers.parent?.components[SDFSimulationComponent.self]?.simulation else { continue }
+            guard let simulation = markers.parent?.components[SDFPhysicsSimulationComponent.self]?.simulation else { continue }
             let contacts = simulation.contacts().prefix(2048)
             while markers.children.count < contacts.count {
                 markers.addChild(makeMarker())
