@@ -575,9 +575,9 @@ void SDFWorld::step()
             for (int i = 0; i < 2; i++)
                 j.rowError[i] = dot(tilt, j.row[i]);
             j.angle = jointAngle(joint);
-            // At most a quarter of the substep rate, as Box3D caps it
-            static const float hertzCap = getenv("SDF_JOINT_HERTZ_CAP") ? (float)atof(getenv("SDF_JOINT_HERTZ_CAP")) : 0.25f;
-            makeSoft(min(jointHertz, hertzCap / h), jointDampingRatio, h, j.biasRate, j.massScale, j.impulseScale);
+            // At most half the substep rate. Box3D caps at a quarter with one solve per substep;
+            // swept to convergence the rows take a half, and a hanging chain sags a quarter as much.
+            makeSoft(min(jointHertz, 0.5f / h), jointDampingRatio, h, j.biasRate, j.massScale, j.impulseScale);
             hinges.push_back(j);
         }
 
