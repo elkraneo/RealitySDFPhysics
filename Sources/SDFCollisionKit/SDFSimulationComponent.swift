@@ -16,7 +16,7 @@ public struct SDFSimulationComponent: Component {
 
     /// The length of a unit of the root, in meters. It sets the defaults that are physical rather
     /// than relative to the objects' size: gravity, the restitution threshold, the density of
-    /// `SDFMassProperties.default`, and the limit on the force of `SDFSimulation.drag(to:)`. For
+    /// `SDFMassProperties.default`, and, without gravity, the force of `SDFSimulation.drag(to:)`. For
     /// dice modeled in centimeters, in a root scaled to 0.01, it is 0.01.
     public let metersPerUnit: Float
 
