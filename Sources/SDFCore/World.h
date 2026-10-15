@@ -89,6 +89,7 @@ struct SDFWorld
     bool parallel = false;             // Narrow phase and solver on several threads
     std::unique_ptr<WorkerPool> solverPool; // Created on first use
     float metersPerUnit = 1;           // For the physical constants that upstream gives in meters
+    float jointHertz = 60, jointDampingRatio = 2; // Box3D's defaults
     bool sleeping = false;             // Puts still islands of touching bodies to sleep
     uint32_t nextIsland = 1;
     // The manifolds hold the pairs that overlap at the bodies' poses: nothing has moved, been

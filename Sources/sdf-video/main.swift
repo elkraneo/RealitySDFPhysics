@@ -1,7 +1,7 @@
 // Renders short videos of the demo scenes and the RealityKit samples offscreen, with a HUD stating
 // what runs.
 //
-//   swift run -c release sdf-video <output.mp4> [demos | tori | dice | compare]
+//   swift run -c release sdf-video <output.mp4> [demos | mechanics | tori | dice | compare]
 //
 // Every frame is one simulation step at 60 Hz, so the videos play in real time. `demos` is a reel
 // of the paper's scenes; `tori` and `dice` drive the samples' scenes as the app does, with the
@@ -22,7 +22,7 @@ let width = 1280, height = 720, framesPerSecond: Int32 = 60
 let paperCredit = "Giles & Andrews, Real-Time Collision Handling for SDFs via Caching and Importance Sampling (PG 2026)"
 
 let arguments = CommandLine.arguments.dropFirst()
-guard let output = arguments.first, arguments.count <= 2, ["demos", "tori", "dice", "compare"].contains(arguments.dropFirst().first ?? "demos")
+guard let output = arguments.first, arguments.count <= 2, ["demos", "mechanics", "tori", "dice", "compare"].contains(arguments.dropFirst().first ?? "demos")
 else {
     print("usage: sdf-video <output.mp4> [demos | tori | dice | compare]")
     exit(1)
@@ -101,11 +101,14 @@ final class Recorder {
 
 // MARK: Reels
 
-/// The paper's scenes, each with a slowly orbiting camera
+/// The paper's scenes, each with a slowly orbiting camera; `mechanics` the gears and the chain
 @MainActor
-func renderDemos(_ recorder: Recorder) async throws {
+func renderDemos(_ recorder: Recorder, mechanics: Bool = false) async throws {
     // Scenes in order, with their length in seconds and whether contacts are shown
-    let reel: [(scene: Int, seconds: Double, contacts: Bool)] = [
+    let reel: [(scene: Int, seconds: Double, contacts: Bool)] = mechanics ? [
+        (11, 6, false),  // Gears
+        (12, 14, false), // Chain
+    ] : [
         (7, 4.5, false), // Spiky Wheel
         (8, 5, false),   // Cows on Spikes
         (6, 5, false),   // Pile of Chairs
@@ -372,6 +375,7 @@ do {
     case "tori": try await renderTori(recorder)
     case "dice": try await renderDice(recorder)
     case "compare": try await renderComparison(recorder)
+    case "mechanics": try await renderDemos(recorder, mechanics: true)
     default: try await renderDemos(recorder)
     }
     let frames = try await recorder.finish()

@@ -8,7 +8,7 @@ import simd
 /// The small one must turn by the chain alone, the same way, twice as fast.
 @MainActor
 @Suite struct SDFChainTests {
-    @Test(arguments: [SDFSimulationComponent.Preset.realTime, .paper], [Float(0.04)])
+    @Test(arguments: [SDFSimulationComponent.Preset.realTime, .paper], [Float(0.0), 0.01, 0.02, 0.04, 0.06])
     func motoredSprocketDrivesTheOtherThroughTheChain(preset: SDFSimulationComponent.Preset, slack: Float) async throws {
         let root = Entity(), simulation = SDFSimulation()
         var settings = SDFSimulationComponent(simulation: simulation, preset: preset)
@@ -23,6 +23,13 @@ import simd
         let a = root.findEntity(named: "sprocket A")!, b = root.findEntity(named: "sprocket B")!
         let links = root.children.filter { $0.name.hasPrefix("link") }
         #expect(links.count == 48)
+        // Laid out, no pin is farther than a pitch from the next, and the loop closes
+        let laid = root.components[SDFJointsComponent.self]!.joints
+        var worstLaid: Float = 0
+        for joint in laid {
+            worstLaid = max(worstLaid, simd_distance(joint.pin0.position(relativeTo: root)!, joint.pin1.position(relativeTo: root)!))
+        }
+        #expect(worstLaid < 0.08, "\(preset) slack \(slack): laid out with pins up to \(worstLaid) apart")
 
         var speedsA: [Float] = [], speedsB: [Float] = []
         for _ in 0..<420 {

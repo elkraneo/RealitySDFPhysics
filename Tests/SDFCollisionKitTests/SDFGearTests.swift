@@ -63,11 +63,12 @@ import simd
         try motored.addToSimulation()
         try SDFRevoluteJoint(pin0: base.pins["driven"]!, pin1: driven.pins["hub"]!).addToSimulation()
 
-        var speeds: [Float] = [], driverSpeeds: [Float] = []
-        for _ in 0..<300 {
+        var speeds: [Float] = [], driverSpeeds: [Float] = [], contacts = 0
+        for step in 0..<300 {
             simulation.step(root: root)
             speeds.append(driven.components[SDFMotionComponent.self]!.angularVelocity.y)
             driverSpeeds.append(driver.components[SDFMotionComponent.self]!.angularVelocity.y)
+            if step >= 240 { contacts += simulation.statistics.contacts }
         }
         let settled = speeds.suffix(120), driverSettled = driverSpeeds.suffix(120)
         let mean = settled.reduce(0, +) / Float(settled.count)
@@ -75,9 +76,11 @@ import simd
         let report = Comment(rawValue: "driver \(driverMean) (\(driverSettled.min()!) to \(driverSettled.max()!)), driven \(mean) (\(settled.min()!) to \(settled.max()!)) over the last two seconds")
         #expect(abs(driverMean - 1) < 0.1, report)
         #expect(mean < -1.8 && mean > -2.2, report)
-        // A tooth may hiccup now and then; the small gear mostly runs between 1.5 and 2.5
+        // A tooth may hiccup now and then; the small gear mostly runs between 1.5 and 2.5, and
+        // never runs away or backwards
         let steady = settled.filter { $0 < -1.5 && $0 > -2.5 }.count
         #expect(steady >= settled.count * 9 / 10, report)
-        #expect(simulation.statistics.pairs > 0)
+        #expect(settled.min()! > -3 && settled.max()! < 0, report)
+        #expect(contacts > 0)
     }
 }

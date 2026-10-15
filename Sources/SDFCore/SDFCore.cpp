@@ -271,6 +271,8 @@ static SDFParams paramsOf(const SDFWorld &world)
     p.parallel = world.parallel;
     p.metersPerUnit = world.metersPerUnit;
     p.sleeping = world.sleeping;
+    p.jointHertz = world.jointHertz;
+    p.jointDampingRatio = world.jointDampingRatio;
     return p;
 }
 
@@ -326,6 +328,8 @@ SDFWorld *sdf_world_copy(const SDFWorld *world)
     copy->parallel = world->parallel;
     copy->metersPerUnit = world->metersPerUnit;
     copy->sleeping = world->sleeping;
+    copy->jointHertz = world->jointHertz;
+    copy->jointDampingRatio = world->jointDampingRatio;
     copy->nextIsland = world->nextIsland;
     copy->stepMilliseconds = world->stepMilliseconds;
     copy->solverMilliseconds = world->solverMilliseconds;
@@ -396,6 +400,8 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
     if (world->sleeping && !p.sleeping)
         world->wakeAll();
     world->sleeping = p.sleeping;
+    setNonNegative(world->jointHertz, p.jointHertz);
+    setNonNegative(world->jointDampingRatio, p.jointDampingRatio);
 }
 
 void sdf_world_step(SDFWorld *world)
