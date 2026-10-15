@@ -216,6 +216,37 @@ void sdf_world_clear_body_forces(SDFWorld *world, SDFBodyID body);
 void sdf_world_apply_impulse(SDFWorld *world, SDFBodyID body, const float impulse[3], const float point[3]);
 void sdf_world_apply_angular_impulse(SDFWorld *world, SDFBodyID body, const float impulse[3]);
 
+// MARK: Joints
+
+typedef uint32_t SDFJointID;    // 0 is never a valid joint
+
+// A hinge: a frame on each body, given in world space at the bodies' current poses (the scale is
+// ignored). The joint brings the frames' origins together and aligns their x axes, which is the
+// hinge's axis, leaving the rotation about it free. The angle is that of frame B relative to
+// frame A about the axis, zero when the frames coincide; a limit bounds it, in radians within
+// (-pi, pi), and a motor drives it at a speed with up to a torque. Unless asked to collide, the
+// two bodies ignore each other.
+typedef struct
+{
+    SDFBodyID bodyA, bodyB;
+    SDFPose frameA, frameB;
+    bool hasLimit;
+    float lowerAngle, upperAngle;
+    bool hasMotor;
+    float motorSpeed;            // Radians per second
+    float maxMotorTorque;
+    bool collideConnected;
+} SDFRevoluteJointDef;
+SDFRevoluteJointDef sdf_default_revolute_joint(void);
+
+// Returns 0 for bodies that don't exist, are the same, or are both unable to move
+SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def);
+void sdf_world_remove_joint(SDFWorld *world, SDFJointID joint);
+void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID joint, bool enabled, float lowerAngle, float upperAngle);
+void sdf_world_set_joint_motor(SDFWorld *world, SDFJointID joint, bool enabled, float speed, float maxTorque);
+// The angle of body B relative to body A about the axis, in (-pi, pi]
+float sdf_world_joint_angle(const SDFWorld *world, SDFJointID joint);
+
 // MARK: Contacts and picking
 
 typedef struct

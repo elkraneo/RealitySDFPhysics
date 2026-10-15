@@ -69,8 +69,23 @@ struct Mover
 
     float3 pseudoPointVelocity(float3 r) const { return body->pseudoVelocity + cross(body->pseudoAngularVelocity, r); }
 
+    void applyAngularImpulse(float3 impulse)
+    {
+        if (!body->isStatic)
+            body->angularVelocity += invInertia * impulse;
+    }
+
+    void applyPseudoAngularImpulse(float3 impulse)
+    {
+        if (!body->isStatic)
+            body->pseudoAngularVelocity += invInertia * impulse;
+    }
+
     // Inverse mass along a direction
     float linearTerm(float3 dir) const { return locked ? body->invMass * dot(dir, dir * record->linearMask) : body->invMass; }
+
+    // Inverse mass as a matrix, with the locked axes removed
+    float3x3 linearMass() const { return locked ? diagonal(record->linearMask * body->invMass) : identity3() * body->invMass; }
 };
 
 // Frictional contact constraint built from an active point of a manifold
@@ -93,6 +108,44 @@ float effectiveMass(const Mover &a, const Mover &b, float3 rA, float3 rB, float3
     // direction, and then the constraint has no effect.
     float3 ra = cross(rA, dir), rb = cross(rB, dir);
     float k = a.linearTerm(dir) + b.linearTerm(dir) + dot(ra, a.invInertia * ra) + dot(rb, b.invInertia * rb);
+    return k > 0 ? 1.0f / k : 0.0f;
+}
+
+// A hinge for one substep: the point constraint, the two rows that keep the axes aligned, and
+// the axial rows of the motor and the limits. The position errors are corrected with pseudo
+// velocities, as the contacts' penetration is.
+struct Hinge
+{
+    JointRecord *joint;
+    Mover *a, *b;
+    Body *bodyA, *bodyB;
+    float3 rA, rB;             // Anchors from the centers of mass, world space
+    float3 axis;               // Of body A, world space
+    float3 row[2];             // Perpendicular to the axis: the directions the axes must not tilt about
+    float3x3 pointMass;        // Inverse of the point constraint's K
+    float rowMass[2], axialMass;
+    float3 pointError;         // Anchor B minus anchor A
+    float rowError[2];         // Tilt of B's axis from A's about each row
+    float angle;
+    float3 pseudoLinear;
+    float pseudoRow[2], pseudoLower, pseudoUpper;
+};
+
+// The effective mass of a point constraint, or zero when locks leave nothing to move
+float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
+{
+    float3x3 sA = skew(rA), sB = skew(rB);
+    float3x3 k = a.linearMass() + b.linearMass() + sA * a.invInertia * transpose(sA) + sB * b.invInertia * transpose(sB);
+    float det = dot(k[0], cross(k[1], k[2]));
+    float scale = maxComponent(abs(k[0])) + maxComponent(abs(k[1])) + maxComponent(abs(k[2]));
+    if (!(det > 1e-12f * scale * scale * scale))
+        return identity3() * 0.0f;
+    return inverse(k);
+}
+
+float angularMass(const Mover &a, const Mover &b, float3 dir)
+{
+    float k = dot(dir, a.invInertia * dir) + dot(dir, b.invInertia * dir);
     return k > 0 ? 1.0f / k : 0.0f;
 }
 
@@ -160,6 +213,19 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
     }
     std::sort(proxies.begin(), proxies.end(), [](const Proxy &a, const Proxy &b) { return a.box.min.x < b.box.min.x; });
 
+    // Pairs joined by a joint that keeps them from colliding
+    std::vector<std::pair<int, int>> joined;
+    if (!world.joints.empty())
+    {
+        std::unordered_map<const Body *, int> indexOf;
+        for (size_t i = 0; i < s.bodies.size(); i++)
+            indexOf[s.bodies[i].get()] = (int)i;
+        for (const JointRecord &joint : world.joints)
+            if (!joint.collideConnected)
+                joined.push_back(std::minmax(indexOf.at(joint.a), indexOf.at(joint.b)));
+        std::sort(joined.begin(), joined.end());
+    }
+
     std::vector<std::pair<int, int>> overlapping;
     for (size_t i = 0; i < proxies.size(); i++)
     {
@@ -175,8 +241,10 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
                 if (lengthSq(a.center - b.center) > reach * reach)
                     continue;
             }
-            if (shouldCollide(*a.record, *b.record, world.pairOptions))
-                overlapping.push_back(std::minmax(a.body, b.body));
+            std::pair<int, int> key = std::minmax(a.body, b.body);
+            if (shouldCollide(*a.record, *b.record, world.pairOptions) &&
+                (joined.empty() || !std::binary_search(joined.begin(), joined.end(), key)))
+                overlapping.push_back(key);
         }
     }
     std::sort(overlapping.begin(), overlapping.end());
@@ -207,6 +275,13 @@ void broadPhase(SDFWorld &world, std::vector<Mover> &movers)
 }
 
 } // namespace
+
+float jointAngle(const JointRecord &joint)
+{
+    float3 axis = rotate(joint.a->orientation, joint.axisA);
+    float3 nA = rotate(joint.a->orientation, joint.normalA), nB = rotate(joint.b->orientation, joint.normalB);
+    return atan2f(dot(cross(nA, nB), axis), dot(nA, nB));
+}
 
 void SDFWorld::step()
 {
@@ -358,6 +433,18 @@ void SDFWorld::step()
             }
         }
 
+        // A joint wakes a sleeper when the other body moves
+        if (sleeping)
+        {
+            for (JointRecord &joint : joints)
+            {
+                BodyRecord &a = record(joint.a), &b = record(joint.b);
+                const BodyRecord &awake = a.asleep ? b : a;
+                if (a.asleep != b.asleep && canMove(awake) && (isDynamic(awake) || isMoving(*awake.body)))
+                    wake(a.asleep ? a : b);
+            }
+        }
+
         // External forces
         for (Mover &m : movers)
         {
@@ -446,6 +533,43 @@ void SDFWorld::step()
             }
         }
 
+        // Build the hinges. Those of sleeping pairs rest, keeping their impulses.
+        std::vector<Hinge> hinges;
+        for (JointRecord &joint : joints)
+        {
+            BodyRecord &ra = record(joint.a), &rb = record(joint.b);
+            if (ra.asleep || rb.asleep)
+                continue;
+            auto indexOf = [&](const Body *body) {
+                return (int)(std::find_if(s.bodies.begin(), s.bodies.end(), [&](auto &p) { return p.get() == body; }) - s.bodies.begin());
+            };
+            Hinge j;
+            j.joint = &joint;
+            j.a = &movers[indexOf(joint.a)], j.b = &movers[indexOf(joint.b)];
+            j.bodyA = joint.a, j.bodyB = joint.b;
+            j.rA = rotate(joint.a->orientation, joint.anchorA), j.rB = rotate(joint.b->orientation, joint.anchorB);
+            j.axis = rotate(joint.a->orientation, joint.axisA);
+            float3 axisB = rotate(joint.b->orientation, joint.axisB);
+            tangents(j.axis, j.row[0], j.row[1]);
+            j.pointMass = pointMass(*j.a, *j.b, j.rA, j.rB);
+            for (int i = 0; i < 2; i++)
+                j.rowMass[i] = angularMass(*j.a, *j.b, j.row[i]);
+            j.axialMass = angularMass(*j.a, *j.b, j.axis);
+            j.pointError = (joint.b->position + j.rB) - (joint.a->position + j.rA);
+            // The rotation that takes axis to axisB, as an angle times a direction; for a small
+            // tilt t about a row, axisB is about axis + t * cross(row, axis), so the tilt is what
+            // cross(axis, axisB) has along the row. Antiparallel axes tilt by pi about a row.
+            float3 tilt = cross(j.axis, axisB);
+            float sine = length(tilt), cosine = dot(j.axis, axisB);
+            tilt = sine > 1e-6f ? tilt * (atan2f(sine, cosine) / sine) : (cosine < 0 ? j.row[0] * 3.14159265f : float3{0, 0, 0});
+            for (int i = 0; i < 2; i++)
+                j.rowError[i] = dot(tilt, j.row[i]);
+            j.angle = jointAngle(joint);
+            j.pseudoLinear = {0, 0, 0};
+            j.pseudoRow[0] = j.pseudoRow[1] = j.pseudoLower = j.pseudoUpper = 0;
+            hinges.push_back(j);
+        }
+
         // Approach velocities before any warm start, for restitution
         for (Contact &c : contacts)
             c.relativeVelocity = dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
@@ -521,19 +645,160 @@ void SDFWorld::step()
             c.b->applyPseudoImpulse(c.rB, impulse);
         };
 
+        // The passes over the hinges. Each pass runs over the hinges before the contacts.
+
+        auto warmStartHinge = [](Hinge &j) {
+            JointRecord &joint = *j.joint;
+            j.a->applyImpulse(j.rA, -joint.linearImpulse);
+            j.b->applyImpulse(j.rB, joint.linearImpulse);
+            // The alignment rows' impulse, carried as a vector so that it survives the rows' turn;
+            // a limit's impulse only while the limit is reached
+            joint.angularImpulse = joint.angularImpulse - j.axis * dot(joint.angularImpulse, j.axis);
+            if (!joint.hasLimit || j.angle > joint.lowerAngle)
+                joint.lowerImpulse = 0;
+            if (!joint.hasLimit || j.angle < joint.upperAngle)
+                joint.upperImpulse = 0;
+            if (!joint.hasMotor)
+                joint.motorImpulse = 0;
+            float3 angular = joint.angularImpulse + j.axis * (joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse);
+            j.a->applyAngularImpulse(-angular);
+            j.b->applyAngularImpulse(angular);
+        };
+
+        auto solveHingeVelocity = [&](Hinge &j) {
+            JointRecord &joint = *j.joint;
+            Body &A = *j.bodyA, &B = *j.bodyB;
+
+            // Motor: the relative angular velocity about the axis follows the speed, within the torque
+            if (joint.hasMotor)
+            {
+                float cdot = dot(j.axis, B.angularVelocity - A.angularVelocity) - joint.motorSpeed;
+                float previous = joint.motorImpulse, limit = joint.maxMotorTorque * h;
+                joint.motorImpulse = clamp(previous - cdot * j.axialMass, -limit, limit);
+                float3 impulse = j.axis * (joint.motorImpulse - previous);
+                j.a->applyAngularImpulse(-impulse);
+                j.b->applyAngularImpulse(impulse);
+            }
+
+            // Limits: one-sided like contacts, at or past the limit, without bias here; the
+            // position pass pushes back past it
+            if (joint.hasLimit)
+            {
+                if (j.angle <= joint.lowerAngle)
+                {
+                    float cdot = dot(j.axis, B.angularVelocity - A.angularVelocity);
+                    float previous = joint.lowerImpulse;
+                    joint.lowerImpulse = max(previous - cdot * j.axialMass, 0.0f);
+                    float3 impulse = j.axis * (joint.lowerImpulse - previous);
+                    j.a->applyAngularImpulse(-impulse);
+                    j.b->applyAngularImpulse(impulse);
+                }
+                else
+                    joint.lowerImpulse = 0;
+                if (j.angle >= joint.upperAngle)
+                {
+                    float cdot = dot(j.axis, A.angularVelocity - B.angularVelocity);
+                    float previous = joint.upperImpulse;
+                    joint.upperImpulse = max(previous - cdot * j.axialMass, 0.0f);
+                    float3 impulse = j.axis * (joint.upperImpulse - previous);
+                    j.a->applyAngularImpulse(impulse);
+                    j.b->applyAngularImpulse(-impulse);
+                }
+                else
+                    joint.upperImpulse = 0;
+            }
+
+            // The axes stay aligned: no relative angular velocity about the rows
+            for (int i = 0; i < 2; i++)
+            {
+                float cdot = dot(j.row[i], B.angularVelocity - A.angularVelocity);
+                float lambda = -cdot * j.rowMass[i];
+                float3 impulse = j.row[i] * lambda;
+                joint.angularImpulse += impulse;
+                j.a->applyAngularImpulse(-impulse);
+                j.b->applyAngularImpulse(impulse);
+            }
+
+            // The anchors move together
+            float3 cdot = (B.velocity + cross(B.angularVelocity, j.rB)) - (A.velocity + cross(A.angularVelocity, j.rA));
+            float3 lambda = j.pointMass * (-cdot);
+            joint.linearImpulse += lambda;
+            j.a->applyImpulse(j.rA, -lambda);
+            j.b->applyImpulse(j.rB, lambda);
+        };
+
+        // Baumgarte stabilization of the hinge's errors with pseudo velocities, as for contacts
+        auto solveHingePosition = [&](Hinge &j) {
+            const JointRecord &joint = *j.joint;
+            Body &A = *j.bodyA, &B = *j.bodyB;
+            float rate = s.baumgarte / h;
+
+            if (joint.hasLimit)
+            {
+                float below = joint.lowerAngle - j.angle; // Past the lower limit by this much
+                if (below > 0)
+                {
+                    float cdot = dot(j.axis, B.pseudoAngularVelocity - A.pseudoAngularVelocity);
+                    float bias = -min(below * rate, s.maxCorrection);
+                    float previous = j.pseudoLower;
+                    j.pseudoLower = max(previous - (cdot + bias) * j.axialMass, 0.0f);
+                    float3 impulse = j.axis * (j.pseudoLower - previous);
+                    j.a->applyPseudoAngularImpulse(-impulse);
+                    j.b->applyPseudoAngularImpulse(impulse);
+                }
+                float above = j.angle - joint.upperAngle;
+                if (above > 0)
+                {
+                    float cdot = dot(j.axis, A.pseudoAngularVelocity - B.pseudoAngularVelocity);
+                    float bias = -min(above * rate, s.maxCorrection);
+                    float previous = j.pseudoUpper;
+                    j.pseudoUpper = max(previous - (cdot + bias) * j.axialMass, 0.0f);
+                    float3 impulse = j.axis * (j.pseudoUpper - previous);
+                    j.a->applyPseudoAngularImpulse(impulse);
+                    j.b->applyPseudoAngularImpulse(-impulse);
+                }
+            }
+
+            for (int i = 0; i < 2; i++)
+            {
+                float cdot = dot(j.row[i], B.pseudoAngularVelocity - A.pseudoAngularVelocity);
+                float bias = clamp(j.rowError[i] * rate, -s.maxCorrection, s.maxCorrection);
+                float lambda = -(cdot + bias) * j.rowMass[i];
+                j.pseudoRow[i] += lambda;
+                float3 impulse = j.row[i] * lambda;
+                j.a->applyPseudoAngularImpulse(-impulse);
+                j.b->applyPseudoAngularImpulse(impulse);
+            }
+
+            float3 cdot = j.b->pseudoPointVelocity(j.rB) - j.a->pseudoPointVelocity(j.rA);
+            float3 bias = j.pointError * rate;
+            float correction = length(bias);
+            if (correction > s.maxCorrection)
+                bias = bias * (s.maxCorrection / correction);
+            float3 lambda = j.pointMass * (-(cdot + bias));
+            j.pseudoLinear += lambda;
+            j.a->applyPseudoImpulse(j.rA, -lambda);
+            j.b->applyPseudoImpulse(j.rB, lambda);
+        };
+
+        auto noHinge = [](Hinge &) {};
+
+        // Every pass takes the hinges first, then the contacts
         auto solve = [&](auto &&forEach) {
-            forEach(warmStart);
+            forEach(warmStartHinge, warmStart);
             for (int it = 0; it < s.iterations; it++)
-                forEach(solveVelocity);
-            forEach(solveRestitution);
-            forEach(store);
+                forEach(solveHingeVelocity, solveVelocity);
+            forEach(noHinge, solveRestitution);
+            forEach(noHinge, store);
             for (int it = 0; it < positionIterations; it++)
-                forEach(solvePosition);
+                forEach(solveHingePosition, solvePosition);
         };
 
         if (!parallel)
         {
-            solve([&](auto &pass) {
+            solve([&](auto &hingePass, auto &pass) {
+                for (Hinge &j : hinges)
+                    hingePass(j);
                 for (Contact &c : contacts)
                     pass(c);
             });
@@ -623,10 +888,14 @@ void SDFWorld::step()
             WorkerPool &pool = *solverPool;
             int threads = contacts.size() < 256 ? 1 : pool.threads();
             auto job = [&](int thread, int threadCount) {
-                auto forEach = [&](auto &pass) {
+                auto forEach = [&](auto &hingePass, auto &pass) {
                     if (thread == 0)
+                    {
+                        for (Hinge &j : hinges)
+                            hingePass(j);
                         for (size_t i = overflow.first; i < overflow.second; i++)
                             pass(contacts[i]);
+                    }
                     if (threadCount > 1)
                         pool.barrier();
                     for (int k = 0; k < maxColors; k++)
@@ -698,6 +967,10 @@ void SDFWorld::sleep()
                      lengthSq(r.torque) == 0 && &b != s.dragBody;
         r.stillTime = still ? r.stillTime + s.dt : 0;
     }
+    // A running motor keeps its bodies awake
+    for (const JointRecord &joint : joints)
+        if (joint.hasMotor && joint.motorSpeed != 0)
+            record(joint.a).stillTime = record(joint.b).stillTime = 0;
 
     // Islands: awake dynamic bodies joined by their contacts. None touches a sleeping body, which
     // would have woken.
@@ -714,6 +987,18 @@ void SDFWorld::sleep()
         if (isDynamic(*bodies[a]) && isDynamic(*bodies[b]) && !bodies[a]->trigger && !bodies[b]->trigger &&
             touches(entry.second))
             parent[root(a)] = root(b);
+    }
+    if (!joints.empty())
+    {
+        std::unordered_map<const Body *, int> indexOf;
+        for (size_t i = 0; i < count; i++)
+            indexOf[s.bodies[i].get()] = (int)i;
+        for (const JointRecord &joint : joints)
+        {
+            int a = indexOf.at(joint.a), b = indexOf.at(joint.b);
+            if (isDynamic(*bodies[a]) && isDynamic(*bodies[b]))
+                parent[root(a)] = root(b);
+        }
     }
 
     // An island sleeps when every body in it has been still long enough
@@ -759,6 +1044,13 @@ void SDFWorld::disturb(const Body *body)
             wake(record(entry.second.bodyB));
         else if (entry.second.bodyB == body)
             wake(record(entry.second.bodyA));
+    }
+    for (const JointRecord &joint : joints)
+    {
+        if (joint.a == body)
+            wake(record(joint.b));
+        else if (joint.b == body)
+            wake(record(joint.a));
     }
     const BodyRecord &r = record(body);
     AABB bounds = expand(body->bounds, solver.params.margin);
