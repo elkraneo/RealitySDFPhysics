@@ -136,7 +136,8 @@ vary by up to about 20% between runs.
 - **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
   pushed (`isSleepingEnabled`).
 - **Baked once.** Shapes baked from meshes can be cached on disk (`SDFShape.cached`), so a scene
-  loads in a fraction of a second after its first bake.
+  loads in a fraction of a second after its first bake. The cache keeps to 512 MB, dropping the
+  least recently used bakes.
 
 ## Known gaps
 
