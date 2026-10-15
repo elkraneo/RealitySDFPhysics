@@ -783,24 +783,36 @@ void SDFWorld::step()
 
         auto noHinge = [](Hinge &) {};
 
-        // Every pass takes the hinges first, then the contacts
+        // Every pass takes the contacts, then the hinges, which so have the last word of each
+        // iteration: a jammed chain's contacts must not pull its pins apart. A hinge is cheap
+        // next to a contact and a chain of them converges slowly, so each pass runs the hinges
+        // several times.
+        const int hingePasses = 4;
+        auto repeatHinges = [&](auto &pass) {
+            return [&](Hinge &j) {
+                for (int i = 0; i < hingePasses; i++)
+                    pass(j);
+            };
+        };
+        auto solveHingeVelocities = repeatHinges(solveHingeVelocity);
+        auto solveHingePositions = repeatHinges(solveHingePosition);
         auto solve = [&](auto &&forEach) {
             forEach(warmStartHinge, warmStart);
             for (int it = 0; it < s.iterations; it++)
-                forEach(solveHingeVelocity, solveVelocity);
+                forEach(solveHingeVelocities, solveVelocity);
             forEach(noHinge, solveRestitution);
             forEach(noHinge, store);
             for (int it = 0; it < positionIterations; it++)
-                forEach(solveHingePosition, solvePosition);
+                forEach(solveHingePositions, solvePosition);
         };
 
         if (!parallel)
         {
             solve([&](auto &hingePass, auto &pass) {
-                for (Hinge &j : hinges)
-                    hingePass(j);
                 for (Contact &c : contacts)
                     pass(c);
+                for (Hinge &j : hinges)
+                    hingePass(j);
             });
         }
         else
@@ -890,12 +902,8 @@ void SDFWorld::step()
             auto job = [&](int thread, int threadCount) {
                 auto forEach = [&](auto &hingePass, auto &pass) {
                     if (thread == 0)
-                    {
-                        for (Hinge &j : hinges)
-                            hingePass(j);
                         for (size_t i = overflow.first; i < overflow.second; i++)
                             pass(contacts[i]);
-                    }
                     if (threadCount > 1)
                         pool.barrier();
                     for (int k = 0; k < maxColors; k++)
@@ -907,6 +915,15 @@ void SDFWorld::step()
                         for (size_t g = from; g < to; g++)
                             for (size_t i = ranges[g].first; i < ranges[g].second; i++)
                                 pass(contacts[i]);
+                        if (threadCount > 1)
+                            pool.barrier();
+                    }
+                    // The hinges after every color, on one thread, with the others waiting
+                    if (!hinges.empty())
+                    {
+                        if (thread == 0)
+                            for (Hinge &j : hinges)
+                                hingePass(j);
                         if (threadCount > 1)
                             pool.barrier();
                     }
