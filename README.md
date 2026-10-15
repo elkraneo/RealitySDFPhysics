@@ -81,12 +81,18 @@ In `Samples/`, macOS apps built on the public API:
     The roll is forecast with `SDFSimulation.forecast()`, an exact copy of the simulation: the
     engine is deterministic, so the real roll lands exactly as predicted.
 
+- `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, SDFCollisionKit
+  against RealityKit's physics, in a window. The scene, the timings and the view are the
+  `SDFBenchmarks` module; `Samples/BenchmarksApp` wraps it in an Xcode project for iPhone and
+  Vision Pro, where the same table runs on the device.
+
 `sdf-snapshot` renders the demo scenes offscreen with timings, and `sdf-video` renders a showcase
 video.
 
 ```sh
 swift run -c release SDFDemos
 swift run -c release RealityKitSamples
+swift run -c release Benchmarks
 swift run -c release sdf-snapshot out/ [steps] [scene index...]
 swift test
 ```

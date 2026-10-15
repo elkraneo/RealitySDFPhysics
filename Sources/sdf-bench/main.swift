@@ -18,51 +18,31 @@
 // minute the memory footprint, the step time and how far the pile has moved since it settled, to
 // catch leaks and drift.
 //
-// The tori fall into a walled box. For RealityKit, each torus is the best it has for a moving torus:
-// a compound of 12 capsules (from a mesh it would generate a convex hull, which closes the hole).
-// SDFCollisionKit uses the torus itself. Both run in meters at 60 steps per second; the bodies have
-// no meshes, so that rendering costs next to nothing.
+// The scene and the timings are those of the SDFBenchmarks module, which the Benchmarks app runs
+// on a Mac, an iPhone or a Vision Pro. The tori fall into a walled box. For RealityKit, each torus
+// is the best it has for a moving torus: a compound of 12 capsules (from a mesh it would generate
+// a convex hull, which closes the hole). SDFCollisionKit uses the torus itself. Both run in meters
+// at 60 steps per second; the bodies have no meshes, so that rendering costs next to nothing.
 //
 // SDFCollisionKit's time is that of `SDFSimulation.step(root:)`, synchronization included.
 // RealityKit's is measured between its `PhysicsSimulationEvents.WillSimulate` and `DidSimulate`
 // events, and cross-checked with an estimate: the time of a frame with the physics clock advancing
 // by a step, minus that of a frame with the clock still.
 
-import CoreMedia
 import Foundation
-import Metal
 import RealityKit
+import SDFBenchmarks
 import SDFCollisionKit
 
 let mode = CommandLine.arguments.dropFirst().first.flatMap { ["quality", "phases", "soak"].contains($0) ? $0 : nil }
-let isQuality = mode == "quality"
-let steps = CommandLine.arguments.dropFirst(mode == nil ? 1 : 2).first.flatMap { Int($0) } ?? 300
+let steps = CommandLine.arguments.dropFirst(mode == nil ? 1 : 2).first.flatMap { Int($0) } ?? Benchmark.steps
 let countArguments = CommandLine.arguments.dropFirst(3).compactMap { Int($0) }
-let counts = [25, 50, 100, 200, 400]
-let major: Float = 0.15, minor: Float = 0.04, segments = 12
-
-/// Where the tori start: layers of a 5 × 5 grid above a box 2 m across, tilted
-func placements(_ count: Int) -> [(position: SIMD3<Float>, orientation: simd_quatf)] {
-    (0..<count).map { i in
-        let layer = i / 25, cell = i % 25
-        let x = Float(cell % 5) * 0.36 - 0.72, z = Float(cell / 5) * 0.36 - 0.72
-        let angle = Float(i % 7) * 0.4
-        return ([x, 0.3 + Float(layer) * 0.25, z], simd_quatf(angle: angle, axis: normalize([1, 0, Float(i % 3) - 1])))
-    }
-}
-
-/// Floor and four walls, 5 m high so that 400 tori stay in, around a box 2 m across: centers and
-/// half extents
-let walls: [(center: SIMD3<Float>, halfExtents: SIMD3<Float>)] = [
-    ([0, -0.5, 0], [2, 0.5, 2]),
-    ([-1.05, 2.5, 0], [0.05, 2.5, 1.1]), ([1.05, 2.5, 0], [0.05, 2.5, 1.1]),
-    ([0, 2.5, -1.05], [1.1, 2.5, 0.05]), ([0, 2.5, 1.05], [1.1, 2.5, 0.05]),
-]
+let environment = ProcessInfo.processInfo.environment
 
 /// Collision detection overrides for experiments: SDF_BENCH_CURVATURE=0 turns curvature sampling
-/// off, SDF_BENCH_SAMPLES=n sets the random samples per pair and step
+/// off, SDF_BENCH_SAMPLES=n sets the random samples per pair and step, SDF_BENCH_ITERATIONS=n the
+/// optimizer's limit and SDF_BENCH_CACHE=n the cached points
 func applyEnvironment(to settings: inout SDFSimulationComponent) {
-    let environment = ProcessInfo.processInfo.environment
     if environment["SDF_BENCH_CURVATURE"] == "0" {
         settings.collisionDetection.usesCurvatureSampling = false
     }
@@ -77,127 +57,6 @@ func applyEnvironment(to settings: inout SDFSimulationComponent) {
     }
 }
 
-@MainActor
-func timeSDF(count: Int, isMultithreaded: Bool, preset: SDFSimulationComponent.Preset = .paper)
-    -> (mean: Double, worst: Double, check: String) {
-    let root = Entity(), simulation = SDFSimulation()
-    var settings = SDFSimulationComponent(simulation: simulation, preset: preset)
-    settings.isMultithreaded = isMultithreaded
-    applyEnvironment(to: &settings)
-    root.components.set(settings)
-    for wall in walls {
-        let entity = Entity()
-        entity.position = wall.center
-        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
-        root.addChild(entity)
-    }
-    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
-    var bodies: [Entity] = []
-    for placement in placements(count) {
-        let entity = Entity()
-        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
-        entity.components.set(SDFBodyComponent(shape: torus))
-        root.addChild(entity)
-        bodies.append(entity)
-    }
-    var times: [Double] = []
-    for _ in 0..<steps {
-        let start = DispatchTime.now().uptimeNanoseconds
-        simulation.step(root: root)
-        times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
-    }
-    if ProcessInfo.processInfo.environment["SDF_BENCH_TRACE"] != nil {
-        let slowest = times.enumerated().sorted { $0.element > $1.element }.prefix(5)
-        print("       slowest steps (\(preset), \(isMultithreaded ? "threads" : "one thread")): "
-              + slowest.map { String(format: "#%d %.1f ms", $0.offset, $0.element) }.joined(separator: ", "))
-    }
-    return (times.reduce(0, +) / Double(times.count), times.max() ?? 0, check(bodies))
-}
-
-/// The mean height of the tori and how many left the box, to check that the pile fell and settled
-@MainActor
-func check(_ bodies: [Entity]) -> String {
-    let positions = bodies.map { $0.position(relativeTo: nil) }
-    let mean = positions.map(\.y).reduce(0, +) / Float(positions.count)
-    let out = positions.filter { abs($0.x) > 1 || abs($0.z) > 1 || $0.y < -0.1 }.count
-    return String(format: "mean y %.2f m, %d out", mean, out)
-}
-
-@MainActor
-func timeRealityKit(count: Int) async throws -> (mean: Double, worst: Double, estimate: Double, check: String) {
-    var timebase: CMTimebase?
-    CMTimebaseCreateWithSourceClock(allocator: nil, sourceClock: CMClockGetHostTimeClock(), timebaseOut: &timebase)
-    guard let timebase else { throw CocoaError(.featureUnsupported) }
-    CMTimebaseSetRate(timebase, rate: 0)
-    CMTimebaseSetTime(timebase, time: .zero)
-    let root = Entity()
-    var physics = PhysicsSimulationComponent()
-    physics.clock = timebase
-    root.components.set(physics)
-    for wall in walls {
-        let entity = Entity()
-        entity.position = wall.center
-        let shape = ShapeResource.generateBox(size: 2 * wall.halfExtents)
-        entity.components.set(CollisionComponent(shapes: [shape]))
-        entity.components.set(PhysicsBodyComponent(shapes: [shape], mass: 1, mode: .static))
-        root.addChild(entity)
-    }
-    let chord = 2 * major * sin(.pi / Float(segments))
-    let compound = (0..<segments).map { k in
-        let angle = (Float(k) + 0.5) * 2 * .pi / Float(segments)
-        return ShapeResource.generateCapsule(height: chord + 2 * minor, radius: minor)
-            .offsetBy(rotation: simd_quatf(from: [0, 1, 0], to: [-sin(angle), 0, cos(angle)]),
-                      translation: [major * cos(angle), 0, major * sin(angle)])
-    }
-    var bodies: [Entity] = []
-    for placement in placements(count) {
-        let entity = Entity()
-        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
-        entity.components.set(CollisionComponent(shapes: compound))
-        entity.components.set(PhysicsBodyComponent(shapes: compound, density: 1000))
-        root.addChild(entity)
-        bodies.append(entity)
-    }
-
-    let renderer = try RealityRenderer()
-    let camera = PerspectiveCamera()
-    renderer.entities.append(contentsOf: [root, camera])
-    renderer.activeCamera = camera
-    let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm_srgb, width: 8, height: 8, mipmapped: false)
-    descriptor.usage = [.renderTarget]
-    descriptor.storageMode = .private
-    let output = try RealityRenderer.CameraOutput(.singleProjection(colorTexture: MTLCreateSystemDefaultDevice()!.makeTexture(descriptor: descriptor)!))
-
-    // The simulate step, between the events RealityKit sends around it
-    var willSimulate: UInt64 = 0, simulated: [Double] = []
-    let subscriptions = [
-        renderer.subscribe(to: PhysicsSimulationEvents.WillSimulate.self) { _ in willSimulate = DispatchTime.now().uptimeNanoseconds },
-        renderer.subscribe(to: PhysicsSimulationEvents.DidSimulate.self) { _ in
-            simulated.append(Double(DispatchTime.now().uptimeNanoseconds - willSimulate) / 1e6)
-        },
-    ]
-    defer { _ = subscriptions }
-
-    func frame(advancing: Bool, to step: Int) async throws -> Double {
-        if advancing { CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(step), timescale: 60)) }
-        let start = DispatchTime.now().uptimeNanoseconds
-        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
-            do { try renderer.updateAndRender(deltaTime: 1.0 / 60, cameraOutput: output, onComplete: { _ in done.resume() }) }
-            catch { done.resume(throwing: error) }
-        }
-        return Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
-    }
-    // The cost of a frame without physics, then frames that each take a physics step
-    var baseline: [Double] = []
-    for _ in 0..<60 { baseline.append(try await frame(advancing: false, to: 0)) }
-    let overhead = baseline.sorted()[baseline.count / 2]
-    simulated.removeAll()
-    var times: [Double] = []
-    for step in 1...steps { times.append(max(0, try await frame(advancing: true, to: step) - overhead)) }
-    guard simulated.count == steps else { throw CocoaError(.featureUnsupported, userInfo: ["steps": simulated.count]) }
-    return (simulated.reduce(0, +) / Double(steps), simulated.max() ?? 0, times.reduce(0, +) / Double(steps), check(bodies))
-}
-
 /// A setting of the simulation: substeps, velocity and position iterations, and sleeping
 struct Setting {
     let name: String, substeps: Int, velocityIterations: Int, positionIterations: Int
@@ -206,28 +65,12 @@ struct Setting {
 
 @MainActor
 func quality(count: Int, setting: Setting) -> String {
-    let root = Entity(), simulation = SDFSimulation()
+    let simulation = SDFSimulation()
     var settings = SDFSimulationComponent(simulation: simulation)
     settings.substeps = setting.substeps
     settings.solverIterations = .init(positionIterations: setting.positionIterations, velocityIterations: setting.velocityIterations)
     settings.isSleepingEnabled = setting.isSleepingEnabled
-    root.components.set(settings)
-    for wall in walls {
-        let entity = Entity()
-        entity.position = wall.center
-        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
-        root.addChild(entity)
-    }
-    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
-    var bodies: [Entity] = []
-    for placement in placements(count) {
-        let entity = Entity()
-        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
-        entity.components.set(SDFBodyComponent(shape: torus))
-        entity.components.set(SDFMotionComponent())
-        root.addChild(entity)
-        bodies.append(entity)
-    }
+    let (root, bodies) = TorusPile.makeSDF(count: count, settings: settings, motion: true)
     var time = 0.0, endTime = 0.0, deepest: Float = 0, deepestAtRest: Float = 0, endSpeed: Float = 0, fastest: Float = 0, spinning: Float = 0
     for step in 0..<steps {
         let start = DispatchTime.now().uptimeNanoseconds
@@ -250,7 +93,7 @@ func quality(count: Int, setting: Setting) -> String {
     let name = setting.name.padding(toLength: 34, withPad: " ", startingAt: 0)
     return name + String(format: " %4d   %6.2f ms  %6.2f ms   %5.1f mm   %5.1f mm   %6.1f mm/s   %4d   ", count,
                          time / Double(steps), endTime, deepest * 1000, deepestAtRest * 1000, endSpeed * 1000,
-                         simulation.statistics.sleepingBodies) + check(bodies)
+                         simulation.statistics.sleepingBodies) + TorusPile.check(bodies)
         + String(format: " (fastest %.1f mm/s, %.3f rad/s)", fastest * 1000, spinning)
 }
 
@@ -268,26 +111,10 @@ func footprintMB() -> Double {
 /// since it settled (20 s in)
 @MainActor
 func soak(count: Int, minutes: Int, isSleepingEnabled: Bool) {
-    let root = Entity(), simulation = SDFSimulation()
+    let simulation = SDFSimulation()
     var settings = SDFSimulationComponent(simulation: simulation)
     settings.isSleepingEnabled = isSleepingEnabled
-    root.components.set(settings)
-    for wall in walls {
-        let entity = Entity()
-        entity.position = wall.center
-        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
-        root.addChild(entity)
-    }
-    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
-    var bodies: [Entity] = []
-    for placement in placements(count) {
-        let entity = Entity()
-        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
-        entity.components.set(SDFBodyComponent(shape: torus))
-        entity.components.set(SDFMotionComponent())
-        root.addChild(entity)
-        bodies.append(entity)
-    }
+    let (root, bodies) = TorusPile.makeSDF(count: count, settings: settings, motion: true)
     print("\(count) tori, sleeping \(isSleepingEnabled ? "on" : "off"): footprint and step time per simulated minute, drift of the pile since 20 s")
     print("minute   footprint   step (last 600)   contacts   asleep   max drift   max turn   max speed   invalid")
     var settled: [Transform] = []
@@ -311,58 +138,18 @@ func soak(count: Int, minutes: Int, isSleepingEnabled: Bool) {
         }
         print(String(format: "%6d   %6.1f MB   %8.2f ms       %8d   %6d   %6.2f mm   %6.3f°   %7.2f mm/s   %7d", minute + 1, footprintMB(), time,
                      simulation.statistics.contacts, simulation.statistics.sleepingBodies, drift * 1000, turn * 180 / .pi, speed * 1000, invalid)
-            + (invalid > 0 ? "   " + check(bodies) : ""))
+            + (invalid > 0 ? "   " + TorusPile.check(bodies) : ""))
     }
-    print("   " + check(bodies))
+    print("   " + TorusPile.check(bodies))
 }
 
 if mode == "soak" {
-    let minutes = steps == 300 ? 10 : steps
+    let minutes = steps == Benchmark.steps ? 10 : steps
     for count in countArguments.isEmpty ? [100] : countArguments {
         soak(count: count, minutes: minutes, isSleepingEnabled: true)
         soak(count: count, minutes: minutes, isSleepingEnabled: false)
     }
     exit(0)
-}
-
-/// Mean milliseconds per step of each phase of the real-time preset, without sleeping
-@MainActor
-func phases(count: Int, isMultithreaded: Bool)
-    -> (collision: Double, solver: Double, engine: Double, step: Double, contacts: Int, pairs: Int, iterations: Int) {
-    let root = Entity(), simulation = SDFSimulation()
-    var settings = SDFSimulationComponent(simulation: simulation)
-    settings.isSleepingEnabled = false
-    settings.isMultithreaded = isMultithreaded
-    applyEnvironment(to: &settings)
-    root.components.set(settings)
-    for wall in walls {
-        let entity = Entity()
-        entity.position = wall.center
-        entity.components.set(SDFBodyComponent(shape: .box(halfExtents: wall.halfExtents), mode: .static))
-        root.addChild(entity)
-    }
-    let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
-    for placement in placements(count) {
-        let entity = Entity()
-        entity.transform = Transform(rotation: placement.orientation, translation: placement.position)
-        entity.components.set(SDFBodyComponent(shape: torus))
-        root.addChild(entity)
-    }
-    var collision = 0.0, solver = 0.0, engine = 0.0, step = 0.0, contacts = 0, pairs = 0, iterations = 0
-    for _ in 0..<steps {
-        let start = DispatchTime.now().uptimeNanoseconds
-        simulation.step(root: root)
-        step += Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
-        let statistics = simulation.statistics
-        collision += statistics.collisionMilliseconds
-        solver += statistics.solverMilliseconds
-        engine += statistics.stepMilliseconds
-        contacts += statistics.contacts
-        pairs += statistics.pairs
-        iterations += statistics.optimizerIterations
-    }
-    let n = Double(steps)
-    return (collision / n, solver / n, engine / n, step / n, contacts / steps, pairs / steps, iterations / steps)
 }
 
 if mode == "phases" {
@@ -371,17 +158,17 @@ if mode == "phases" {
     print("Pairs and contacts are those of the last substep; iterations are the optimizer's, per pair and substep.")
     print("tori   pairs   contacts   iterations   collision (threads / one)   solver   rest of engine   Swift   step")
     for count in countArguments.isEmpty ? [100, 400, 800] : countArguments {
-        let multi = phases(count: count, isMultithreaded: true), single = phases(count: count, isMultithreaded: false)
+        let multi = Benchmark.phases(count: count, steps: steps, isMultithreaded: true, configure: applyEnvironment)
+        let single = Benchmark.phases(count: count, steps: steps, isMultithreaded: false, configure: applyEnvironment)
         let substeps = Double(SDFSimulationComponent().substeps)
         print(String(format: "%4d   %5d   %8d   %10.1f   %8.2f / %8.2f   %6.2f   %8.2f   %6.2f   %6.2f", count,
                      multi.pairs, multi.contacts, Double(multi.iterations) / Double(max(1, multi.pairs)) / substeps,
-                     multi.collision, single.collision, multi.solver, multi.engine - multi.collision - multi.solver,
-                     multi.step - multi.engine, multi.step))
+                     multi.collision, single.collision, multi.solver, multi.rest, multi.swift, multi.step))
     }
     exit(0)
 }
 
-if isQuality {
+if mode == "quality" {
     let settings = [
         Setting(name: "paper: 4 substeps, 20/20", substeps: 4, velocityIterations: 20, positionIterations: 20),
         Setting(name: "2 substeps, 10/4", substeps: 2, velocityIterations: 10, positionIterations: 4),
@@ -399,16 +186,25 @@ if isQuality {
     exit(0)
 }
 
+/// The slowest steps of a run, with SDF_BENCH_TRACE=1
+func trace(_ timing: StepTiming, _ name: String) {
+    guard environment["SDF_BENCH_TRACE"] != nil else { return }
+    print("       slowest steps (\(name)): " + timing.slowest.map { String(format: "#%d %.1f ms", $0.0, $0.1) }.joined(separator: ", "))
+}
+
+print(DeviceInfo.current.text)
 print("ms/step, mean / worst. SDFCollisionKit: the default real-time preset, with sleeping, and the paper's settings,")
 print("multithreaded and on one thread. RealityKit: 12-capsule tori, measured between its simulation events.")
 print("tori   real time           paper               paper, one thread   RealityKit")
-for count in counts {
-    let realTime = timeSDF(count: count, isMultithreaded: true, preset: .realTime)
-    let sdf = timeSDF(count: count, isMultithreaded: true)
-    let single = timeSDF(count: count, isMultithreaded: false)
-    let realityKit = try await timeRealityKit(count: count)
-    print(String(format: "%4d   %6.2f / %6.2f     %6.2f / %6.2f     %6.2f / %6.2f     %6.2f / %6.2f", count,
-                 realTime.mean, realTime.worst, sdf.mean, sdf.worst, single.mean, single.worst, realityKit.mean, realityKit.worst))
-    print(String(format: "       after \(steps) steps: real time \(realTime.check), paper \(sdf.check), RealityKit \(realityKit.check) (frame estimate %.2f)",
-                 realityKit.estimate))
+for count in TorusPile.counts {
+    let realTime = Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: true, preset: .realTime, configure: applyEnvironment)
+    trace(realTime, "real time")
+    let sdf = Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: true, configure: applyEnvironment)
+    trace(sdf, "paper, threads")
+    let single = Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: false, configure: applyEnvironment)
+    trace(single, "paper, one thread")
+    let realityKit = try await Benchmark.timeRealityKit(count: count, steps: steps)
+    print(String(format: "%4d   %@     %@     %@     %@", count, realTime.text, sdf.text, single.text, realityKit.timing.text))
+    print(String(format: "       after \(steps) steps: real time \(realTime.check), paper \(sdf.check), RealityKit \(realityKit.timing.check) (frame estimate %.2f)",
+                 realityKit.frameEstimate))
 }
