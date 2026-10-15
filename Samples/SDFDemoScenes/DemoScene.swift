@@ -12,6 +12,8 @@ public struct DemoScene: Identifiable, Sendable {
     /// Orbit camera target and distance
     public let target: SIMD3<Float>
     public let distance: Float
+    /// The pull of gravity, in m/s², which `load(into:)` and `configure(_:)` set on the simulation
+    public var gravity: Float = 9.81
     fileprivate let build: @MainActor (inout DemoBuilder) async throws -> Void
 
     /// Replaces the bodies under `root` with the scene's. Every scene has a static ground whose top
@@ -29,6 +31,15 @@ public struct DemoScene: Identifiable, Sendable {
             root.addChild(child)
         }
         root.components.set(SDFJointsComponent(joints: builder.joints))
+        if var settings = root.components[SDFSimulationComponent.self] {
+            configure(&settings)
+            root.components.set(settings)
+        }
+    }
+
+    /// Sets the scene's own simulation settings, for a simulation added after `load(into:)`
+    public func configure(_ settings: inout SDFSimulationComponent) {
+        settings.gravity = [0, -gravity / settings.metersPerUnit, 0]
     }
 }
 
@@ -192,6 +203,13 @@ extension DemoScene {
                   target: [4.1, 3, 0], distance: 16) { b in
             try await b.buildChain()
         },
+        // The ids are the indices: a scene added on another branch may take this one's place,
+        // so this one goes last, whatever its number
+        DemoScene(id: 13, name: "Absolut", description: "The Absolut Barcelona chain of 2008: 48 links around a piñon of 18 teeth and a plato of 29, the plato pedaled clockwise by a motor, as a bicycle riding to the right: it pulls the top run and the bottom one sags. Every body is locked in the plane, under a lighter gravity",
+                  target: [2.8, 3.5, 0], distance: 16, gravity: 3) { b in
+            try await b.buildChain(teethA: 18, teethB: 29, height: 4, motored: .b, motor: .init(targetVelocity: -1, maxTorque: 15000),
+                                   linkDamping: (linear: 0.1, angular: 0.5), isPlanar: true)
+        },
     ]
 
     /// Fig. 8: a pile of falling boxes, optionally distorted
@@ -263,27 +281,44 @@ struct SeededRandom {
 }
 
 extension DemoBuilder {
+    /// A sprocket of the chain scene: A at the origin, B along +x
+    public enum ChainSprocket: Sendable {
+        case a, b
+    }
+
     /// The chain scene: links pinned to each other around two sprockets on hinges, in the x-y
-    /// plane at height 3, with the friction of oiled steel
+    /// plane at `height`, with the friction of oiled steel. The `motored` sprocket's hinge drives
+    /// it; `linkDamping` replaces the links' default damping; planar bodies move only in the x-y
+    /// plane and turn only about z.
     @MainActor
-    public mutating func buildChain(chain: ChainMesh = ChainMesh(), links: Int = 48, teethA: Int = 20, teethB: Int = 10) async throws {
+    public mutating func buildChain(chain: ChainMesh = ChainMesh(), links: Int = 48, teethA: Int = 20, teethB: Int = 10,
+                                    height: Float = 3, motored: ChainSprocket = .a,
+                                    motor: SDFRevoluteJoint.Motor = .init(targetVelocity: 1, maxTorque: 5000),
+                                    linkDamping: (linear: Float, angular: Float)? = nil, isPlanar: Bool = false) async throws {
         let layout = ChainLayout(chain: chain, links: links, teethA: teethA, teethB: teethB)
-        let origin = SIMD3<Float>(0, 3, 0)
+        let origin = SIMD3<Float>(0, height, 0)
         let axle = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0]) // The pin's x axis along z
         let steel = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
-        let base = try await spawn("Box", at: origin + [layout.centerDistance / 2, -4, 0], scale: 0.5, mode: .static, isVisible: false)
+        let base = try await spawn("Box", at: [layout.centerDistance / 2, -1, 0], scale: 0.5, mode: .static, isVisible: false)
 
         let phases = layout.phases
-        for (name, teeth, x, phase, motor) in [("sprocket A", teethA, Float(0), phases.a, true), ("sprocket B", teethB, layout.centerDistance, phases.b, false)] {
+        func makePlanar(_ entity: Entity) {
+            guard isPlanar else { return }
+            entity.components[SDFBodyComponent.self]!.isTranslationLocked = (false, false, true)
+            entity.components[SDFBodyComponent.self]!.isRotationLocked = (true, true, false)
+        }
+        for (name, teeth, x, phase, sprocketID) in [("sprocket A", teethA, Float(0), phases.a, ChainSprocket.a),
+                                                     ("sprocket B", teethB, layout.centerDistance, phases.b, .b)] {
             let shape = try chain.sprocketShape(teeth: teeth)
             let sprocket = spawn(shape, mesh: try MeshResource.generate(from: shape), named: name, at: origin + [x, 0, 0],
                                  orientation: simd_quatf(angle: phase, axis: [0, 0, 1]))
             sprocket.components[SDFBodyComponent.self]!.material = steel
             sprocket.components.set(SDFMotionComponent())
+            makePlanar(sprocket)
             let pin0 = base.pins.set(named: name, position: sprocket.position, orientation: axle, relativeTo: root)
             let pin1 = sprocket.pins.set(named: "hub", orientation: sprocket.orientation.inverse * axle)
             var joint = SDFRevoluteJoint(pin0: pin0, pin1: pin1)
-            if motor { joint.motor = SDFRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 5000) }
+            if sprocketID == motored { joint.motor = motor }
             joints.append(joint)
         }
 
@@ -297,6 +332,11 @@ extension DemoBuilder {
             let link = spawn(linkShape, mesh: linkMesh, named: "link \(k)", at: origin + [middle.x, middle.y, 0],
                              orientation: simd_quatf(angle: atan2(direction.y, direction.x), axis: [0, 0, 1]))
             link.components[SDFBodyComponent.self]!.material = steel
+            if let linkDamping {
+                link.components[SDFBodyComponent.self]!.linearDamping = linkDamping.linear
+                link.components[SDFBodyComponent.self]!.angularDamping = linkDamping.angular
+            }
+            makePlanar(link)
             link.pins.set(named: "left", position: [-chain.pitch / 2, 0, 0], orientation: axle)
             link.pins.set(named: "right", position: [chain.pitch / 2, 0, 0], orientation: axle)
             linkEntities.append(link)
