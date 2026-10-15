@@ -75,32 +75,9 @@ import simd
         #expect(farthest > 1.0, report)
     }
 
-    /// Two spiky wheels about y, of 10 spikes each, as gears on hinges to a static base: the
-    /// spikes reach 0.9 from the axle, the axles are 1.5 apart, and the driven wheel is turned half
-    /// a spike so that the spikes interleave, their tips 0.2 short of the other hub
+    /// The spiky wheels of SDFJointedMotionTests, meshed as gears
     func addGears(driverMotor: SDFPhysicsRevoluteJoint.Motor?) throws -> (driver: Entity, driven: Entity) {
-        let base = addBox("base", halfExtents: [1, 0.1, 1], at: [0, -5, 0], mode: .static)
-        let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
-        let shape = SDFShape.spikyWheel(hubRadius: 0.4, hubHalfWidth: 0.2, spikeRadius: 0.12, spikeLength: 0.5, spikes: 10)
-        var gears: [Entity] = []
-        for (name, x, turn) in [("driver", Float(0), Float(0)), ("driven", 1.5, Float.pi / 10)] {
-            let gear = Entity()
-            gear.name = name
-            gear.position = [x, 0, 0]
-            gear.orientation = simd_quatf(angle: turn, axis: [0, 1, 0])
-            var body = SDFPhysicsBodyComponent(shape: shape)
-            body.material = SDFPhysicsMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
-            gear.components.set(body)
-            gear.components.set(SDFPhysicsMotionComponent())
-            root.addChild(gear)
-            base.pins.set(named: name, position: gear.position, orientation: axle)
-            gear.pins.set(named: "hub", orientation: gear.orientation.inverse * axle)
-            var joint = SDFPhysicsRevoluteJoint(pin0: base.pins[name]!, pin1: gear.pins["hub"]!)
-            if name == "driver" { joint.motor = driverMotor }
-            try joint.addToSimulation()
-            gears.append(gear)
-        }
-        return (gears[0], gears[1])
+        try addSpikyWheels(to: root, driverMotor: driverMotor)
     }
 
     /// The angle a gear has turned about y from its start
