@@ -63,7 +63,7 @@ let package = Package(
         // tool, the macOS app and the device app
         .target(
             name: "SDFBenchmarks",
-            dependencies: ["SDFCollisionKit"],
+            dependencies: ["SDFCollisionKit", "SDFDemoScenes"],
             path: "Samples/SDFBenchmarks"
         ),
         .executableTarget(
