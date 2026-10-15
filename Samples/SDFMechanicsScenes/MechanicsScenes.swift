@@ -35,7 +35,8 @@ public enum MechanicsScenes {
             // A meter higher than the chain needs, for the boards hanging under its sagging run
             try await b.buildChain(chain: DemoBuilder.absolutChain, teethA: 18, teethB: 29, height: 5, motored: .b,
                                    motor: .init(targetVelocity: -1, maxTorque: 15000),
-                                   linkMass: .init(density: DemoBuilder.linkDensity), linkDamping: (linear: 0.1, angular: 0.5),
+                                   sprocketMass: .init(density: DemoBuilder.sprocketDensity), linkMass: .init(density: DemoBuilder.linkDensity),
+                                   linkDamping: (linear: 0.1, angular: 0.5),
                                    isPlanar: true)
             let plato = b.root.findEntity(named: "sprocket B")!
             b.addPedals(to: plato)
@@ -59,13 +60,14 @@ extension DemoBuilder {
 
     /// The chain scene: inner and outer links in turn, pinned to each other around two sprockets
     /// on hinges, in the x-y plane at `height`, with the friction of oiled steel. The `motored`
-    /// sprocket's hinge drives it; `linkMass` and `linkDamping` replace the links' defaults;
+    /// sprocket's hinge drives it; `sprocketMass`, `linkMass` and `linkDamping` replace the defaults;
     /// planar bodies move only in the x-y plane and turn only about z.
     @MainActor
     public mutating func buildChain(chain: ChainMesh = ChainMesh(), links: Int = 48, teethA: Int = 20, teethB: Int = 10,
                                     height: Float = 3, motored: ChainSprocket = .a,
                                     motor: SDFRevoluteJoint.Motor = .init(targetVelocity: 1, maxTorque: 5000),
-                                    linkMass: SDFMassProperties = .default, linkDamping: (linear: Float, angular: Float)? = nil,
+                                    sprocketMass: SDFMassProperties = .default, linkMass: SDFMassProperties = .default,
+                                    linkDamping: (linear: Float, angular: Float)? = nil,
                                     isPlanar: Bool = false) async throws {
         let layout = ChainLayout(chain: chain, links: links, teethA: teethA, teethB: teethB)
         let origin = SIMD3<Float>(0, height, 0)
@@ -83,6 +85,7 @@ extension DemoBuilder {
             let sprocket = spawn(shape, mesh: try MeshResource.generate(from: shape), named: name, at: origin + [x, 0, 0],
                                  orientation: simd_quatf(angle: phase, axis: [0, 0, 1]))
             sprocket.components[SDFBodyComponent.self]!.material = steel
+            sprocket.components[SDFBodyComponent.self]!.massProperties = sprocketMass
             sprocket.components.set(SDFMotionComponent())
             makePlanar(sprocket)
             let pin0 = base.pins.set(named: name, position: sprocket.position, orientation: axle, relativeTo: root)

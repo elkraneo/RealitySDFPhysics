@@ -138,7 +138,7 @@ import simd
 
         var drive = PedalDrive()
         // Released before a grab: the brake
-        #expect(drive.motor(crankAngle: 1) == .init(targetVelocity: 0, maxTorque: 2500))
+        #expect(drive.motor(crankAngle: 1) == .init(targetVelocity: 0, maxTorque: 700))
         // Grabbed at the pointer's angle 2 with the crank at 1: no jump, the crank holds
         drive.grab(at: 2, crankAngle: 1)
         #expect(drive.motor(crankAngle: 1) == .init(targetVelocity: 0, maxTorque: 15000))
@@ -153,7 +153,7 @@ import simd
         #expect(abs(drive.motor(crankAngle: 3.1).targetVelocity - 8 * (2 * .pi - 6.2)) < 1e-3)
         drive.release()
         #expect(drive.target == nil)
-        #expect(drive.motor(crankAngle: 3.1) == .init(targetVelocity: 0, maxTorque: 2500))
+        #expect(drive.motor(crankAngle: 3.1) == .init(targetVelocity: 0, maxTorque: 700))
     }
 
     /// A pointer circling the plato at 1 rad/s clockwise: the crank follows it
