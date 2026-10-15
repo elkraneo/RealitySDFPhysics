@@ -1,9 +1,10 @@
 import SDFCollisionKit
 import simd
 
-/// A roller chain and its sprockets, generated as closed meshes to bake: links of two plates
-/// with a roller at each end, pinned to each other at the rollers, and sprockets whose teeth
-/// seat the rollers. The chain runs in the x-y plane with its pins along z.
+/// A roller chain and its sprockets, generated as closed meshes to bake: links pinned to each
+/// other at the rollers, and sprockets whose teeth seat the rollers. As in a bicycle's chain the
+/// links alternate: inner links of two plates with a roller at each end, and outer links of two
+/// plates outside them with the pins. The chain runs in the x-y plane with its pins along z.
 public struct ChainMesh {
     /// Distance between the pins of a link
     public var pitch: Float = 0.5
@@ -11,8 +12,14 @@ public struct ChainMesh {
     /// Half the plate's width, across the link
     public var plateHalfWidth: Float = 0.09
     public var plateThickness: Float = 0.03
-    /// Half the gap between the plates, where the rollers and the sprocket are
-    public var gapHalf: Float = 0.1
+    /// The inner links' plates are this far either side of the middle of the chain: the
+    /// rollers and the sprocket are between them
+    public var innerHalf: Float = 0.1
+    /// Between an inner plate and the outer plate over it
+    public var plateGap: Float = 0.01
+    public var pinRadius: Float = 0.05
+    /// How far a pin stands out of its outer plate, riveted
+    public var pinHead: Float = 0.01
     public var sprocketThickness: Float = 0.12
     /// How much wider than a roller a seat is
     public var seatClearance: Float = 0.05
@@ -20,48 +27,67 @@ public struct ChainMesh {
     public var tipHeight: Float = 0.5
     /// The fraction of the chain's length the sprockets are closer than it would reach around:
     /// the return run sags by it. A taut loop is over-constrained, which the solver fights until
-    /// the chain climbs off a tooth; too little slack jams, this much drives and hangs.
+    /// the chain climbs off a tooth; up to some 6% drives, and this much hangs.
     public var slack: Float = 0.04
 
     public init() {}
+
+    /// The outer links' plates are this far either side of the middle, over the inner ones
+    public var outerHalf: Float { innerHalf + plateThickness + plateGap }
 
     /// The pitch radius of a sprocket: its seats are the vertices of a polygon of `teeth` sides
     /// of the chain's pitch
     public func pitchRadius(teeth: Int) -> Float { pitch / (2 * sin(.pi / Float(teeth))) }
 
-    /// A link centered between its pins, which are at x = ±pitch / 2
-    public func linkMesh() -> (positions: [SIMD3<Float>], indices: [UInt32]) {
+    /// An inner link centered between its pins, which are at x = ±pitch / 2: two plates close
+    /// together and a roller at each end
+    public func innerLinkMesh() -> (positions: [SIMD3<Float>], indices: [UInt32]) {
         var mesh = Mesh()
-        // The plates: a bar between two discs, outlined by the farthest point along each ray,
-        // which also fills the notch where the bar meets a disc
+        mesh.extrude(plateOutline, from: innerHalf, to: innerHalf + plateThickness)
+        mesh.extrude(plateOutline, from: -innerHalf - plateThickness, to: -innerHalf)
+        for cx in [-pitch / 2, pitch / 2] {
+            mesh.extrude(circle(rollerRadius, at: [cx, 0]), from: -innerHalf, to: innerHalf, center: [cx, 0])
+        }
+        return (mesh.positions, mesh.indices)
+    }
+
+    /// An outer link centered between its pins, as an inner link: two plates outside the inner
+    /// links' and the pins through them, which run through the inner links' rollers
+    public func outerLinkMesh() -> (positions: [SIMD3<Float>], indices: [UInt32]) {
+        var mesh = Mesh()
+        mesh.extrude(plateOutline, from: outerHalf, to: outerHalf + plateThickness)
+        mesh.extrude(plateOutline, from: -outerHalf - plateThickness, to: -outerHalf)
+        let end = outerHalf + plateThickness + pinHead
+        for cx in [-pitch / 2, pitch / 2] {
+            mesh.extrude(circle(pinRadius, at: [cx, 0]), from: -end, to: end, center: [cx, 0])
+        }
+        return (mesh.positions, mesh.indices)
+    }
+
+    /// A plate: a bar between two discs at the pins, outlined by the farthest point along each
+    /// ray, which also fills the notch where the bar meets a disc
+    var plateOutline: [SIMD2<Float>] {
         let half = pitch / 2, r = rollerRadius, w = plateHalfWidth
-        var outline: [SIMD2<Float>] = []
-        for i in 0..<180 {
+        return (0..<180).map { i in
             let a = 2 * .pi * Float(i) / 180
             let d = SIMD2(cos(a), sin(a))
-            var far: Float = 0
             // The bar, a rectangle of half extents (half, w)
             let tx = d.x != 0 ? half / abs(d.x) : .infinity, ty = d.y != 0 ? w / abs(d.y) : .infinity
-            far = max(far, min(tx, ty))
-            // The discs at the pins
+            var far = min(tx, ty)
             for cx in [-half, half] {
                 let c = SIMD2(cx, 0)
                 let b = simd_dot(d, c), disc = b * b - simd_dot(c, c) + r * r
                 if disc > 0 { far = max(far, b + sqrt(disc)) }
             }
-            outline.append(d * far)
+            return d * far
         }
-        mesh.extrude(outline, from: gapHalf, to: gapHalf + plateThickness)
-        mesh.extrude(outline, from: -gapHalf - plateThickness, to: -gapHalf)
-        // The rollers
-        let circle = (0..<48).map { i -> SIMD2<Float> in
+    }
+
+    func circle(_ radius: Float, at center: SIMD2<Float>) -> [SIMD2<Float>] {
+        (0..<48).map { i in
             let a = 2 * .pi * Float(i) / 48
-            return [r * cos(a), r * sin(a)]
+            return center + radius * SIMD2(cos(a), sin(a))
         }
-        for cx in [-half, half] {
-            mesh.extrude(circle.map { $0 + [cx, 0] }, from: -gapHalf, to: gapHalf, center: [cx, 0])
-        }
-        return (mesh.positions, mesh.indices)
     }
 
     /// A sprocket about z with a seat for a roller at every tooth, the first seat at angle zero
@@ -89,8 +115,13 @@ public struct ChainMesh {
         return (mesh.positions, mesh.indices)
     }
 
-    public func linkShape(resolution: Int = 128) throws -> SDFShape {
-        let mesh = linkMesh()
+    public func innerLinkShape(resolution: Int = 128) throws -> SDFShape {
+        let mesh = innerLinkMesh()
+        return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
+    }
+
+    public func outerLinkShape(resolution: Int = 128) throws -> SDFShape {
+        let mesh = outerLinkMesh()
         return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
     }
 

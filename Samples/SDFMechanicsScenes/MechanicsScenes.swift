@@ -33,8 +33,10 @@ public enum MechanicsScenes {
         DemoScene(id: 2, name: "Absolut", description: "The Absolut Barcelona chain of 2008: 48 links around a piñon of 18 teeth and a plato of 29, the plato pedaled clockwise by a motor, as a bicycle riding to the right: it pulls the top run and the bottom one sags. Four boards hang from links, and each comes alive as the chain carries it over the plato; drag a pedal to pedal. Every body is locked in the plane, under a lighter gravity",
                   target: [2.8, 4.5, 0], distance: 16, gravity: 3) { b in
             // A meter higher than the chain needs, for the boards hanging under its sagging run
-            try await b.buildChain(teethA: 18, teethB: 29, height: 5, motored: .b, motor: .init(targetVelocity: -1, maxTorque: 15000),
-                                   linkDamping: (linear: 0.1, angular: 0.5), isPlanar: true)
+            try await b.buildChain(chain: DemoBuilder.absolutChain, teethA: 18, teethB: 29, height: 5, motored: .b,
+                                   motor: .init(targetVelocity: -1, maxTorque: 15000),
+                                   linkMass: .init(density: DemoBuilder.linkDensity), linkDamping: (linear: 0.1, angular: 0.5),
+                                   isPlanar: true)
             let plato = b.root.findEntity(named: "sprocket B")!
             b.addPedals(to: plato)
             // The links of the 2008 scene, 22, 29, 36 and 45, from an origin that puts the bike on
@@ -55,15 +57,16 @@ extension DemoBuilder {
         case a, b
     }
 
-    /// The chain scene: links pinned to each other around two sprockets on hinges, in the x-y
-    /// plane at `height`, with the friction of oiled steel. The `motored` sprocket's hinge drives
-    /// it; `linkDamping` replaces the links' default damping; planar bodies move only in the x-y
-    /// plane and turn only about z.
+    /// The chain scene: inner and outer links in turn, pinned to each other around two sprockets
+    /// on hinges, in the x-y plane at `height`, with the friction of oiled steel. The `motored`
+    /// sprocket's hinge drives it; `linkMass` and `linkDamping` replace the links' defaults;
+    /// planar bodies move only in the x-y plane and turn only about z.
     @MainActor
     public mutating func buildChain(chain: ChainMesh = ChainMesh(), links: Int = 48, teethA: Int = 20, teethB: Int = 10,
                                     height: Float = 3, motored: ChainSprocket = .a,
                                     motor: SDFRevoluteJoint.Motor = .init(targetVelocity: 1, maxTorque: 5000),
-                                    linkDamping: (linear: Float, angular: Float)? = nil, isPlanar: Bool = false) async throws {
+                                    linkMass: SDFMassProperties = .default, linkDamping: (linear: Float, angular: Float)? = nil,
+                                    isPlanar: Bool = false) async throws {
         let layout = ChainLayout(chain: chain, links: links, teethA: teethA, teethB: teethB)
         let origin = SIMD3<Float>(0, height, 0)
         let axle = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0]) // The pin's x axis along z
@@ -89,16 +92,19 @@ extension DemoBuilder {
             joints.append(joint)
         }
 
-        let linkShape = try chain.linkShape()
-        let linkMesh = try MeshResource.generate(from: linkShape)
+        // Inner links, with the rollers, and outer links, with the pins, in turn
+        precondition(links.isMultiple(of: 2), "a chain of inner and outer links needs an even number, not \(links)")
+        let shapes = [try chain.innerLinkShape(), try chain.outerLinkShape()]
+        let meshes = try shapes.map { try MeshResource.generate(from: $0) }
         let pins = layout.pins
         var linkEntities: [Entity] = []
         for k in 0..<links {
             let from = pins[k], to = pins[(k + 1) % links]
             let middle = (from + to) / 2, direction = to - from
-            let link = spawn(linkShape, mesh: linkMesh, named: "link \(k)", at: origin + [middle.x, middle.y, 0],
+            let link = spawn(shapes[k % 2], mesh: meshes[k % 2], named: "link \(k)", at: origin + [middle.x, middle.y, 0],
                              orientation: simd_quatf(angle: atan2(direction.y, direction.x), axis: [0, 0, 1]))
             link.components[SDFBodyComponent.self]!.material = steel
+            link.components[SDFBodyComponent.self]!.massProperties = linkMass
             if let linkDamping {
                 link.components[SDFBodyComponent.self]!.linearDamping = linkDamping.linear
                 link.components[SDFBodyComponent.self]!.angularDamping = linkDamping.angular

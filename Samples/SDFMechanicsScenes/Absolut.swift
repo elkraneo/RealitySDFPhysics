@@ -15,9 +15,21 @@ extension DemoBuilder {
     /// The pin's x axis along z, the chain's axles
     private static let axle = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
 
-    /// The mass of a link of the chain, by the default density
+    /// The chain: tight, a percent of slack, which still drives and leaves the return run a
+    /// slight sag
+    public static var absolutChain: ChainMesh {
+        var chain = ChainMesh()
+        chain.slack = 0.01
+        return chain
+    }
+
+    /// The density of the chain's links, a quarter of water's: some 240 kg of chain, an eighth of
+    /// the plato, where at water's it was two thirds of it and the heaviest part to pedal
+    static let linkDensity: Float = 250
+
+    /// The mass of an inner link of the chain, the heavier kind, with its rollers
     private var linkMass: Float {
-        1000 * root.findEntity(named: "link 0")!.components[SDFBodyComponent.self]!.shape.volume
+        Self.linkDensity * root.findEntity(named: "link 0")!.components[SDFBodyComponent.self]!.shape.volume
     }
 
     /// Two crank arms drawn on the plato, half a turn apart, the front one at `angle`, and at the
@@ -105,9 +117,11 @@ public struct PedalDrive: Equatable, Sendable {
     /// Speed per radian behind the pointer
     public var gain: Float = 8
     public var maxSpeed: Float = 6
+    /// Enough to start the sprockets briskly, which outweigh the chain; a chain held still takes
+    /// it without skipping a tooth
     public var maxTorque: Float = 15000
-    /// The brake's torque once released
-    public var coastTorque: Float = 300
+    /// The brake's torque once released, which stops the crank from 1 rad/s in about two seconds
+    public var coastTorque: Float = 2500
     /// The crank angle the pointer holds, or nil while released
     public private(set) var target: Float?
     /// The pointer's angle less the crank's when grabbed, so the crank doesn't jump to the pointer
