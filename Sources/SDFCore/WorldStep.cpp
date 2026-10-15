@@ -785,25 +785,22 @@ void SDFWorld::step()
 
         // Every pass takes the contacts, then the hinges, which so have the last word of each
         // iteration: a jammed chain's contacts must not pull its pins apart. A hinge is cheap
-        // next to a contact and a chain of them converges slowly, so each pass runs the hinges
+        // next to a contact and a chain of them converges slowly, so each pass sweeps the hinges
         // several times.
-        const int hingePasses = 4;
-        auto repeatHinges = [&](auto &pass) {
-            return [&](Hinge &j) {
-                for (int i = 0; i < hingePasses; i++)
+        const int hingeSweeps = 4;
+        auto sweepHinges = [&](auto &pass) {
+            for (int i = 0; i < hingeSweeps; i++)
+                for (Hinge &j : hinges)
                     pass(j);
-            };
         };
-        auto solveHingeVelocities = repeatHinges(solveHingeVelocity);
-        auto solveHingePositions = repeatHinges(solveHingePosition);
         auto solve = [&](auto &&forEach) {
             forEach(warmStartHinge, warmStart);
             for (int it = 0; it < s.iterations; it++)
-                forEach(solveHingeVelocities, solveVelocity);
+                forEach(solveHingeVelocity, solveVelocity);
             forEach(noHinge, solveRestitution);
             forEach(noHinge, store);
             for (int it = 0; it < positionIterations; it++)
-                forEach(solveHingePositions, solvePosition);
+                forEach(solveHingePosition, solvePosition);
         };
 
         if (!parallel)
@@ -811,8 +808,7 @@ void SDFWorld::step()
             solve([&](auto &hingePass, auto &pass) {
                 for (Contact &c : contacts)
                     pass(c);
-                for (Hinge &j : hinges)
-                    hingePass(j);
+                sweepHinges(hingePass);
             });
         }
         else
@@ -922,8 +918,7 @@ void SDFWorld::step()
                     if (!hinges.empty())
                     {
                         if (thread == 0)
-                            for (Hinge &j : hinges)
-                                hingePass(j);
+                            sweepHinges(hingePass);
                         if (threadCount > 1)
                             pool.barrier();
                     }

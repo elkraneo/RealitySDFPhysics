@@ -32,7 +32,8 @@ public struct ChainMesh {
     /// A link centered between its pins, which are at x = ±pitch / 2
     public func linkMesh() -> (positions: [SIMD3<Float>], indices: [UInt32]) {
         var mesh = Mesh()
-        // The plates: a bar between two discs, outlined by the farthest point along each ray
+        // The plates: a bar between two discs, outlined by the farthest point along each ray,
+        // which also fills the notch where the bar meets a disc
         let half = pitch / 2, r = rollerRadius, w = plateHalfWidth
         var outline: [SIMD2<Float>] = []
         for i in 0..<180 {
@@ -135,7 +136,8 @@ public struct ChainLayout {
         self.links = links
         self.teethA = teethA
         self.teethB = teethB
-        // The loop's length grows with the distance; bisect for the chain's length
+        // The loop's length grows with the distance; bisect for the chain's length less the
+        // slack, which the bottom run then hangs out
         let target = Float(links) * chain.pitch * (1 - chain.slack)
         var low = radiusA + radiusB, high = target / 2
         for _ in 0..<60 {
@@ -157,42 +159,47 @@ public struct ChainLayout {
         return 2 * straight + radiusB * (.pi - 2 * beta) + radiusA * (.pi + 2 * beta)
     }
 
-    /// The pins, from the top of sprocket A clockwise: along the top line, around B, back along
-    /// the bottom, around A
+    /// The pins, clockwise from where the top run leaves sprocket A. Around each sprocket they
+    /// sit a tooth apart from its top tangent point, so that every roller on a sprocket is in a
+    /// seat; the two runs share the rest evenly, closer than a pitch by the slack, which the
+    /// chain hangs out as sag.
     public var pins: [SIMD2<Float>] {
         let beta = lean(at: centerDistance), c = centerDistance
         let straight = sqrt(c * c - (radiusA - radiusB) * (radiusA - radiusB))
-        let wrapB = radiusB * (.pi - 2 * beta), wrapA = radiusA * (.pi + 2 * beta)
-        let topA = SIMD2(radiusA * cos(.pi / 2 + beta), radiusA * sin(.pi / 2 + beta))
-        let topB = SIMD2(c + radiusB * cos(.pi / 2 + beta), radiusB * sin(.pi / 2 + beta))
-        let along = (topB - topA) / straight
-        return (0..<links).map { k -> SIMD2<Float> in
-            var s = Float(k) * chain.pitch
-            if s < straight { return topA + along * s }
-            s -= straight
-            if s < wrapB {
-                let a = .pi / 2 + beta - s / radiusB
-                return [c + radiusB * cos(a), radiusB * sin(a)]
-            }
-            s -= wrapB
-            if s < straight {
-                let bottomB = SIMD2(c + radiusB * cos(-.pi / 2 - beta), radiusB * sin(-.pi / 2 - beta))
-                return bottomB - along * s
-            }
-            s -= straight
-            let a = -.pi / 2 - beta - s / radiusA
-            return [radiusA * cos(a), radiusA * sin(a)]
+        // The tangent points: the runs' normal leans toward the small sprocket
+        let top = Float.pi / 2 - beta, bottom = -Float.pi / 2 + beta
+        func onA(_ a: Float) -> SIMD2<Float> { [radiusA * cos(a), radiusA * sin(a)] }
+        func onB(_ a: Float) -> SIMD2<Float> { [c + radiusB * cos(a), radiusB * sin(a)] }
+        // Around B, clockwise from its top tangent point, within its wrap
+        let stepB = 2 * .pi / Float(teethB)
+        var wrapB: [SIMD2<Float>] = []
+        var a = top
+        while a > bottom - 1e-4 { wrapB.append(onB(a)); a -= stepB }
+        // Around A, from its top tangent point backwards, then reversed into chain order
+        let stepA = 2 * .pi / Float(teethA)
+        var wrapA: [SIMD2<Float>] = []
+        a = top
+        while a < bottom + 2 * .pi + 1e-4 { wrapA.append(onA(a)); a += stepA }
+        wrapA.reverse()
+        // The runs share what is left, between the last pin of one wrap and the first of the next
+        let onRuns = max(links - wrapA.count - wrapB.count, 0)
+        let onTop = onRuns / 2, onBottom = onRuns - onTop
+        func run(from: SIMD2<Float>, to: SIMD2<Float>, count: Int) -> [SIMD2<Float>] {
+            (1...max(count, 1)).prefix(count).map { from + (to - from) * (Float($0) / Float(count + 1)) }
         }
+        var pins: [SIMD2<Float>] = []
+        pins += wrapA.suffix(1)
+        pins += run(from: wrapA.last!, to: wrapB.first!, count: onTop)
+        pins += wrapB
+        pins += run(from: wrapB.last!, to: wrapA.first!, count: onBottom)
+        pins += wrapA.dropLast()
+        return Array(pins.prefix(links))
     }
 
-    /// The angle of the first seat of each sprocket, so that a seat holds the first roller on it
+    /// The angle of the first seat of each sprocket: a seat at each top tangent point
     public var phases: (a: Float, b: Float) {
-        let beta = lean(at: centerDistance)
-        let straight = sqrt(centerDistance * centerDistance - (radiusA - radiusB) * (radiusA - radiusB))
-        // The first pin past the top line sits on B at this angle; A's wrap starts at the bottom
-        let firstOnB = (straight / chain.pitch).rounded(.up) * chain.pitch - straight
-        let wrapB = radiusB * (.pi - 2 * beta)
-        let firstOnA = ((straight + wrapB + straight) / chain.pitch).rounded(.up) * chain.pitch - (straight + wrapB + straight)
-        return (-.pi / 2 - beta - firstOnA / radiusA, .pi / 2 + beta - firstOnB / radiusB)
+        let top = Float.pi / 2 - lean(at: centerDistance)
+        return (top, top)
     }
+
 }
