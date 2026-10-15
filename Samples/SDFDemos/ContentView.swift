@@ -14,7 +14,7 @@ struct ContentView: View {
             ZStack(alignment: .topTrailing) {
                 Viewport(model: model)
                 StatsOverlay(simulation: model.simulation, sceneDescription: model.sceneDescription,
-                             isLoading: model.isLoading, errorMessage: model.errorMessage)
+                             isLoading: model.isLoading, errorMessage: model.errorMessage, activeObject: model.activeObject)
                     .padding(12)
             }
         }
@@ -65,7 +65,7 @@ private struct Sidebar: View {
             ParametersSection(settings: $model.settings, reset: model.resetParameters)
 
             Section {
-                Text("Drag a body to move it, drag the background to orbit, pinch to zoom.")
+                Text("Drag a body to move it, drag the background to orbit, pinch to zoom. In Absolut, drag around the plato to pedal.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -132,6 +132,7 @@ private struct StatsOverlay: View {
     let sceneDescription: String
     let isLoading: Bool
     let errorMessage: String?
+    let activeObject: String?
 
     var body: some View {
         // The simulation is not observable; sample its statistics a few times per second
@@ -144,6 +145,9 @@ private struct StatsOverlay: View {
                 }
                 if let errorMessage {
                     Text(errorMessage).foregroundStyle(.red)
+                }
+                if let activeObject {
+                    Text("Active: \(activeObject)").foregroundStyle(.orange)
                 }
                 Text("\(stats.bodies) bodies · \(stats.pairs) pairs · \(stats.contacts) contacts")
                 Text("step \(stats.stepMilliseconds, format: .number.precision(.fractionLength(2))) ms · collision \(stats.collisionMilliseconds, format: .number.precision(.fractionLength(2))) ms")
@@ -162,6 +166,7 @@ private struct Viewport: View {
     let model: DemoModel
 
     private enum Interaction {
+        case pedal
         case body(distance: Float)
         case orbit(last: CGPoint)
     }
@@ -177,6 +182,7 @@ private struct Viewport: View {
                     content.add(DemoStage.makeFloor())
                     content.add(DemoStage.makeLight())
                     content.add(model.cameraEntity)
+                    model.frameUpdates = content.subscribe(to: SceneEvents.Update.self) { _ in model.updatePedals() }
                 }
                 Color.clear
                     .contentShape(.rect)
@@ -195,11 +201,16 @@ private struct Viewport: View {
                     // The root is at the scene origin, so its frame is the world's. The drag holds
                     // the body as a hand would, with a capped force: a gear or a link pulled into
                     // another stops against it rather than passing through.
-                    if let picked = model.simulation.beginDrag(origin: ray.origin, direction: ray.direction) {
+                    if model.beginPedaling(origin: ray.origin, direction: ray.direction) {
+                        interaction = .pedal
+                    } else if let picked = model.simulation.beginDrag(origin: ray.origin, direction: ray.direction) {
                         interaction = .body(distance: simd_distance(picked.hit, ray.origin))
                     } else {
                         interaction = .orbit(last: value.startLocation)
                     }
+                case .pedal:
+                    let ray = model.ray(through: value.location, in: size)
+                    model.pedal(origin: ray.origin, direction: ray.direction)
                 case .body(let distance):
                     let ray = model.ray(through: value.location, in: size)
                     model.simulation.drag(to: ray.origin + ray.direction * distance)
@@ -210,6 +221,7 @@ private struct Viewport: View {
             }
             .onEnded { _ in
                 model.simulation.endDrag()
+                model.endPedaling()
                 interaction = nil
             }
     }

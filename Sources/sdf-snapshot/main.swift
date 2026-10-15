@@ -48,6 +48,8 @@ do {
         try await scene.load(into: root)
         let loadMilliseconds = Date().timeIntervalSince(loadStart) * 1000
         root.addChild(ContactMarkers.makeEntity())
+        // The Absolut scene's hung objects light up over the plato
+        let carrier = CarrierZone(root: root, simulation: simulation)
 
         var total = 0.0, slowest = 0.0, collision = 0.0, pairs = 0, queries = 0
         for _ in 0..<steps {
@@ -59,6 +61,7 @@ do {
             pairs += stats.pairs
             queries += stats.queries
         }
+        withExtendedLifetime(carrier) {}
 
         let renderer = try RealityRenderer()
         let camera = DemoStage.makeCamera()

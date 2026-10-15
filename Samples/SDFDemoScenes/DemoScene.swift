@@ -204,10 +204,17 @@ extension DemoScene {
             try await b.buildChain()
         },
         // The ids are the indices
-        DemoScene(id: 13, name: "Absolut", description: "The Absolut Barcelona chain of 2008: 48 links around a piñon of 18 teeth and a plato of 29, the plato pedaled clockwise by a motor, as a bicycle riding to the right: it pulls the top run and the bottom one sags. Every body is locked in the plane, under a lighter gravity",
-                  target: [2.8, 3.5, 0], distance: 16, gravity: 3) { b in
-            try await b.buildChain(teethA: 18, teethB: 29, height: 4, motored: .b, motor: .init(targetVelocity: -1, maxTorque: 15000),
+        DemoScene(id: 13, name: "Absolut", description: "The Absolut Barcelona chain of 2008: 48 links around a piñon of 18 teeth and a plato of 29, the plato pedaled clockwise by a motor, as a bicycle riding to the right: it pulls the top run and the bottom one sags. Four boards hang from links, and each comes alive as the chain carries it over the plato; drag a pedal to pedal. Every body is locked in the plane, under a lighter gravity",
+                  target: [2.8, 4.5, 0], distance: 16, gravity: 3) { b in
+            // A meter higher than the chain needs, for the boards hanging under its sagging run
+            try await b.buildChain(teethA: 18, teethB: 29, height: 5, motored: .b, motor: .init(targetVelocity: -1, maxTorque: 15000),
                                    linkDamping: (linear: 0.1, angular: 0.5), isPlanar: true)
+            let plato = b.root.findEntity(named: "sprocket B")!
+            b.addPedals(to: plato)
+            // The links of the 2008 scene, 22, 29, 36 and 45, from an origin that puts the bike on
+            // the top run, left of its middle. Sizes guessed.
+            b.hang([("bike", 3, [1, 0.7]), ("saddle", 10, [0.6, 0.6]), ("handlebar", 17, [0.9, 0.6]), ("Gaudí", 26, [0.6, 0.8])])
+            b.addZone(above: plato, height: ChainMesh().pitchRadius(teeth: 29) + 0.5)
         },
         DemoScene(id: 14, name: "Planetary", description: "A sun of 12 teeth, three planets of 12 on a carrier and a ring of 36 with inward teeth, all on hinges: the sun motored, the ring braked, the carrier turns a quarter as fast",
                   target: [0, 0.6, 0], distance: 7) { b in
@@ -306,9 +313,7 @@ extension DemoBuilder {
 
         let phases = layout.phases
         func makePlanar(_ entity: Entity) {
-            guard isPlanar else { return }
-            entity.components[SDFBodyComponent.self]!.isTranslationLocked = (false, false, true)
-            entity.components[SDFBodyComponent.self]!.isRotationLocked = (true, true, false)
+            if isPlanar { entity.components[SDFBodyComponent.self]!.lockToPlane() }
         }
         for (name, teeth, x, phase, sprocketID) in [("sprocket A", teethA, Float(0), phases.a, ChainSprocket.a),
                                                      ("sprocket B", teethB, layout.centerDistance, phases.b, .b)] {

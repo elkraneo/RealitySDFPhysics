@@ -21,6 +21,16 @@ final class DemoModel {
     private(set) var sceneIndex = 0
     private(set) var isLoading = false
     private(set) var errorMessage: String?
+    /// The hung object the chain has carried into the zone over the plato, in the Absolut scene
+    private(set) var activeObject: String?
+
+    // The Absolut scene: a hand on the pedals once dragged, which drives the crank's hinge every
+    // frame, and the zone that activates the hung objects
+    @ObservationIgnored private var crank: (entity: Entity, hinge: Int)?
+    @ObservationIgnored private var pedalDrive = PedalDrive()
+    @ObservationIgnored private var isPedaled = false
+    @ObservationIgnored private var carrier: CarrierZone?
+    @ObservationIgnored var frameUpdates: EventSubscription?
 
     /// The root's simulation settings, applied on change
     var settings: SDFSimulationComponent {
@@ -72,6 +82,12 @@ final class DemoModel {
         var settings = settings.with(simulation)
         DemoScene.all[index].configure(&settings)
         self.settings = settings
+        crank = PedalDrive.crank(in: root)
+        pedalDrive = PedalDrive()
+        isPedaled = false
+        activeObject = nil
+        carrier = CarrierZone(root: root, simulation: simulation)
+        carrier?.onChange = { [weak self] object in self?.activeObject = object?.name }
         camera = OrbitCamera(for: DemoScene.all[index])
         camera.place(cameraEntity)
     }
@@ -98,6 +114,48 @@ final class DemoModel {
         } catch {
             errorMessage = "Could not drop \(dropShape): \(error.localizedDescription)"
         }
+    }
+
+    // MARK: Pedals
+
+    /// Takes the crank by a ray that meets the chain's plane within the pedals' reach of its axle;
+    /// false without a crank there
+    func beginPedaling(origin: SIMD3<Float>, direction: SIMD3<Float>) -> Bool {
+        guard let crank, let angle = crankAngle, let point = PedalDrive.pointOnPlane(origin: origin, direction: direction)
+        else { return false }
+        let axle = crank.entity.position(relativeTo: root)
+        guard simd_distance(point, axle) < 4 else { return false }
+        pedalDrive.grab(at: PedalDrive.angle(of: point, about: axle), crankAngle: angle)
+        isPedaled = true
+        return true
+    }
+
+    func pedal(origin: SIMD3<Float>, direction: SIMD3<Float>) {
+        guard let crank, let point = PedalDrive.pointOnPlane(origin: origin, direction: direction) else { return }
+        pedalDrive.move(to: PedalDrive.angle(of: point, about: crank.entity.position(relativeTo: root)))
+    }
+
+    func endPedaling() {
+        pedalDrive.release()
+    }
+
+    /// Sets the crank's motor from the drive, every frame once the pedals have been taken; until
+    /// then the scene's own motor turns it
+    func updatePedals() {
+        guard isPedaled, let crank, let angle = crankAngle,
+              var joints = root.components[SDFJointsComponent.self], joints.joints.indices.contains(crank.hinge)
+        else { return }
+        let motor = pedalDrive.motor(crankAngle: angle)
+        guard joints.joints[crank.hinge].motor != motor else { return }
+        joints.joints[crank.hinge].motor = motor
+        root.components.set(joints)
+    }
+
+    private var crankAngle: Float? {
+        guard let crank, let joints = root.components[SDFJointsComponent.self]?.joints,
+              joints.indices.contains(crank.hinge)
+        else { return nil }
+        return simulation.angle(of: joints[crank.hinge])
     }
 
     // MARK: Camera
