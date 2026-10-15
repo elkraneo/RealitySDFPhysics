@@ -123,15 +123,19 @@ public final class SDFSimulation {
 
         @MainActor init(of entity: Entity, relativeTo root: Entity) {
             // A direct child's local transform is its pose in the root; the general query
-            // composes and decomposes matrices up the chain, several times the cost
+            // composes and decomposes matrices up the chain, several times the cost. A rotation
+            // that is not a unit quaternion, such as simd_quatf(), which is zero, is left to the
+            // query, which reads it through the matrix as RealityKit renders it: zero is identity.
             if entity.parent === root {
                 let transform = entity.transform
-                position = transform.translation
-                orientation = transform.rotation
-            } else {
-                position = entity.position(relativeTo: root)
-                orientation = entity.orientation(relativeTo: root)
+                if abs(simd_length_squared(transform.rotation.vector) - 1) < 1e-4 {
+                    position = transform.translation
+                    orientation = transform.rotation
+                    return
+                }
             }
+            position = entity.position(relativeTo: root)
+            orientation = entity.orientation(relativeTo: root)
         }
 
         /// Writes the pose to the entity, keeping its scale

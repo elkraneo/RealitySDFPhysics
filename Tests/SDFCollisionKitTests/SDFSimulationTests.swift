@@ -41,6 +41,17 @@ import simd
         #expect(simulation.statistics.contacts > 0)
     }
 
+    @Test func zeroRotationIsIdentity() {
+        // simd_quatf() is the zero quaternion, which RealityKit renders as no rotation
+        let slab = addBody(.box(halfExtents: [2, 0.5, 2]), mode: .static, at: [0, 0.5, 0])
+        slab.transform.rotation = simd_quatf()
+        let box = addBody(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 3, 0])
+        box.transform.rotation = simd_quatf()
+        run(180)
+        expectResting(box, atHeight: 1.5)
+        #expect(simulation.statistics.contacts > 0)
+    }
+
     @Test func bakedShapeRestsInTheEntityFrame() throws {
         // The mesh sits 2 units off the entity's origin; the entity itself must not drift
         let shape = try SDFShape.bakedBox(halfExtents: [0.5, 0.5, 0.5], center: [2, 0, 0])
