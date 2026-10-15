@@ -203,12 +203,15 @@ extension DemoScene {
                   target: [4.1, 3, 0], distance: 16) { b in
             try await b.buildChain()
         },
-        // The ids are the indices: a scene added on another branch may take this one's place,
-        // so this one goes last, whatever its number
+        // The ids are the indices
         DemoScene(id: 13, name: "Absolut", description: "The Absolut Barcelona chain of 2008: 48 links around a piñon of 18 teeth and a plato of 29, the plato pedaled clockwise by a motor, as a bicycle riding to the right: it pulls the top run and the bottom one sags. Every body is locked in the plane, under a lighter gravity",
                   target: [2.8, 3.5, 0], distance: 16, gravity: 3) { b in
             try await b.buildChain(teethA: 18, teethB: 29, height: 4, motored: .b, motor: .init(targetVelocity: -1, maxTorque: 15000),
                                    linkDamping: (linear: 0.1, angular: 0.5), isPlanar: true)
+        },
+        DemoScene(id: 14, name: "Planetary", description: "A sun of 12 teeth, three planets of 12 on a carrier and a ring of 36 with inward teeth, all on hinges: the sun motored, the ring braked, the carrier turns a quarter as fast",
+                  target: [0, 0.6, 0], distance: 7) { b in
+            try await b.buildPlanetary()
         },
     ]
 
@@ -343,6 +346,78 @@ extension DemoBuilder {
         }
         for k in 0..<links {
             joints.append(SDFRevoluteJoint(pin0: linkEntities[k].pins["right"]!, pin1: linkEntities[(k + 1) % links].pins["left"]!))
+        }
+    }
+}
+
+extension DemoBuilder {
+    /// The planetary scene: a sun, three planets on a carrier and a ring, about the y axis at
+    /// height 0.8, every gear of module 0.1 on a hinge. The sun is motored at 1 rad/s; with
+    /// `brakingRing` the ring is held by a motor at zero speed and the carrier turns at
+    /// sun / (1 + ring / sun) = 0.25 rad/s the same way, else the carrier is held and the ring
+    /// turns at −sun / 3. The ring is the concave shape: one SDF, where a convex engine needs a
+    /// hull per tooth.
+    ///
+    /// `backlash` is a profile shift: the sun's teeth thinned by it and the ring's spaces widened
+    /// by it, each about the backlash of a center distance `backlash` larger, while every gear
+    /// stays on its pitch circle. Center distance alone can't give both meshes room: the planets
+    /// moved out from the sun by `b` move into the ring by `b`, whose center distance to a planet
+    /// is the difference of their pitch radii, and a ring shifted to make room for that and some
+    /// backlash besides needs twice the shift, which narrows its spaces to a V at the root.
+    @MainActor
+    public mutating func buildPlanetary(backlash: Float = 0.08, brakingRing: Bool = true) async throws {
+        let module: Float = 0.1, thickness: Float = 0.4
+        let sunTeeth = 12, planetTeeth = 12, ringTeeth = sunTeeth + 2 * planetTeeth
+        let center = SIMD3<Float>(0, 0.8, 0)
+        let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
+        let steel = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+        // Fine bakes: some 0.009 units a cell for the gears and 0.011 for the ring, against the
+        // contact skin of 0.02. At the gear pair's 0.014 and 0.019 the teeth wedge now and then,
+        // and one wedged mesh of six stops the set.
+        let gearResolution = 160, ringResolution = 400
+        let base = try await spawn("Box", at: [0, -0.5, 0], scale: 0.4, mode: .static, isVisible: false)
+        let orbit = Float(sunTeeth + planetTeeth) * module / 2
+
+        /// A body on a hinge to `holder`, about the body's y axis through its position
+        func hinge(_ body: Entity, to holder: Entity, motor: SDFRevoluteJoint.Motor? = nil) -> SDFRevoluteJoint {
+            body.components[SDFBodyComponent.self]!.material = steel
+            body.components.set(SDFMotionComponent())
+            let pin0 = holder.pins.set(named: body.name, position: body.position, orientation: axle, relativeTo: root)
+            let pin1 = body.pins.set(named: "hub", orientation: body.orientation.inverse * axle)
+            return SDFRevoluteJoint(pin0: pin0, pin1: pin1, motor: motor)
+        }
+
+        // Phases, as angles about y; turning an entity by θ moves its outline by −θ in the x-z
+        // plane's angle atan2(z, x). The sun, unturned, has a tooth at 0° and every 30°, so at
+        // each planet's direction, 0°, 120° and 240°. A planet must face it with a space, and a
+        // planet turned by half a tooth, 15°, has its spaces at every 30°: toward the sun and,
+        // 180° on, toward the ring as well. The ring's spaces are at every 10°, its teeth between
+        // them, so turned by half a tooth, 5°, it has a tooth at 0°, 120° and 240°: facing each
+        // planet's outer space. The three planets can share a phase because (sun + ring) / 3 =
+        // 16 is a whole number of teeth: the planets sit 16 sun teeth apart, as seen by both.
+        let sunShape = try GearMesh.shape(teeth: sunTeeth, module: module, thickness: thickness, shift: -backlash, resolution: gearResolution)
+        let sun = spawn(sunShape, mesh: try MeshResource.generate(from: sunShape), named: "sun", at: center)
+        joints.append(hinge(sun, to: base, motor: .init(targetVelocity: 1, maxTorque: 500)))
+
+        let ringShape = try GearMesh.ringShape(teeth: ringTeeth, module: module, thickness: thickness, outerRadius: 2.15,
+                                               shift: backlash, resolution: ringResolution)
+        let ring = spawn(ringShape, mesh: try MeshResource.generate(from: ringShape), named: "ring", at: center,
+                         orientation: simd_quatf(angle: .pi / Float(ringTeeth), axis: [0, 1, 0]))
+        joints.append(hinge(ring, to: base, motor: brakingRing ? .init(targetVelocity: 0, maxTorque: 2000) : nil))
+
+        // The carrier, a plate under the gears, clear of the sun and the ring
+        let plate = SDFShape.cylinder(radius: orbit + 0.25, halfHeight: 0.05)
+        let carrier = spawn(plate, mesh: try MeshResource.generate(from: plate), named: "carrier", at: center - [0, 0.4, 0])
+        joints.append(hinge(carrier, to: base, motor: brakingRing ? nil : .init(targetVelocity: 0, maxTorque: 2000)))
+
+        let planetShape = try GearMesh.shape(teeth: planetTeeth, module: module, thickness: thickness, resolution: gearResolution)
+        let planetMesh = try MeshResource.generate(from: planetShape)
+        for k in 0..<3 {
+            let direction = 2 * Float.pi * Float(k) / 3
+            let planet = spawn(planetShape, mesh: planetMesh, named: "planet \(k)",
+                               at: center + orbit * SIMD3(cos(direction), 0, sin(direction)),
+                               orientation: simd_quatf(angle: .pi / Float(planetTeeth), axis: [0, 1, 0]))
+            joints.append(hinge(planet, to: carrier))
         }
     }
 }
