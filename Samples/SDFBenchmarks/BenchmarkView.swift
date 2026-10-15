@@ -1,4 +1,6 @@
+import RealityKit
 import SDFCollisionKit
+import SDFDemoScenes
 import SwiftUI
 
 /// Runs the standard table of `sdf-bench` on the machine at hand and shows it: the pile of tori
@@ -18,6 +20,8 @@ public struct BenchmarkView: View {
                 HStack {
                     Button(model.isRunning ? "Running…" : "Run") { model.run() }
                         .disabled(model.isRunning)
+                    Button("Scenes") { model.run(scenes: true) }
+                        .disabled(model.isRunning)
                     Button("Copy") { model.copyReport() }
                         .disabled(model.report.isEmpty || model.isRunning)
                     if model.isRunning { ProgressView() }
@@ -31,7 +35,10 @@ public struct BenchmarkView: View {
         }
         .navigationTitle("SDF Benchmarks")
         // Launched with --run, as from a Mac over devicectl, the table runs and prints by itself
-        .task { if CommandLine.arguments.contains("--run") { model.run() } }
+        .task {
+            if CommandLine.arguments.contains("--run") { model.run() }
+            if CommandLine.arguments.contains("--scenes") { model.run(scenes: true) }
+        }
     }
 }
 
@@ -42,14 +49,41 @@ final class BenchmarkModel {
     private(set) var isRunning = false
     private(set) var report = ""
 
-    func run() {
+    func run(scenes: Bool = false) {
         guard !isRunning else { return }
         isRunning = true
         report = ""
         Task { @MainActor in
-            await runTable()
+            if scenes { await runScenes() } else { await runTable() }
             isRunning = false
         }
+    }
+
+    /// The mechanics demo scenes stepped with the real-time preset: step time, mean and worst
+    private func runScenes() async {
+        emit("\(device.text)")
+        emit("ms/step, mean / worst over 300 steps, real-time preset. Load is the baking.")
+        emit("scene         bodies   load ms   step   contacts")
+        for scene in DemoScene.all where ["Gears", "Chain", "Absolut", "Planetary"].contains(scene.name) {
+            await Task.yield()
+            let simulation = SDFSimulation(), root = Entity()
+            var settings = SDFSimulationComponent(simulation: simulation)
+            settings.isSleepingEnabled = false
+            root.components.set(settings)
+            let loadStart = Date()
+            do { try await scene.load(into: root) } catch { emit("\(scene.name): \(error)"); continue }
+            let load = Date().timeIntervalSince(loadStart) * 1000
+            var times: [Double] = []
+            for _ in 0..<300 {
+                let start = DispatchTime.now().uptimeNanoseconds
+                simulation.step(root: root)
+                times.append(Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
+            }
+            let stats = simulation.statistics
+            emit(String(format: "%-13@ %6d %9.0f   %5.2f / %5.2f   %5d", scene.name, stats.bodies, load,
+                        times.reduce(0, +) / Double(times.count), times.max() ?? 0, stats.contacts))
+        }
+        emit("thermal state at the end: \(DeviceInfo.current.thermalState)")
     }
 
     private func runTable() async {
