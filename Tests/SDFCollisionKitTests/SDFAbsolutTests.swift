@@ -15,16 +15,16 @@ import simd
 
     /// The small sprocket on the left: the layout was first written for A larger than B
     @Test func layoutClosesWithTheSmallSprocketFirst() {
-        let chain = ChainMesh()
+        let chain = DemoBuilder.absolutChain
         let layout = ChainLayout(chain: chain, links: 48, teethA: 18, teethB: 29)
         let pins = layout.pins
         #expect(pins.count == 48)
         let gaps = pins.indices.map { simd_distance(pins[$0], pins[($0 + 1) % pins.count]) }
         let report = Comment(rawValue: "center distance \(layout.centerDistance), gaps \(gaps.min()!) to \(gaps.max()!), closing \(gaps.last!)")
-        #expect(abs(layout.centerDistance - 5.56) < 0.1, report)
-        // A pitch around the sprockets, and on the runs closer by the slack, shared out: 4% of
-        // the chain over the runs' 22 gaps is about 9% of each
-        #expect(gaps.allSatisfy { $0 > 0.9 * chain.pitch && $0 < chain.pitch + 1e-4 }, report)
+        #expect(abs(layout.centerDistance - 5.92) < 0.1, report)
+        // A pitch around the sprockets, and on the runs closer by the slack, shared out: 1% of
+        // the chain over the runs' 22 gaps is about 2% of each
+        #expect(gaps.allSatisfy { $0 > 0.97 * chain.pitch && $0 < chain.pitch + 1e-4 }, report)
         #expect(abs(gaps.last! - chain.pitch) < 1e-3, report)
     }
 
@@ -76,9 +76,9 @@ import simd
     }
 
     /// A minute of pedaling: the piñon's turn stays 29/18 of the plato's. The chain's slack moves
-    /// from the top run to the bottom one as the motor takes it up, which puts the piñon about a
-    /// tooth behind in the first seconds and lets it wander a little after; a skipped tooth would
-    /// stay.
+    /// from the top run to the bottom one as the motor takes it up, which puts the piñon a fraction
+    /// of a tooth behind in the first seconds and lets it wander a little after; a skipped tooth
+    /// would stay.
     @Test func noToothSkippedInAMinute() async throws {
         let scene = try await load(.realTime)
         let timeStep = scene.root.components[SDFSimulationComponent.self]!.timeStep
@@ -138,7 +138,7 @@ import simd
 
         var drive = PedalDrive()
         // Released before a grab: the brake
-        #expect(drive.motor(crankAngle: 1) == .init(targetVelocity: 0, maxTorque: 300))
+        #expect(drive.motor(crankAngle: 1) == .init(targetVelocity: 0, maxTorque: 700))
         // Grabbed at the pointer's angle 2 with the crank at 1: no jump, the crank holds
         drive.grab(at: 2, crankAngle: 1)
         #expect(drive.motor(crankAngle: 1) == .init(targetVelocity: 0, maxTorque: 15000))
@@ -153,7 +153,7 @@ import simd
         #expect(abs(drive.motor(crankAngle: 3.1).targetVelocity - 8 * (2 * .pi - 6.2)) < 1e-3)
         drive.release()
         #expect(drive.target == nil)
-        #expect(drive.motor(crankAngle: 3.1) == .init(targetVelocity: 0, maxTorque: 300))
+        #expect(drive.motor(crankAngle: 3.1) == .init(targetVelocity: 0, maxTorque: 700))
     }
 
     /// A pointer circling the plato at 1 rad/s clockwise: the crank follows it
@@ -215,7 +215,7 @@ import simd
             angleB += scene.plato.components[SDFMotionComponent.self]!.angularVelocity.z * timeStep
             if carrier.inside.count > 1 { crowded += 1 }
             // Under the straight of the bottom run the outward normal is straight down. The run sags
-            // over a meter and waves, its links tilting up to 0.3 either way, and the hinges' limit
+            // and waves, its links tilting up to 0.3 either way, and the hinges' limit
             // turns the boards with them once they reach it.
             for (board, hinge) in zip(boards, hinges)
             where i >= 120 && abs(PedalDrive.wrap(roll(hinge.pin0.entity!, in: scene.root) - .pi)) < 0.3 {
