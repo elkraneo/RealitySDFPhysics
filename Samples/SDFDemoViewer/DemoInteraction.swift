@@ -2,9 +2,9 @@ import Foundation
 import RealityKit
 import RealitySDFPhysics
 
-/// A scene's own handling of the pointer and the frame, such as a crank to pedal: the viewer
-/// makes one for every load of the scene and offers it each drag before the bodies and the
-/// camera get it.
+/// A scene's own handling of the pointer and the frame, such as a wheel turned by dragging:
+/// the viewer makes one for every load of the scene and offers it each drag before the bodies
+/// and the camera get it.
 @MainActor
 public protocol DemoInteraction: AnyObject {
     /// Called once the scene is loaded under `root`, with the simulation that steps it

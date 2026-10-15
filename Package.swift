@@ -7,8 +7,11 @@ let package = Package(
     platforms: [.macOS(.v15), .iOS(.v18), .visionOS(.v2)],
     products: [
         .library(name: "RealitySDFPhysics", targets: ["RealitySDFPhysics"]),
+        // The paper's scenes and their builder, and the window that shows them, for packages that
+        // build scenes of their own on them
+        .library(name: "SDFDemoScenes", targets: ["SDFDemoScenes"]),
+        .library(name: "SDFDemoViewer", targets: ["SDFDemoViewer"]),
         .executable(name: "SDFDemos", targets: ["SDFDemos"]),
-        .executable(name: "SDFMechanics", targets: ["SDFMechanics"]),
         .executable(name: "SDFRealityKitSamples", targets: ["SDFRealityKitSamples"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
         .executable(name: "sdf-video", targets: ["sdf-video"]),
@@ -46,18 +49,6 @@ let package = Package(
             dependencies: ["SDFDemoScenes", "SDFDemoViewer"],
             path: "Samples/SDFDemos"
         ),
-        // Mechanisms on the joints, beyond the paper's demo: gears, chains, the Absolut chain and
-        // a planetary set, and their app
-        .target(
-            name: "SDFMechanicsScenes",
-            dependencies: ["RealitySDFPhysics", "SDFDemoScenes"],
-            path: "Samples/SDFMechanicsScenes"
-        ),
-        .executableTarget(
-            name: "SDFMechanics",
-            dependencies: ["RealitySDFPhysics", "SDFDemoViewer", "SDFMechanicsScenes"],
-            path: "Samples/SDFMechanics"
-        ),
         // Apple's RealityKit physics samples, ported to SDF bodies: the scenes, shared by the app and
         // the video renderer, and the app
         .target(
@@ -75,14 +66,14 @@ let package = Package(
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(
             name: "sdf-snapshot",
-            dependencies: ["SDFDemoScenes", "SDFMechanicsScenes"]
+            dependencies: ["SDFDemoScenes"]
         ),
         // The same pile of tori timed with RealitySDFPhysics and with RealityKit's physics: the
         // scene, the timings and a view that runs the standard table, shared by the command-line
         // tool, the macOS app and the device app
         .target(
             name: "SDFBenchmarks",
-            dependencies: ["RealitySDFPhysics", "SDFDemoScenes", "SDFMechanicsScenes"],
+            dependencies: ["RealitySDFPhysics", "SDFDemoScenes"],
             path: "Samples/SDFBenchmarks"
         ),
         .executableTarget(
@@ -97,11 +88,11 @@ let package = Package(
         // Showcase video of the demo scenes, rendered offscreen
         .executableTarget(
             name: "sdf-video",
-            dependencies: ["SDFDemoScenes", "SDFMechanicsScenes", "SDFRealityKitSampleScenes"]
+            dependencies: ["SDFDemoScenes", "SDFRealityKitSampleScenes"]
         ),
         .testTarget(
             name: "RealitySDFPhysicsTests",
-            dependencies: ["RealitySDFPhysics", "SDFCore", "SDFDemoScenes", "SDFMechanicsScenes"]
+            dependencies: ["RealitySDFPhysics", "SDFCore", "SDFDemoScenes"]
         ),
     ],
     cxxLanguageStandard: .cxx17
