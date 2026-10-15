@@ -100,7 +100,8 @@ struct Contact
     float bias, staticFriction, dynamicFriction, restitution;
     float relativeVelocity; // Normal velocity before the solve, for restitution
     float normalImpulse, tangentImpulse[2], pseudoImpulse;
-    float collisionImpulse; // Of the bounces before the solve, reported but not warm started
+    float collisionImpulse;  // Of the bounces before the solve, reported but not warm started
+    float3 collisionVector;  // The same as a vector, along the bounces' own normal
 };
 
 // The least share of a constraint's inverse mass that locks may leave it for it to act. Locks
@@ -631,7 +632,7 @@ void SDFWorld::step()
                 float penetration = s.params.margin - p.separation;
                 c.bias = max(-s.baumgarte * max(penetration - s.params.allowedPenetration, 0.0f) / h, -s.maxCorrection);
 
-                c.pseudoImpulse = 0, c.collisionImpulse = 0;
+                c.pseudoImpulse = 0, c.collisionImpulse = 0, c.collisionVector = {0, 0, 0};
                 c.normalImpulse = p.normalImpulse;
                 c.tangentImpulse[0] = dot(p.frictionImpulse, c.tangent[0]);
                 c.tangentImpulse[1] = dot(p.frictionImpulse, c.tangent[1]);
@@ -738,9 +739,10 @@ void SDFWorld::step()
         // together, bodies that approach faster than the threshold bounce pair by pair, each
         // bounce from the velocities the ones before it left, until none approaches. A bounce so
         // travels down a row of touching bodies to its far end, as in a Newton's cradle, where
-        // contacts solved together would share it out among the row. The solve then finds these
-        // contacts separating, and the restitution pass below, with the approach speeds after
-        // the bounces, leaves them.
+        // contacts solved together would share it out among the row. Friction acts with each
+        // bounce, within its cone. The solve then finds these contacts separating. Joints are not
+        // part of the bounces: a joint solved after them takes the part of a bounce it doesn't
+        // allow (see the README's known gaps).
         {
             auto approach = [](const Contact &c) {
                 return dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
@@ -749,8 +751,11 @@ void SDFWorld::step()
             // The optimizer's points spread over the region where the fields are about equal, and
             // the normal of a point off the line of closest approach, taken from one field, is
             // tilted: two balls would bounce partly sideways and set each other spinning. So the
-            // point slides down the summed distance of the two bodies to that line, and the normal
-            // is the difference of their gradients, which their tilts cancel in.
+            // point slides down the summed distance of the two bodies towards that line, and the
+            // normal is the difference of their gradients, which their tilts cancel in. A point
+            // that slides out of the contact, farther from either surface than the margin or than
+            // it started, as it can along a concave body, is not taken: the bounce then acts at
+            // the contact's own point.
             struct Bounce
             {
                 Contact *c;
@@ -758,36 +763,43 @@ void SDFWorld::step()
                 float3 normal, rA, rB;
                 float normalMass;
             };
+            const float margin = s.params.margin;
             auto refine = [&](Bounce &b) {
                 b.refined = true;
                 const Body &A = *b.c->bodyA, &B = *b.c->bodyB;
-                float3 x = b.c->point->x, gA, gB;
-                float f = A.sdf(x, &gA) + B.sdf(x, &gB);
+                float3 x0 = b.c->point->x, x = x0, gA0, gB0;
+                float phiA = A.sdf(x, &gA0), phiB = B.sdf(x, &gB0);
+                float reach = max(margin, max(phiA, phiB));
+                float3 gA = gA0, gB = gB0;
+                float f = phiA + phiB;
+                int queries = 2;
                 float step = 0.25f * min(b.c->a->record->boundingRadius, b.c->b->record->boundingRadius);
                 for (int i = 0; i < 16 && step > 1e-6f; i++)
                 {
                     float3 g = gA + gB, y = x - g * step, hA, hB;
-                    float fy = A.sdf(y, &hA) + B.sdf(y, &hB);
-                    if (fy < f)
-                        x = y, f = fy, gA = hA, gB = hB;
+                    float yA = A.sdf(y, &hA), yB = B.sdf(y, &hB);
+                    queries += 2;
+                    if (yA + yB < f)
+                        x = y, f = yA + yB, phiA = yA, phiB = yB, gA = hA, gB = hB;
                     else
                         step *= 0.5f;
                 }
+                s.stats.queries += queries;
+                if (max(phiA, phiB) > reach)
+                    x = x0, gA = gA0, gB = gB0;
                 float3 n = gA - gB;
                 // Where the gradients don't oppose, as deep inside a cavity, the point's own normal stays
                 if (lengthSq(n) > 1e-6f && dot(n, b.c->normal) > 0)
-                {
                     b.normal = normalize(n);
-                    b.rA = x - A.position, b.rB = x - B.position;
-                }
                 else
-                    b.normal = b.c->normal, b.rA = b.c->rA, b.rB = b.c->rB;
+                    b.normal = b.c->normal, x = x0;
+                b.rA = x - A.position, b.rB = x - B.position;
                 b.normalMass = effectiveMass(*b.c->a, *b.c->b, b.rA, b.rB, b.normal);
             };
             std::vector<Bounce> bouncy;
             bool approaching = false;
             for (Contact &c : contacts)
-                if (c.restitution > 0)
+                if (c.restitution > 0 && c.normalMass > 0)
                 {
                     bouncy.push_back({&c});
                     approaching |= c.relativeVelocity < -restitutionThreshold;
@@ -803,16 +815,35 @@ void SDFWorld::step()
                         continue;
                     if (!b.refined)
                         refine(b);
-                    float vn = dot(b.c->b->body->pointVelocity(b.rB + b.c->bodyB->position) - b.c->a->body->pointVelocity(b.rA + b.c->bodyA->position), b.normal);
-                    if (vn >= -restitutionThreshold)
+                    Contact &c = *b.c;
+                    float3 pA = c.bodyA->position + b.rA, pB = c.bodyB->position + b.rB;
+                    float3 dv = c.bodyB->pointVelocity(pB) - c.bodyA->pointVelocity(pA);
+                    float vn = dot(dv, b.normal);
+                    if (vn >= -restitutionThreshold || b.normalMass <= 0)
                         continue;
-                    float lambda = -(1 + b.c->restitution) * vn * b.normalMass;
-                    b.c->collisionImpulse += lambda;
-                    b.c->a->applyImpulse(b.rA, -b.normal * lambda);
-                    b.c->b->applyImpulse(b.rB, b.normal * lambda);
+                    float lambda = -(1 + c.restitution) * vn * b.normalMass;
+                    float3 impulse = b.normal * lambda;
+                    // Coulomb friction with the bounce: the sliding stopped within the static
+                    // cone, slowed at the dynamic one beyond it
+                    float3 vt = dv - b.normal * vn;
+                    float speed = length(vt);
+                    if (speed > 1e-6f && c.staticFriction > 0)
+                    {
+                        float3 t = vt / speed;
+                        float tangentMass = effectiveMass(*c.a, *c.b, b.rA, b.rB, t);
+                        float stop = speed * tangentMass;
+                        float friction = stop <= c.staticFriction * lambda ? stop : min(stop, c.dynamicFriction * lambda);
+                        impulse -= t * friction;
+                    }
+                    c.collisionImpulse += lambda;
+                    c.collisionVector += impulse;
+                    c.a->applyImpulse(b.rA, -impulse);
+                    c.b->applyImpulse(b.rB, impulse);
                     approaching = true;
                 }
             }
+            // The restitution pass below leaves the bounced contacts: with the paper's normal,
+            // tilted off the line of closest approach, it would kick them sideways
             for (Bounce &b : bouncy)
                 b.c->relativeVelocity = approach(*b.c);
         }
@@ -873,7 +904,7 @@ void SDFWorld::step()
             c.point->normalImpulse = c.normalImpulse;
             c.point->frictionImpulse = c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
             c.pair->impulse += c.normalImpulse + c.collisionImpulse;
-            c.pair->impulseVector += c.normal * (c.normalImpulse + c.collisionImpulse);
+            c.pair->impulseVector += c.normal * c.normalImpulse + c.collisionVector;
         };
 
         // Baumgarte stabilization with split impulses: v_n + bias >= 0 is solved for pseudo

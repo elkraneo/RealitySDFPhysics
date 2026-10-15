@@ -149,6 +149,10 @@ vary by up to about 20% between runs.
 
 ## Known gaps
 
+- **Bounces don't see joints.** Bodies bounce before joints are solved, so an elastic bounce at an
+  angle to what a joint lets the body do loses some speed: a ball on a slider driven into a 45°
+  slope comes back at about 0.7 of its speed. Bounces in the direction a joint allows, such as a
+  pendulum's at the bottom of its swing, keep it.
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies don't push each other;
   give a moving entity one or the other. `entity.addSDFColliders()` gives an entity's RealityKit
   collision shapes to the SDF simulation as static or kinematic bodies, so SDF bodies land on the
