@@ -127,9 +127,19 @@ struct Hinge
     float3 pointError;         // Anchor B minus anchor A
     float rowError[2];         // Tilt of B's axis from A's about each row
     float angle;
-    float3 pseudoLinear;
-    float pseudoRow[2], pseudoLower, pseudoUpper;
+    // The softness of the rows that hold the hinge (Box2D v3's soft step): a spring and damper
+    // of a frequency and damping ratio, as a rate at which errors are corrected, a scale on the
+    // effective mass and a scale on the accumulated impulse, with massScale + impulseScale = 1
+    float biasRate, massScale, impulseScale;
 };
+
+// Erin Catto's soft constraint coefficients for a frequency, a damping ratio and a substep
+void makeSoft(float hertz, float zeta, float h, float &biasRate, float &massScale, float &impulseScale)
+{
+    float omega = 2 * 3.14159265f * hertz;
+    float a1 = 2 * zeta + h * omega, a2 = h * omega * a1, a3 = 1 / (1 + a2);
+    biasRate = omega / a1, massScale = a2 * a3, impulseScale = a3;
+}
 
 // The effective mass of a point constraint, or zero when locks leave nothing to move
 float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
@@ -565,8 +575,9 @@ void SDFWorld::step()
             for (int i = 0; i < 2; i++)
                 j.rowError[i] = dot(tilt, j.row[i]);
             j.angle = jointAngle(joint);
-            j.pseudoLinear = {0, 0, 0};
-            j.pseudoRow[0] = j.pseudoRow[1] = j.pseudoLower = j.pseudoUpper = 0;
+            // At most a quarter of the substep rate, as Box3D caps it
+            static const float hertzCap = getenv("SDF_JOINT_HERTZ_CAP") ? (float)atof(getenv("SDF_JOINT_HERTZ_CAP")) : 0.25f;
+            makeSoft(min(jointHertz, hertzCap / h), jointDampingRatio, h, j.biasRate, j.massScale, j.impulseScale);
             hinges.push_back(j);
         }
 
@@ -651,13 +662,10 @@ void SDFWorld::step()
             JointRecord &joint = *j.joint;
             j.a->applyImpulse(j.rA, -joint.linearImpulse);
             j.b->applyImpulse(j.rB, joint.linearImpulse);
-            // The alignment rows' impulse, carried as a vector so that it survives the rows' turn;
-            // a limit's impulse only while the limit is reached
+            // The alignment rows' impulse, carried as a vector so that it survives the rows' turn
             joint.angularImpulse = joint.angularImpulse - j.axis * dot(joint.angularImpulse, j.axis);
-            if (!joint.hasLimit || j.angle > joint.lowerAngle)
-                joint.lowerImpulse = 0;
-            if (!joint.hasLimit || j.angle < joint.upperAngle)
-                joint.upperImpulse = 0;
+            if (!joint.hasLimit)
+                joint.lowerImpulse = joint.upperImpulse = 0;
             if (!joint.hasMotor)
                 joint.motorImpulse = 0;
             float3 angular = joint.angularImpulse + j.axis * (joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse);
@@ -665,11 +673,16 @@ void SDFWorld::step()
             j.b->applyAngularImpulse(angular);
         };
 
-        auto solveHingeVelocity = [&](Hinge &j) {
+        // The hinge's rows, as Box3D solves a revolute joint: the motor rigid; the limits
+        // speculative when not reached, soft when reached; the alignment rows and the point
+        // constraint soft, pulling toward zero error. Box3D applies the rows once per substep and
+        // once more without bias after the positions move; here they are swept to convergence
+        // within the iterations, which the relax pass then only disturbed, so there is none.
+        auto solveHinge = [&](Hinge &j, bool useBias) {
             JointRecord &joint = *j.joint;
             Body &A = *j.bodyA, &B = *j.bodyB;
+            float massScale = useBias ? j.massScale : 1, impulseScale = useBias ? j.impulseScale : 0;
 
-            // Motor: the relative angular velocity about the axis follows the speed, within the torque
             if (joint.hasMotor)
             {
                 float cdot = dot(j.axis, B.angularVelocity - A.angularVelocity) - joint.motorSpeed;
@@ -680,39 +693,45 @@ void SDFWorld::step()
                 j.b->applyAngularImpulse(impulse);
             }
 
-            // Limits: one-sided like contacts, at or past the limit, without bias here; the
-            // position pass pushes back past it
             if (joint.hasLimit)
             {
-                if (j.angle <= joint.lowerAngle)
+                // Lower: the angle stays at or above it. Away from it, only an approach that
+                // would cross it within the substep is stopped.
                 {
+                    float c = j.angle - joint.lowerAngle, bias = 0, ms = 1, is = 0;
+                    if (c > 0)
+                        bias = c / h;
+                    else if (useBias)
+                        bias = j.biasRate * c, ms = j.massScale, is = j.impulseScale;
                     float cdot = dot(j.axis, B.angularVelocity - A.angularVelocity);
                     float previous = joint.lowerImpulse;
-                    joint.lowerImpulse = max(previous - cdot * j.axialMass, 0.0f);
+                    joint.lowerImpulse = max(previous - ms * j.axialMass * (cdot + bias) - is * previous, 0.0f);
                     float3 impulse = j.axis * (joint.lowerImpulse - previous);
                     j.a->applyAngularImpulse(-impulse);
                     j.b->applyAngularImpulse(impulse);
                 }
-                else
-                    joint.lowerImpulse = 0;
-                if (j.angle >= joint.upperAngle)
                 {
+                    float c = joint.upperAngle - j.angle, bias = 0, ms = 1, is = 0;
+                    if (c > 0)
+                        bias = c / h;
+                    else if (useBias)
+                        bias = j.biasRate * c, ms = j.massScale, is = j.impulseScale;
                     float cdot = dot(j.axis, A.angularVelocity - B.angularVelocity);
                     float previous = joint.upperImpulse;
-                    joint.upperImpulse = max(previous - cdot * j.axialMass, 0.0f);
+                    joint.upperImpulse = max(previous - ms * j.axialMass * (cdot + bias) - is * previous, 0.0f);
                     float3 impulse = j.axis * (joint.upperImpulse - previous);
                     j.a->applyAngularImpulse(impulse);
                     j.b->applyAngularImpulse(-impulse);
                 }
-                else
-                    joint.upperImpulse = 0;
             }
 
-            // The axes stay aligned: no relative angular velocity about the rows
+            // The axes stay aligned
             for (int i = 0; i < 2; i++)
             {
                 float cdot = dot(j.row[i], B.angularVelocity - A.angularVelocity);
-                float lambda = -cdot * j.rowMass[i];
+                float bias = useBias ? j.biasRate * j.rowError[i] : 0;
+                float accumulated = dot(joint.angularImpulse, j.row[i]);
+                float lambda = -massScale * j.rowMass[i] * (cdot + bias) - impulseScale * accumulated;
                 float3 impulse = j.row[i] * lambda;
                 joint.angularImpulse += impulse;
                 j.a->applyAngularImpulse(-impulse);
@@ -721,86 +740,38 @@ void SDFWorld::step()
 
             // The anchors move together
             float3 cdot = (B.velocity + cross(B.angularVelocity, j.rB)) - (A.velocity + cross(A.angularVelocity, j.rA));
-            float3 lambda = j.pointMass * (-cdot);
+            float3 bias = useBias ? j.pointError * j.biasRate : float3{0, 0, 0};
+            float3 lambda = (j.pointMass * (cdot + bias)) * -massScale - joint.linearImpulse * impulseScale;
             joint.linearImpulse += lambda;
             j.a->applyImpulse(j.rA, -lambda);
             j.b->applyImpulse(j.rB, lambda);
         };
 
-        // Baumgarte stabilization of the hinge's errors with pseudo velocities, as for contacts
-        auto solveHingePosition = [&](Hinge &j) {
-            const JointRecord &joint = *j.joint;
-            Body &A = *j.bodyA, &B = *j.bodyB;
-            float rate = s.baumgarte / h;
-
-            if (joint.hasLimit)
-            {
-                float below = joint.lowerAngle - j.angle; // Past the lower limit by this much
-                if (below > 0)
-                {
-                    float cdot = dot(j.axis, B.pseudoAngularVelocity - A.pseudoAngularVelocity);
-                    float bias = -min(below * rate, s.maxCorrection);
-                    float previous = j.pseudoLower;
-                    j.pseudoLower = max(previous - (cdot + bias) * j.axialMass, 0.0f);
-                    float3 impulse = j.axis * (j.pseudoLower - previous);
-                    j.a->applyPseudoAngularImpulse(-impulse);
-                    j.b->applyPseudoAngularImpulse(impulse);
-                }
-                float above = j.angle - joint.upperAngle;
-                if (above > 0)
-                {
-                    float cdot = dot(j.axis, A.pseudoAngularVelocity - B.pseudoAngularVelocity);
-                    float bias = -min(above * rate, s.maxCorrection);
-                    float previous = j.pseudoUpper;
-                    j.pseudoUpper = max(previous - (cdot + bias) * j.axialMass, 0.0f);
-                    float3 impulse = j.axis * (j.pseudoUpper - previous);
-                    j.a->applyPseudoAngularImpulse(impulse);
-                    j.b->applyPseudoAngularImpulse(-impulse);
-                }
-            }
-
-            for (int i = 0; i < 2; i++)
-            {
-                float cdot = dot(j.row[i], B.pseudoAngularVelocity - A.pseudoAngularVelocity);
-                float bias = clamp(j.rowError[i] * rate, -s.maxCorrection, s.maxCorrection);
-                float lambda = -(cdot + bias) * j.rowMass[i];
-                j.pseudoRow[i] += lambda;
-                float3 impulse = j.row[i] * lambda;
-                j.a->applyPseudoAngularImpulse(-impulse);
-                j.b->applyPseudoAngularImpulse(impulse);
-            }
-
-            float3 cdot = j.b->pseudoPointVelocity(j.rB) - j.a->pseudoPointVelocity(j.rA);
-            float3 bias = j.pointError * rate;
-            float correction = length(bias);
-            if (correction > s.maxCorrection)
-                bias = bias * (s.maxCorrection / correction);
-            float3 lambda = j.pointMass * (-(cdot + bias));
-            j.pseudoLinear += lambda;
-            j.a->applyPseudoImpulse(j.rA, -lambda);
-            j.b->applyPseudoImpulse(j.rB, lambda);
-        };
-
-        auto noHinge = [](Hinge &) {};
 
         // Every pass takes the contacts, then the hinges, which so have the last word of each
         // iteration: a jammed chain's contacts must not pull its pins apart. A hinge is cheap
         // next to a contact and a chain of them converges slowly, so each pass sweeps the hinges
         // several times.
+        // The hinge passes take the whole set: the warm start once, the solves swept
         const int hingeSweeps = 4;
-        auto sweepHinges = [&](auto &pass) {
+        auto warmStartHinges = [&] {
+            for (Hinge &j : hinges)
+                warmStartHinge(j);
+        };
+        auto solveHingeVelocities = [&] {
             for (int i = 0; i < hingeSweeps; i++)
                 for (Hinge &j : hinges)
-                    pass(j);
+                    solveHinge(j, true);
         };
+        auto noHinges = [] {};
         auto solve = [&](auto &&forEach) {
-            forEach(warmStartHinge, warmStart);
+            forEach(warmStartHinges, warmStart);
             for (int it = 0; it < s.iterations; it++)
-                forEach(solveHingeVelocity, solveVelocity);
-            forEach(noHinge, solveRestitution);
-            forEach(noHinge, store);
+                forEach(solveHingeVelocities, solveVelocity);
+            forEach(noHinges, solveRestitution);
+            forEach(noHinges, store);
             for (int it = 0; it < positionIterations; it++)
-                forEach(solveHingePosition, solvePosition);
+                forEach(noHinges, solvePosition);
         };
 
         if (!parallel)
@@ -808,7 +779,7 @@ void SDFWorld::step()
             solve([&](auto &hingePass, auto &pass) {
                 for (Contact &c : contacts)
                     pass(c);
-                sweepHinges(hingePass);
+                hingePass();
             });
         }
         else
@@ -918,7 +889,7 @@ void SDFWorld::step()
                     if (!hinges.empty())
                     {
                         if (thread == 0)
-                            sweepHinges(hingePass);
+                            hingePass();
                         if (threadCount > 1)
                             pool.barrier();
                     }
@@ -943,10 +914,15 @@ void SDFWorld::step()
                 continue;
             body->velocity *= expf(-m.record->linearDamping * h);
             body->angularVelocity *= expf(-m.record->angularDamping * h);
+            // No more than a quarter turn per substep, as Box3D clamps: a runaway stays finite
+            float spin = length(body->angularVelocity), maxSpin = 0.25f * 3.14159265f / h;
+            if (spin > maxSpin)
+                body->angularVelocity *= maxSpin / spin;
             body->position += (body->velocity + body->pseudoVelocity) * h;
             body->orientation = integrate(body->orientation, body->angularVelocity + body->pseudoAngularVelocity, h);
             body->updateInertia();
         }
+
     }
 
     pairs.clear();

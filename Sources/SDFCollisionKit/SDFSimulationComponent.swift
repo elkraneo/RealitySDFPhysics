@@ -46,6 +46,11 @@ public struct SDFSimulationComponent: Component {
     /// Speed below which contacts do not bounce, whatever their restitution, so that resting
     /// bodies settle, in units per second. By default 1 m/s.
     public var restitutionThreshold: Float
+    /// How stiffly joints hold: the frequency, in hertz, and damping ratio of the spring and
+    /// damper their constraints amount to. The defaults are Box3D's, 60 Hz and 2; the frequency is
+    /// capped at a quarter of the substep rate, 30 Hz with 2 substeps at 60 Hz. Stiffer joints
+    /// sag less under load, softer ones forgive an over-constrained assembly such as a taut chain.
+    public var jointStiffness: (hertz: Float, dampingRatio: Float)
 
     /// The parameters of the paper's collision detection
     public var collisionDetection: SDFCollisionDetection
@@ -104,6 +109,7 @@ public struct SDFSimulationComponent: Component {
         maximumStepsPerFrame = 4
         isPaused = false
         restitutionThreshold = p.restitutionThreshold / self.metersPerUnit
+        jointStiffness = (p.jointHertz, p.jointDampingRatio)
         collisionDetection = SDFCollisionDetection(p)
         isMultithreaded = true
     }
@@ -127,6 +133,8 @@ public struct SDFSimulationComponent: Component {
         p.timeStep = timeStep
         p.gravity = (gravity.x, gravity.y, gravity.z)
         p.restitutionThreshold = restitutionThreshold
+        p.jointHertz = jointStiffness.hertz
+        p.jointDampingRatio = jointStiffness.dampingRatio
         p.parallel = isMultithreaded
         p.metersPerUnit = metersPerUnit
         p.sleeping = isSleepingEnabled

@@ -116,6 +116,10 @@ typedef struct
     bool parallel;               // Narrow phase on several threads, with a random sequence per pair
     float metersPerUnit;         // Length of a unit, for the drag limit and the default density
     bool sleeping;               // Puts islands of touching dynamic bodies to sleep once still
+    // How stiffly joints hold: the frequency and damping ratio of the spring and damper their rows
+    // amount to, as in Box3D, with the frequency capped at a quarter of the substep rate
+    float jointHertz;
+    float jointDampingRatio;
 } SDFParams;
 
 // Per step statistics
