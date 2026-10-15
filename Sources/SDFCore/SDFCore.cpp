@@ -669,47 +669,101 @@ SDFRevoluteJointDef sdf_default_revolute_joint(void)
     SDFRevoluteJointDef def = {};
     def.frameA.orientation[3] = def.frameB.orientation[3] = 1;
     def.frameA.scale = def.frameB.scale = 1;
+    def.springDampingRatio = 1;
+    return def;
+}
+
+SDFPrismaticJointDef sdf_default_prismatic_joint(void)
+{
+    SDFPrismaticJointDef def = {};
+    def.frameA.orientation[3] = def.frameB.orientation[3] = 1;
+    def.frameA.scale = def.frameB.scale = 1;
+    def.springDampingRatio = 1;
     return def;
 }
 
 // Limits live within (-pi, pi), where the angle is measured
 static float clampAngle(float angle) { return std::clamp(angle, -3.14f, 3.14f); }
 
-SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def)
+// The part of a joint both kinds share: the bodies, and the frames in each body's frame. False
+// for bodies that don't exist, are the same or are both unable to move, and invalid frames.
+static bool makeJoint(SDFWorld *world, SDFBodyID idA, SDFBodyID idB, const SDFPose &frameA, const SDFPose &frameB,
+                      JointRecord &joint)
 {
-    BodyRecord *recordA = world->find(def.bodyA), *recordB = world->find(def.bodyB);
-    if (!recordA || !recordB || def.bodyA == def.bodyB)
-        return 0;
+    BodyRecord *recordA = world->find(idA), *recordB = world->find(idB);
+    if (!recordA || !recordB || idA == idB)
+        return false;
     Body &a = *recordA->body, &b = *recordB->body;
     if (a.isStatic && b.isStatic)
-        return 0;
-    if (!isValid(def.frameA) || !isValid(def.frameB))
-        return 0;
-    for (float v : {def.lowerAngle, def.upperAngle, def.motorSpeed, def.maxMotorTorque})
-        if (!std::isfinite(v))
-            return 0;
-    quat qA = toQuat(def.frameA.orientation), qB = toQuat(def.frameB.orientation);
+        return false;
+    if (!isValid(frameA) || !isValid(frameB))
+        return false;
+    quat qA = toQuat(frameA.orientation), qB = toQuat(frameB.orientation);
     float3 x = {1, 0, 0}, y = {0, 1, 0};
-
-    JointRecord joint;
-    joint.id = world->nextJointID++;
-    joint.bodyA = def.bodyA, joint.bodyB = def.bodyB;
+    joint.bodyA = idA, joint.bodyB = idB;
     joint.a = &a, joint.b = &b;
     quat invA = conjugate(a.orientation), invB = conjugate(b.orientation);
-    joint.anchorA = rotate(invA, toFloat3(def.frameA.position) - a.position);
-    joint.anchorB = rotate(invB, toFloat3(def.frameB.position) - b.position);
+    joint.anchorA = rotate(invA, toFloat3(frameA.position) - a.position);
+    joint.anchorB = rotate(invB, toFloat3(frameB.position) - b.position);
     joint.axisA = rotate(invA, rotate(qA, x)), joint.axisB = rotate(invB, rotate(qB, x));
     joint.normalA = rotate(invA, rotate(qA, y)), joint.normalB = rotate(invB, rotate(qB, y));
-    joint.hasLimit = def.hasLimit;
-    joint.lowerAngle = clampAngle(std::min(def.lowerAngle, def.upperAngle));
-    joint.upperAngle = clampAngle(std::max(def.lowerAngle, def.upperAngle));
-    joint.hasMotor = def.hasMotor;
-    joint.motorSpeed = def.motorSpeed, joint.maxMotorTorque = std::max(def.maxMotorTorque, 0.0f);
-    joint.collideConnected = def.collideConnected;
+    return true;
+}
+
+static SDFJointID addJoint(SDFWorld *world, JointRecord &joint)
+{
+    joint.id = world->nextJointID++;
     world->joints.push_back(joint);
-    world->disturb(&a);
-    world->disturb(&b);
+    world->disturb(joint.a);
+    world->disturb(joint.b);
     return joint.id;
+}
+
+static bool allFinite(std::initializer_list<float> values)
+{
+    return std::all_of(values.begin(), values.end(), [](float v) { return std::isfinite(v); });
+}
+
+SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def)
+{
+    if (!allFinite({def.lowerAngle, def.upperAngle, def.motorSpeed, def.maxMotorTorque, def.targetAngle, def.springHertz,
+                    def.springDampingRatio}))
+        return 0;
+    JointRecord joint;
+    if (!makeJoint(world, def.bodyA, def.bodyB, def.frameA, def.frameB, joint))
+        return 0;
+    joint.kind = JointRecord::revolute;
+    joint.hasLimit = def.hasLimit;
+    joint.lower = clampAngle(std::min(def.lowerAngle, def.upperAngle));
+    joint.upper = clampAngle(std::max(def.lowerAngle, def.upperAngle));
+    joint.hasMotor = def.hasMotor;
+    joint.motorSpeed = def.motorSpeed, joint.maxMotorForce = std::max(def.maxMotorTorque, 0.0f);
+    joint.hasSpring = def.hasSpring;
+    joint.springTarget = def.targetAngle;
+    joint.springHertz = std::max(def.springHertz, 0.0f), joint.springDampingRatio = std::max(def.springDampingRatio, 0.0f);
+    joint.collideConnected = def.collideConnected;
+    return addJoint(world, joint);
+}
+
+SDFJointID sdf_world_add_prismatic_joint(SDFWorld *world, SDFPrismaticJointDef def)
+{
+    if (!allFinite({def.lowerTranslation, def.upperTranslation, def.motorSpeed, def.maxMotorForce, def.targetTranslation,
+                    def.springHertz, def.springDampingRatio}))
+        return 0;
+    JointRecord joint;
+    if (!makeJoint(world, def.bodyA, def.bodyB, def.frameA, def.frameB, joint))
+        return 0;
+    joint.kind = JointRecord::prismatic;
+    joint.hasLimit = def.hasLimit;
+    joint.lower = std::min(def.lowerTranslation, def.upperTranslation);
+    joint.upper = std::max(def.lowerTranslation, def.upperTranslation);
+    joint.hasMotor = def.hasMotor;
+    joint.motorSpeed = def.motorSpeed, joint.maxMotorForce = std::max(def.maxMotorForce, 0.0f);
+    joint.hasSpring = def.hasSpring;
+    joint.springTarget = def.targetTranslation;
+    joint.springHertz = std::max(def.springHertz, 0.0f), joint.springDampingRatio = std::max(def.springDampingRatio, 0.0f);
+    joint.collideConnected = def.collideConnected;
+    return addJoint(world, joint);
 }
 
 void sdf_world_remove_joint(SDFWorld *world, SDFJointID id)
@@ -723,26 +777,41 @@ void sdf_world_remove_joint(SDFWorld *world, SDFJointID id)
     world->disturb(b);
 }
 
-void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID id, bool enabled, float lowerAngle, float upperAngle)
+void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID id, bool enabled, float lower, float upper)
 {
     JointRecord *joint = world->findJoint(id);
-    if (!joint || !std::isfinite(lowerAngle) || !std::isfinite(upperAngle))
+    if (!joint || !std::isfinite(lower) || !std::isfinite(upper))
         return;
     joint->hasLimit = enabled;
-    joint->lowerAngle = clampAngle(std::min(lowerAngle, upperAngle)), joint->upperAngle = clampAngle(std::max(lowerAngle, upperAngle));
+    joint->lower = std::min(lower, upper), joint->upper = std::max(lower, upper);
+    if (joint->kind == JointRecord::revolute)
+        joint->lower = clampAngle(joint->lower), joint->upper = clampAngle(joint->upper);
     joint->lowerImpulse = joint->upperImpulse = 0;
     world->disturb(joint->a);
 }
 
-void sdf_world_set_joint_motor(SDFWorld *world, SDFJointID id, bool enabled, float speed, float maxTorque)
+void sdf_world_set_joint_motor(SDFWorld *world, SDFJointID id, bool enabled, float speed, float maxForce)
 {
     JointRecord *joint = world->findJoint(id);
-    if (!joint || !std::isfinite(speed) || !std::isfinite(maxTorque))
+    if (!joint || !std::isfinite(speed) || !std::isfinite(maxForce))
         return;
     joint->hasMotor = enabled;
-    joint->motorSpeed = speed, joint->maxMotorTorque = std::max(maxTorque, 0.0f);
+    joint->motorSpeed = speed, joint->maxMotorForce = std::max(maxForce, 0.0f);
     if (!enabled)
         joint->motorImpulse = 0;
+    world->disturb(joint->a);
+}
+
+void sdf_world_set_joint_spring(SDFWorld *world, SDFJointID id, bool enabled, float target, float hertz, float dampingRatio)
+{
+    JointRecord *joint = world->findJoint(id);
+    if (!joint || !allFinite({target, hertz, dampingRatio}))
+        return;
+    joint->hasSpring = enabled;
+    joint->springTarget = target;
+    joint->springHertz = std::max(hertz, 0.0f), joint->springDampingRatio = std::max(dampingRatio, 0.0f);
+    if (!enabled)
+        joint->springImpulse = 0;
     world->disturb(joint->a);
 }
 
@@ -751,6 +820,14 @@ float sdf_world_joint_angle(const SDFWorld *world, SDFJointID id)
     for (const JointRecord &joint : world->joints)
         if (joint.id == id)
             return jointAngle(joint);
+    return 0;
+}
+
+float sdf_world_joint_translation(const SDFWorld *world, SDFJointID id)
+{
+    for (const JointRecord &joint : world->joints)
+        if (joint.id == id)
+            return jointTranslation(joint);
     return 0;
 }
 

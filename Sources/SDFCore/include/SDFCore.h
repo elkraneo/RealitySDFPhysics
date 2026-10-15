@@ -229,8 +229,9 @@ typedef uint32_t SDFJointID;    // 0 is never a valid joint
 // ignored). The joint brings the frames' origins together and aligns their x axes, which is the
 // hinge's axis, leaving the rotation about it free. The angle is that of frame B relative to
 // frame A about the axis, zero when the frames coincide; a limit bounds it, in radians within
-// (-pi, pi), and a motor drives it at a speed with up to a torque. Unless asked to collide, the
-// two bodies ignore each other.
+// (-pi, pi), a motor drives it at a speed with up to a torque, and a spring, a damped one of a
+// frequency and damping ratio, pulls it toward a target angle the short way round. Unless asked
+// to collide, the two bodies ignore each other.
 typedef struct
 {
     SDFBodyID bodyA, bodyB;
@@ -240,17 +241,49 @@ typedef struct
     bool hasMotor;
     float motorSpeed;            // Radians per second
     float maxMotorTorque;
+    bool hasSpring;
+    float targetAngle;
+    float springHertz;
+    float springDampingRatio;
     bool collideConnected;
 } SDFRevoluteJointDef;
 SDFRevoluteJointDef sdf_default_revolute_joint(void);
 
-// Returns 0 for bodies that don't exist, are the same, or are both unable to move
+// A slider: frames as the hinge's. The joint keeps frame B's origin on the line through frame
+// A's along its x axis, and the frames' orientations as they are when they coincide, leaving the
+// translation along the axis free. The translation is that of frame B's origin from frame A's
+// along the axis; a limit bounds it, a motor drives it at a speed with up to a force, and a
+// spring pulls it toward a target translation.
+typedef struct
+{
+    SDFBodyID bodyA, bodyB;
+    SDFPose frameA, frameB;
+    bool hasLimit;
+    float lowerTranslation, upperTranslation;
+    bool hasMotor;
+    float motorSpeed;            // Units per second
+    float maxMotorForce;
+    bool hasSpring;
+    float targetTranslation;
+    float springHertz;
+    float springDampingRatio;
+    bool collideConnected;
+} SDFPrismaticJointDef;
+SDFPrismaticJointDef sdf_default_prismatic_joint(void);
+
+// Return 0 for bodies that don't exist, are the same, or are both unable to move
 SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def);
+SDFJointID sdf_world_add_prismatic_joint(SDFWorld *world, SDFPrismaticJointDef def);
 void sdf_world_remove_joint(SDFWorld *world, SDFJointID joint);
-void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID joint, bool enabled, float lowerAngle, float upperAngle);
-void sdf_world_set_joint_motor(SDFWorld *world, SDFJointID joint, bool enabled, float speed, float maxTorque);
+// The limit, motor and spring of either kind: angles, angular speeds and torques for a hinge,
+// translations, speeds and forces for a slider
+void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID joint, bool enabled, float lower, float upper);
+void sdf_world_set_joint_motor(SDFWorld *world, SDFJointID joint, bool enabled, float speed, float maxForce);
+void sdf_world_set_joint_spring(SDFWorld *world, SDFJointID joint, bool enabled, float target, float hertz, float dampingRatio);
 // The angle of body B relative to body A about the axis, in (-pi, pi]
 float sdf_world_joint_angle(const SDFWorld *world, SDFJointID joint);
+// How far frame B's origin is from frame A's along the axis
+float sdf_world_joint_translation(const SDFWorld *world, SDFJointID joint);
 
 // MARK: Contacts and picking
 

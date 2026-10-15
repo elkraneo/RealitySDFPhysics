@@ -146,4 +146,46 @@ import simd
         #expect(gaps.reduce(0, +) < 0.04, "pins \(gaps.reduce(0, +)) apart in all, \(gaps.max()!) at most")
         #expect(gaps.max()! < 0.005)
     }
+
+    @Test func springTurnsADoorToItsTarget() throws {
+        // A door on a vertical hinge: gravity pulls along the axis, so the spring alone sets the angle
+        let frame = addBody(.box(halfExtents: [0.05, 0.5, 0.05]), mode: .static, at: [0, 1, 0])
+        let door = addBody(.box(halfExtents: [0.4, 0.5, 0.05]), at: [0.45, 1, 0])
+        let vertical = simd_quatf(angle: .pi / 2, axis: [0, 0, 1])
+        var joint = SDFRevoluteJoint(pin0: frame.pins.set(named: "hinge", orientation: vertical),
+                                     pin1: door.pins.set(named: "hinge", position: [-0.45, 0, 0], orientation: vertical))
+        joint.spring = SDFRevoluteJoint.Spring(targetAngle: 1, hertz: 2, dampingRatio: 1)
+        try joint.addToSimulation()
+        run(180)
+        let angle = try #require(simulation.angle(of: joint))
+        #expect(abs(angle - 1) < 0.02, "angle \(angle)")
+        #expect(gap(joint) < 0.02)
+    }
+
+    @Test func returnSpringBringsAPawlBack() throws {
+        // A lever out along x on a hinge along z, held level against gravity by a stiff spring
+        let post = addBody(.box(halfExtents: [0.05, 0.05, 0.05]), mode: .static, at: [0, 1, 0])
+        let pawl = addBody(.box(halfExtents: [0.2, 0.02, 0.05]), at: [0.2, 1, 0])
+        let alongZ = simd_quatf(angle: -.pi / 2, axis: [0, 1, 0])
+        var joint = SDFRevoluteJoint(pin0: post.pins.set(named: "pivot", orientation: alongZ),
+                                     pin1: pawl.pins.set(named: "pivot", position: [-0.2, 0, 0], orientation: alongZ))
+        joint.spring = SDFRevoluteJoint.Spring(targetAngle: 0, hertz: 20, dampingRatio: 0.7)
+        try joint.addToSimulation()
+        run(30)
+        // Pulled aside by a torque, as a ratchet's tooth would, then let go
+        var pulled: Float = 0
+        for _ in 0..<30 {
+            pawl.sdfPhysics.addTorque([0, 0, 100], relativeTo: nil)
+            run(1)
+            pulled = max(pulled, abs(simulation.angle(of: joint)!))
+        }
+        #expect(pulled > 0.2, "pulled \(pulled)")
+        run(120)
+        var farthest: Float = 0
+        for _ in 0..<60 {
+            run(1)
+            farthest = max(farthest, abs(simulation.angle(of: joint)!))
+        }
+        #expect(farthest < 0.02, "pulled \(pulled), then held within \(farthest)")
+    }
 }

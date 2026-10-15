@@ -51,32 +51,48 @@ struct PairRecord
     float3 position = {0, 0, 0};
 };
 
-// A hinge between two bodies: their anchors coincide and their axes stay aligned, leaving one
-// rotation free, which a limit can bound and a motor can drive. Anchors, axes and the reference
-// normals that measure the angle are in each body's frame, from its center of mass.
+// A joint between two bodies. A hinge (revolute) brings their anchors together and keeps their
+// axes aligned, leaving one rotation free; a slider (prismatic) keeps B's anchor on the line along
+// A's axis and the bodies' orientations locked, leaving one translation free. A limit can bound
+// the free motion, a motor drive it and a spring pull it toward a target. Anchors, axes and the
+// reference normals that measure the angle are in each body's frame, from its center of mass.
 struct JointRecord
 {
+    enum Kind
+    {
+        revolute,
+        prismatic
+    };
+    Kind kind = revolute;
     SDFJointID id;
     SDFBodyID bodyA, bodyB;
     Body *a, *b;
     float3 anchorA, anchorB;
     float3 axisA, axisB;
     float3 normalA, normalB;           // Perpendicular to the axes, aligned when the angle was zero
+    // The free motion's limits, motor and spring: an angle in radians for a hinge, a translation
+    // for a slider, and the motor's speed and greatest torque or force to match
     bool hasLimit = false;
-    float lowerAngle = 0, upperAngle = 0;
+    float lower = 0, upper = 0;
     bool hasMotor = false;
-    float motorSpeed = 0, maxMotorTorque = 0;
+    float motorSpeed = 0, maxMotorForce = 0;
+    bool hasSpring = false;
+    float springTarget = 0, springHertz = 0, springDampingRatio = 0;
     bool collideConnected = false;
 
-    // Accumulated impulses of the last substep, to warm start the next: the point constraint,
-    // the two rows that align the axes, the motor and the limits
+    // Accumulated impulses of the last substep, to warm start the next: the point constraint (for
+    // a slider only its rows perpendicular to the axis), the rows that align the axes (for a
+    // slider also the twist about the axis), and the axial rows
     float3 linearImpulse = {0, 0, 0};
-    float3 angularImpulse = {0, 0, 0}; // World space, perpendicular to the axis
-    float motorImpulse = 0, lowerImpulse = 0, upperImpulse = 0;
+    float3 angularImpulse = {0, 0, 0}; // World space, perpendicular to the axis for a hinge
+    float motorImpulse = 0, lowerImpulse = 0, upperImpulse = 0, springImpulse = 0;
 };
 
-// The angle of body B relative to body A about the hinge's axis, in (-pi, pi]
+// The angle of body B relative to body A about the joint's axis, in (-pi, pi]
 float jointAngle(const JointRecord &joint);
+
+// How far B's anchor is from A's along the joint's axis
+float jointTranslation(const JointRecord &joint);
 
 struct SDFWorld
 {
