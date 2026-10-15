@@ -226,6 +226,22 @@ static float3 shapeOrigin(float3 center, SDFPose pose, quat q)
 
 static quat toQuat(const float q[4]) { return normalize(quat{q[0], q[1], q[2], q[3]}); }
 
+// A pose the engine can take: finite, with an orientation that normalizes
+static bool isValid(const SDFPose &pose)
+{
+    for (float v : pose.position)
+        if (!std::isfinite(v))
+            return false;
+    float length = 0;
+    for (float v : pose.orientation)
+    {
+        if (!std::isfinite(v))
+            return false;
+        length += v * v;
+    }
+    return length > 0;
+}
+
 static SDFParams paramsOf(const SDFWorld &world)
 {
     const Solver &solver = world.solver;
@@ -412,7 +428,7 @@ SDFStats sdf_world_stats(const SDFWorld *world)
 
 SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pose, SDFBodyMode mode)
 {
-    if (!shape || !(pose.scale > 0))
+    if (!shape || !(pose.scale > 0) || !isValid(pose))
         return 0;
     quat q = toQuat(pose.orientation);
     // shape = (caller - center) * unitScale, so the body scales the shape by scale / unitScale
@@ -491,7 +507,7 @@ SDFPose sdf_world_body_pose(const SDFWorld *world, SDFBodyID id)
 void sdf_world_set_body_pose(SDFWorld *world, SDFBodyID id, SDFPose pose)
 {
     BodyRecord *record = world->find(id);
-    if (!record)
+    if (!record || !isValid(pose))
         return;
     Body &body = *record->body;
     pose.scale = body.scale * record->unitScale;

@@ -35,7 +35,7 @@ do {
     descriptor.storageMode = .shared
     let texture = MTLCreateSystemDefaultDevice()!.makeTexture(descriptor: descriptor)!
 
-    print("scene                     bodies  load ms  step ms (mean / max)  contacts")
+    print("scene                     bodies  load ms  step ms (mean / max)  contacts  collision  pairs  queries/pair")
     for index in selected {
         let scene = DemoScene.all[index]
         let simulation = SDFSimulation()
@@ -49,11 +49,15 @@ do {
         let loadMilliseconds = Date().timeIntervalSince(loadStart) * 1000
         root.addChild(ContactMarkers.makeEntity())
 
-        var total = 0.0, slowest = 0.0
+        var total = 0.0, slowest = 0.0, collision = 0.0, pairs = 0, queries = 0
         for _ in 0..<steps {
             simulation.step(root: root)
-            total += simulation.statistics.stepMilliseconds
-            slowest = max(slowest, simulation.statistics.stepMilliseconds)
+            let stats = simulation.statistics
+            total += stats.stepMilliseconds
+            slowest = max(slowest, stats.stepMilliseconds)
+            collision += stats.collisionMilliseconds
+            pairs += stats.pairs
+            queries += stats.queries
         }
 
         let renderer = try RealityRenderer()
@@ -75,9 +79,12 @@ do {
         let name = scene.name.replacingOccurrences(of: ":", with: "").replacingOccurrences(of: " ", with: "-")
         try writePNG(texture, to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%02d-%@.png", index, name)))
         let stats = simulation.statistics
+        // Approximate: pairs are those of the last substep, queries are summed over the substeps
+        let queriesPerPair = Double(queries) / Double(max(pairs * settings.substeps, 1))
         print(scene.name.padding(toLength: 25, withPad: " ", startingAt: 0)
-            + String(format: " %6d %8.0f %9.2f / %6.2f %9d", stats.bodies, loadMilliseconds,
-                     total / Double(max(steps, 1)), slowest, stats.contacts))
+            + String(format: " %6d %8.0f %9.2f / %6.2f %9d %8.2f %6d %8.0f", stats.bodies, loadMilliseconds,
+                     total / Double(max(steps, 1)), slowest, stats.contacts,
+                     collision / Double(max(steps, 1)), pairs / max(steps, 1), queriesPerPair))
     }
 } catch {
     print("error: \(error)")
