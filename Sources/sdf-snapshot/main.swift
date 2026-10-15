@@ -1,8 +1,9 @@
 // Simulates every demo scene and renders it offscreen with RealityKit to a PNG, and prints timings.
 //
-//   swift run -c release sdf-snapshot [--single-threaded] <output directory> [steps >= 0] [scene index...]
+//   swift run -c release sdf-snapshot [--single-threaded] <output directory> [seconds] [scene name...]
 //
-// Steps default to 240 (4 s of simulated time).
+// Seconds of simulated time default to 4, up to an hour. Scene names ignore case, spaces and
+// punctuation ("falling-boxes-bend").
 
 import CoreGraphics
 import Foundation
@@ -14,19 +15,20 @@ import SDFDemoScenes
 import UniformTypeIdentifiers
 
 func usage() -> Never {
-    print("usage: sdf-snapshot [--single-threaded] <output directory> [steps >= 0] [scene index...]")
+    print("usage: sdf-snapshot [--single-threaded] <output directory> [seconds] [scene name...]")
     exit(1)
 }
 
 let isMultithreaded = !CommandLine.arguments.contains("--single-threaded")
-let scenes = DemoScene.all
-let arguments = CommandLine.arguments.dropFirst().filter { $0 != "--single-threaded" }
+let arguments = Array(CommandLine.arguments.dropFirst().filter { $0 != "--single-threaded" })
 guard let output = arguments.first else { usage() }
-let numbers = arguments.dropFirst().compactMap { Int($0) }
-guard numbers.count == arguments.count - 1 else { usage() }
-let steps = numbers.first ?? 240
-let selected = numbers.count > 1 ? Array(numbers.dropFirst()) : scenes.map(\.id)
-guard steps >= 0, selected.allSatisfy(scenes.indices.contains) else { usage() }
+let seconds = arguments.count > 1 ? Double(arguments[1]) : nil
+guard (0...3600).contains(seconds ?? 0) else { usage() }
+let steps = Int(((seconds ?? 4) * 60).rounded())
+let names = arguments.dropFirst(seconds == nil ? 1 : 2)
+let selected = names.isEmpty ? DemoScene.all : names.map { name in
+    DemoScene.named(name) ?? { print("unknown scene \(name)"); usage() }()
+}
 
 do {
     try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
@@ -37,8 +39,7 @@ do {
     let texture = MTLCreateSystemDefaultDevice()!.makeTexture(descriptor: descriptor)!
 
     print("scene                     bodies  load ms  step ms (mean / max)  contacts  collision  pairs  queries/pair")
-    for index in selected {
-        let scene = scenes[index]
+    for scene in selected {
         let simulation = SDFSimulation()
         let root = Entity()
         var settings = SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper)
@@ -78,7 +79,7 @@ do {
         }
 
         let name = scene.name.replacingOccurrences(of: ":", with: "").replacingOccurrences(of: " ", with: "-")
-        try writePNG(texture, to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%02d-%@.png", index, name)))
+        try writePNG(texture, to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%02d-%@.png", scene.id, name)))
         let stats = simulation.statistics
         // Approximate: pairs are those of the last substep, queries are summed over the substeps
         let queriesPerPair = Double(queries) / Double(max(pairs * settings.substeps, 1))

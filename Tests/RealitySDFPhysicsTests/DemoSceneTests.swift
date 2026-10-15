@@ -34,4 +34,15 @@ import Testing
             #expect(p.x.isFinite && p.y.isFinite && p.z.isFinite && p.y > -0.5, "\(entity.name) of \(scene.name) at \(p)")
         }
     }
+
+    /// The names sdf-snapshot takes: any case, spaces or dashes
+    @Test func scenesByName() {
+        for scene in DemoScene.all {
+            #expect(DemoScene.named(scene.name.uppercased())?.id == scene.id)
+        }
+        #expect(DemoScene.named("falling-boxes-bend")?.name == "Falling Boxes: Bend")
+        #expect(DemoScene.named("falling boxes")?.name == "Falling Boxes")
+        #expect(DemoScene.named("3") == nil)
+        #expect(DemoScene.named("nope") == nil)
+    }
 }
