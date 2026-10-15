@@ -11,6 +11,9 @@ let package = Package(
         .executable(name: "RealityKitSamples", targets: ["RealityKitSamples"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
         .executable(name: "sdf-video", targets: ["sdf-video"]),
+        .executable(name: "Benchmarks", targets: ["Benchmarks"]),
+        // The benchmark scene, timings and view, for the device app in Samples/BenchmarksApp
+        .library(name: "SDFBenchmarks", targets: ["SDFBenchmarks"]),
     ],
     targets: [
         // Upstream C++ engine (vendored unmodified in upstream/) behind a C interface
@@ -55,10 +58,22 @@ let package = Package(
             name: "sdf-snapshot",
             dependencies: ["SDFDemoScenes"]
         ),
-        // The same pile of tori timed with SDFCollisionKit and with RealityKit's physics
+        // The same pile of tori timed with SDFCollisionKit and with RealityKit's physics: the
+        // scene, the timings and a view that runs the standard table, shared by the command-line
+        // tool, the macOS app and the device app
+        .target(
+            name: "SDFBenchmarks",
+            dependencies: ["SDFCollisionKit"],
+            path: "Samples/SDFBenchmarks"
+        ),
+        .executableTarget(
+            name: "Benchmarks",
+            dependencies: ["SDFBenchmarks"],
+            path: "Samples/Benchmarks"
+        ),
         .executableTarget(
             name: "sdf-bench",
-            dependencies: ["SDFCollisionKit"]
+            dependencies: ["SDFBenchmarks"]
         ),
         // Showcase video of the demo scenes, rendered offscreen
         .executableTarget(
