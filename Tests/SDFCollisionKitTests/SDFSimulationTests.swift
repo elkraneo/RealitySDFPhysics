@@ -52,6 +52,28 @@ import simd
         #expect(simulation.statistics.contacts > 0)
     }
 
+    @Test func rotationOffUnitIsNormalizedOnce() {
+        // A static slab with a rotation a hair off unit must not be re-posed every step, which
+        // would disturb the sleep of what rests on it
+        let slab = addBody(.box(halfExtents: [2, 0.5, 2]), mode: .static, at: [0, 0.5, 0])
+        slab.transform.rotation = simd_quatf(vector: [0, 0, 0, 0.99998])
+        let box = addBody(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 2.5, 0])
+        run(240)
+        expectResting(box, atHeight: 1.5)
+        #expect(simulation.statistics.sleepingBodies == 1)
+    }
+
+    @Test func poseThatIsNotFiniteIsIgnored() {
+        let box = addBody(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 2, 0])
+        run(60)
+        box.position = [.nan, 2, 0]
+        box.transform.rotation = simd_quatf(vector: [.infinity, 0, 0, 1])
+        run(120)
+        // The engine kept the body's pose, and wrote it back over the entity's
+        expectResting(box, atHeight: 0.5)
+        #expect(abs(box.position.x) < 0.01)
+    }
+
     @Test func bakedShapeRestsInTheEntityFrame() throws {
         // The mesh sits 2 units off the entity's origin; the entity itself must not drift
         let shape = try SDFShape.bakedBox(halfExtents: [0.5, 0.5, 0.5], center: [2, 0, 0])

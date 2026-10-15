@@ -79,7 +79,7 @@ do {
         let name = scene.name.replacingOccurrences(of: ":", with: "").replacingOccurrences(of: " ", with: "-")
         try writePNG(texture, to: URL(fileURLWithPath: output).appendingPathComponent(String(format: "%02d-%@.png", index, name)))
         let stats = simulation.statistics
-        // Pairs are those of the last substep, queries are summed over the substeps
+        // Approximate: pairs are those of the last substep, queries are summed over the substeps
         let queriesPerPair = Double(queries) / Double(max(pairs * settings.substeps, 1))
         print(scene.name.padding(toLength: 25, withPad: " ", startingAt: 0)
             + String(format: " %6d %8.0f %9.2f / %6.2f %9d %8.2f %6d %8.0f", stats.bodies, loadMilliseconds,

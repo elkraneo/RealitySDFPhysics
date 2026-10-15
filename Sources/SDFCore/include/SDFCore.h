@@ -168,7 +168,8 @@ typedef struct
     float scale;                 // Uniform
 } SDFPose;
 
-// The shape is retained by the body. Dynamic bodies get the mass of their volume of water.
+// The shape is retained by the body. Dynamic bodies get the mass of their volume of water. A pose
+// that is not finite, or whose orientation has no length, is refused here and ignored below.
 SDFBodyID sdf_world_add_body(SDFWorld *world, const SDFShape *shape, SDFPose pose, SDFBodyMode mode);
 void sdf_world_remove_body(SDFWorld *world, SDFBodyID body);
 
