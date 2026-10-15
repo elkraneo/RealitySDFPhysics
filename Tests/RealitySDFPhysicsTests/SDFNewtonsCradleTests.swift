@@ -176,3 +176,39 @@ import simd
         #expect(farthest[1...3].allSatisfy { $0 < 2 })
     }
 }
+
+/// A row of balls asleep, struck by an awake one: the row wakes and passes the bounce on whole, as
+/// it does awake. Asleep, the balls must not count as immovable.
+@MainActor
+@Suite struct SDFSleepingCradleTests {
+    @Test func sleepingRowPassesMomentumThrough() {
+        let root = Entity(), simulation = SDFSimulation()
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation)
+        settings.isSleepingEnabled = true
+        settings.gravity = .zero
+        settings.restitutionThreshold = 0.05
+        settings.collisionDetection.contactMargin = 0.004
+        settings.collisionDetection.allowedPenetration = 0.004
+        root.components.set(settings)
+        var balls: [Entity] = []
+        for index in 0..<5 {
+            let ball = Entity()
+            ball.position = [Float(index) * 0.08 + (index == 0 ? -1.5 : 0), 0, 0]
+            var body = SDFPhysicsBodyComponent(shape: .sphere(radius: 0.04))
+            body.material = SDFPhysicsMaterial(staticFriction: 0, dynamicFriction: 0, restitution: 1)
+            body.linearDamping = 0
+            body.angularDamping = 0
+            ball.components.set(body)
+            ball.components.set(SDFPhysicsMotionComponent(linearVelocity: index == 0 ? [1, 0, 0] : .zero))
+            root.addChild(ball)
+            balls.append(ball)
+        }
+        for step in 0..<150 {
+            simulation.step(root: root)
+            if step == 60 { #expect(simulation.statistics.sleepingBodies == 4) }
+        }
+        let velocities = balls.map { $0.components[SDFPhysicsMotionComponent.self]!.linearVelocity }
+        #expect(abs(velocities[4].x - 1) < 0.005)
+        #expect(velocities.dropLast().allSatisfy { length($0) < 0.005 })
+    }
+}
