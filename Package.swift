@@ -92,7 +92,7 @@ let package = Package(
         ),
         .testTarget(
             name: "RealitySDFPhysicsTests",
-            dependencies: ["RealitySDFPhysics", "SDFCore", "SDFDemoScenes"]
+            dependencies: ["RealitySDFPhysics", "SDFCore", "SDFDemoScenes", "SDFRealityKitSampleScenes"]
         ),
     ],
     cxxLanguageStandard: .cxx17

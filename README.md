@@ -82,6 +82,9 @@ In `Samples/`, macOS apps built on the public API:
     with Apple's seven dice models (MIT, see `Samples/SDFRealityKitSamples/Dice/Models/LICENSE.txt`). Its
     The roll is forecast with `SDFSimulation.forecast()`, an exact copy of the simulation: the
     engine is deterministic, so the real roll lands exactly as predicted.
+  - [Simulating physics joints in your RealityKit app](https://developer.apple.com/documentation/realitykit/simulating-physics-joints-in-your-realitykit-app),
+    Apple's pendulums on revolute joints, five of which make a Newton's cradle. Here it behaves
+    as one: one ball in, one ball out; two in, two out. In RealityKit one ball in sends four out.
 
 - `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, RealitySDFPhysics
   against RealityKit's physics, in a window. The scene, the timings and the view are the
@@ -129,6 +132,11 @@ vary by up to about 20% between runs.
   upstream's (`SolverReferenceTests`).
 - **Threads.** The simulation steps on the main actor; its collision detection and its contact
   solver run on several threads, and baking in the background.
+- **Bounces in turn.** Bodies that approach faster than the restitution threshold bounce pair by
+  pair before their contacts are solved together (Guendelman, Bridson and Fedkiw 2003), along the
+  normal both fields agree on, at the point where the surfaces are closest. A bounce so runs down
+  a row of touching bodies whole, as in a Newton's cradle, where solving the contacts together
+  would share it out.
 - **Joints.** Revolute and prismatic joints with limits, motors and springs, solved as soft
   constraints in the form of Box3D's, with the contacts first so pins hold against them.
 - **A hand, not a teleport.** Dragging holds a body with a soft, force-limited pull, so a gear or

@@ -62,7 +62,13 @@ exact analytical shapes; other shapes are baked from their meshes with
   damping 0.3 per second, and the mass of the shape's volume of water.
 - **Material combination.** A contact's friction is the geometric mean of the two bodies'
   coefficients, and its restitution the larger of the two. Contacts approaching slower than
-  ``SDFPhysicsSimulationComponent/restitutionThreshold`` don't bounce.
+  ``SDFPhysicsSimulationComponent/restitutionThreshold`` don't bounce. Faster ones bounce pair by
+  pair before the contacts are solved, so a row of touching bodies passes a bounce on whole, as a
+  Newton's cradle does; RealityKit shares it out among the row.
+- **Small bodies.** The contact margin and the restitution threshold are sized for bodies of about
+  a meter. For bodies of a few centimeters, scale ``SDFCollisionDetection/contactMargin``,
+  ``SDFCollisionDetection/allowedPenetration`` and the threshold down with them, as the Newton's
+  cradle sample does, or touching bodies are held apart by the margin.
 - **Mass properties.** The center of mass and inertia always come from the shape at a uniform
   density; you set the mass or the density.
 - **Scale.** Bodies scale with their entities, but the scale must be uniform.

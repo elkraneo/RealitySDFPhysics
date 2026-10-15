@@ -100,6 +100,7 @@ struct Contact
     float bias, staticFriction, dynamicFriction, restitution;
     float relativeVelocity; // Normal velocity before the solve, for restitution
     float normalImpulse, tangentImpulse[2], pseudoImpulse;
+    float collisionImpulse; // Of the bounces before the solve, reported but not warm started
 };
 
 // The least share of a constraint's inverse mass that locks may leave it for it to act. Locks
@@ -630,7 +631,7 @@ void SDFWorld::step()
                 float penetration = s.params.margin - p.separation;
                 c.bias = max(-s.baumgarte * max(penetration - s.params.allowedPenetration, 0.0f) / h, -s.maxCorrection);
 
-                c.pseudoImpulse = 0;
+                c.pseudoImpulse = 0, c.collisionImpulse = 0;
                 c.normalImpulse = p.normalImpulse;
                 c.tangentImpulse[0] = dot(p.frictionImpulse, c.tangent[0]);
                 c.tangentImpulse[1] = dot(p.frictionImpulse, c.tangent[1]);
@@ -732,6 +733,89 @@ void SDFWorld::step()
         // Approach velocities before any warm start, for restitution
         for (Contact &c : contacts)
             c.relativeVelocity = dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
+
+        // Collisions, as in Guendelman, Bridson and Fedkiw (2003): before the contacts are solved
+        // together, bodies that approach faster than the threshold bounce pair by pair, each
+        // bounce from the velocities the ones before it left, until none approaches. A bounce so
+        // travels down a row of touching bodies to its far end, as in a Newton's cradle, where
+        // contacts solved together would share it out among the row. The solve then finds these
+        // contacts separating, and the restitution pass below, with the approach speeds after
+        // the bounces, leaves them.
+        {
+            auto approach = [](const Contact &c) {
+                return dot(c.bodyB->pointVelocity(c.point->x) - c.bodyA->pointVelocity(c.point->x), c.normal);
+            };
+            // A bounce acts where the surfaces are closest, along the normal both fields agree on.
+            // The optimizer's points spread over the region where the fields are about equal, and
+            // the normal of a point off the line of closest approach, taken from one field, is
+            // tilted: two balls would bounce partly sideways and set each other spinning. So the
+            // point slides down the summed distance of the two bodies to that line, and the normal
+            // is the difference of their gradients, which their tilts cancel in.
+            struct Bounce
+            {
+                Contact *c;
+                bool refined = false;
+                float3 normal, rA, rB;
+                float normalMass;
+            };
+            auto refine = [&](Bounce &b) {
+                b.refined = true;
+                const Body &A = *b.c->bodyA, &B = *b.c->bodyB;
+                float3 x = b.c->point->x, gA, gB;
+                float f = A.sdf(x, &gA) + B.sdf(x, &gB);
+                float step = 0.25f * min(b.c->a->record->boundingRadius, b.c->b->record->boundingRadius);
+                for (int i = 0; i < 16 && step > 1e-6f; i++)
+                {
+                    float3 g = gA + gB, y = x - g * step, hA, hB;
+                    float fy = A.sdf(y, &hA) + B.sdf(y, &hB);
+                    if (fy < f)
+                        x = y, f = fy, gA = hA, gB = hB;
+                    else
+                        step *= 0.5f;
+                }
+                float3 n = gA - gB;
+                // Where the gradients don't oppose, as deep inside a cavity, the point's own normal stays
+                if (lengthSq(n) > 1e-6f && dot(n, b.c->normal) > 0)
+                {
+                    b.normal = normalize(n);
+                    b.rA = x - A.position, b.rB = x - B.position;
+                }
+                else
+                    b.normal = b.c->normal, b.rA = b.c->rA, b.rB = b.c->rB;
+                b.normalMass = effectiveMass(*b.c->a, *b.c->b, b.rA, b.rB, b.normal);
+            };
+            std::vector<Bounce> bouncy;
+            bool approaching = false;
+            for (Contact &c : contacts)
+                if (c.restitution > 0)
+                {
+                    bouncy.push_back({&c});
+                    approaching |= c.relativeVelocity < -restitutionThreshold;
+                }
+            // A row of n bodies needs up to n - 1 sweeps; the limit only bounds a pathological pile
+            const int maxSweeps = 64;
+            for (int sweep = 0; approaching && sweep < maxSweeps; sweep++)
+            {
+                approaching = false;
+                for (Bounce &b : bouncy)
+                {
+                    if (approach(*b.c) >= -restitutionThreshold)
+                        continue;
+                    if (!b.refined)
+                        refine(b);
+                    float vn = dot(b.c->b->body->pointVelocity(b.rB + b.c->bodyB->position) - b.c->a->body->pointVelocity(b.rA + b.c->bodyA->position), b.normal);
+                    if (vn >= -restitutionThreshold)
+                        continue;
+                    float lambda = -(1 + b.c->restitution) * vn * b.normalMass;
+                    b.c->collisionImpulse += lambda;
+                    b.c->a->applyImpulse(b.rA, -b.normal * lambda);
+                    b.c->b->applyImpulse(b.rB, b.normal * lambda);
+                    approaching = true;
+                }
+            }
+            for (Bounce &b : bouncy)
+                b.c->relativeVelocity = approach(*b.c);
+        }
         for (auto &body : s.bodies)
             body->pseudoVelocity = body->pseudoAngularVelocity = {0, 0, 0};
 
@@ -788,8 +872,8 @@ void SDFWorld::step()
         auto store = [](Contact &c) {
             c.point->normalImpulse = c.normalImpulse;
             c.point->frictionImpulse = c.tangent[0] * c.tangentImpulse[0] + c.tangent[1] * c.tangentImpulse[1];
-            c.pair->impulse += c.normalImpulse;
-            c.pair->impulseVector += c.normal * c.normalImpulse;
+            c.pair->impulse += c.normalImpulse + c.collisionImpulse;
+            c.pair->impulseVector += c.normal * (c.normalImpulse + c.collisionImpulse);
         };
 
         // Baumgarte stabilization with split impulses: v_n + bias >= 0 is solved for pseudo
