@@ -106,8 +106,10 @@ final class Recorder {
 func renderDemos(_ recorder: Recorder, mechanics: Bool = false) async throws {
     // Scenes in order, with their length in seconds and whether contacts are shown
     let reel: [(scene: Int, seconds: Double, contacts: Bool)] = mechanics ? [
-        (11, 6, false),  // Gears
-        (12, 14, false), // Chain
+        (11, 5, false),  // Gears
+        (12, 8, false),  // Chain
+        (13, 10, false), // Absolut
+        (14, 8, false),  // Planetary
     ] : [
         (7, 4.5, false), // Spiky Wheel
         (8, 5, false),   // Cows on Spikes
