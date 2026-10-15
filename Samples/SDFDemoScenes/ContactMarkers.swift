@@ -1,5 +1,5 @@
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// Shows the contacts of the parent's simulation as points with normals: green when tracked by the
 /// temporal cache, red when newly found. Set it on a direct child of the simulation root.
@@ -43,7 +43,7 @@ struct ContactMarkersSystem: System {
 
     func update(context: SceneUpdateContext) {
         for markers in context.entities(matching: Self.query, updatingSystemWhen: .rendering) {
-            guard let simulation = markers.parent?.components[SDFSimulationComponent.self]?.simulation else { continue }
+            guard let simulation = markers.parent?.components[SDFPhysicsSimulationComponent.self]?.simulation else { continue }
             let contacts = simulation.contacts().prefix(2048)
             while markers.children.count < contacts.count {
                 markers.addChild(makeMarker())

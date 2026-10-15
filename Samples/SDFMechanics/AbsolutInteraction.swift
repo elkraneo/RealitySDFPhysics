@@ -1,6 +1,6 @@
 import Foundation
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import SDFDemoViewer
 import SDFMechanicsScenes
 import simd
@@ -54,12 +54,12 @@ final class AbsolutInteraction: DemoInteraction {
         let motor = pedalDrive.motor(crankAngle: angle)
         guard hinge.motor != motor else { return }
         hinge.motor = motor
-        root.components[SDFJointsComponent.self]?.joints[crank.hinge] = .revolute(hinge)
+        root.components[SDFPhysicsJointsComponent.self]?.joints[crank.hinge] = .revolute(hinge)
     }
 
     /// The crank's own hinge, as the root holds it
-    private var hinge: SDFRevoluteJoint? {
-        guard let crank, let joints = root?.components[SDFJointsComponent.self]?.joints, joints.indices.contains(crank.hinge),
+    private var hinge: SDFPhysicsRevoluteJoint? {
+        guard let crank, let joints = root?.components[SDFPhysicsJointsComponent.self]?.joints, joints.indices.contains(crank.hinge),
               case .revolute(let hinge) = joints[crank.hinge]
         else { return nil }
         return hinge

@@ -1,7 +1,7 @@
 import CoreMedia
 import Metal
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// Milliseconds per step of a run, and a check of where the pile ended
 public struct StepTiming: Sendable {
@@ -24,7 +24,7 @@ public struct Phases: Sendable {
     public var swift: Double { step - engine }
 }
 
-/// The pile of tori timed, headless: SDFCollisionKit stepped directly, RealityKit's physics
+/// The pile of tori timed, headless: RealitySDFPhysics stepped directly, RealityKit's physics
 /// stepped by its clock between its simulation events.
 public enum Benchmark {
     /// The steps of the standard table
@@ -32,9 +32,9 @@ public enum Benchmark {
 
     @MainActor
     public static func timeSDF(count: Int, steps: Int = steps, isMultithreaded: Bool,
-                               preset: SDFSimulationComponent.Preset = .paper,
-                               configure: (inout SDFSimulationComponent) -> Void = { _ in }) -> StepTiming {
-        var settings = SDFSimulationComponent(simulation: SDFSimulation(), preset: preset)
+                               preset: SDFPhysicsSimulationComponent.Preset = .paper,
+                               configure: (inout SDFPhysicsSimulationComponent) -> Void = { _ in }) -> StepTiming {
+        var settings = SDFPhysicsSimulationComponent(simulation: SDFSimulation(), preset: preset)
         settings.isMultithreaded = isMultithreaded
         configure(&settings)
         let (root, tori) = TorusPile.makeSDF(count: count, settings: settings)
@@ -52,8 +52,8 @@ public enum Benchmark {
     /// Mean milliseconds per step of each phase, with the real-time preset without sleeping
     @MainActor
     public static func phases(count: Int, steps: Int = steps, isMultithreaded: Bool,
-                              configure: (inout SDFSimulationComponent) -> Void = { _ in }) -> Phases {
-        var settings = SDFSimulationComponent(simulation: SDFSimulation())
+                              configure: (inout SDFPhysicsSimulationComponent) -> Void = { _ in }) -> Phases {
+        var settings = SDFPhysicsSimulationComponent(simulation: SDFSimulation())
         settings.isSleepingEnabled = false
         settings.isMultithreaded = isMultithreaded
         configure(&settings)

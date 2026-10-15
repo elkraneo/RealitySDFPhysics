@@ -1,6 +1,6 @@
 import Foundation
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 /// The named shapes of the upstream demo, created on first use and shared by all scenes
 @MainActor

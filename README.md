@@ -1,4 +1,4 @@
-# SDFCollisionKit
+# RealitySDFPhysics
 
 Rigid body physics for RealityKit in which every body is a signed distance field, built on
 
@@ -17,46 +17,46 @@ components. The paper's collision detection is vendored unmodified behind a C in
 
 ```swift
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 
 // A root entity runs the simulation for its descendants, in its local frame
 let root = Entity()
-root.components.set(SDFSimulationComponent())
+root.components.set(SDFPhysicsSimulationComponent())
 content.add(root)
 
 // Static ground
 let ground = Entity()
 ground.position = [0, -0.5, 0]
-ground.components.set(SDFBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
+ground.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [5, 0.5, 5]), mode: .static))
 root.addChild(ground)
 
 // Any model: bake its meshes into a voxel SDF, in the entity's own frame
 let gear = try await Entity(named: "Gear")
-gear.components.set(SDFBodyComponent(shape: try await .bake(from: gear),
+gear.components.set(SDFPhysicsBodyComponent(shape: try await .bake(from: gear),
                                      material: .init(friction: 0.6, restitution: 0.2)))
 gear.position = [0, 2, 0]
 root.addChild(gear)
 
 // Objects of another size: model them at about 1 unit in a scaled root, and say how long a unit is
 // let root = Entity(); root.scale = [0.01, 0.01, 0.01]
-// root.components.set(SDFSimulationComponent(metersPerUnit: 0.01)) // Centimeters
+// root.components.set(SDFPhysicsSimulationComponent(metersPerUnit: 0.01)) // Centimeters
 
 // Forces and events, as with RealityKit's physics
-gear.sdfPhysics.applyAngularImpulse([0, 2, 0], relativeTo: nil)
-let simulation = root.components[SDFSimulationComponent.self]!.simulation
+gear.sdf.applyAngularImpulse([0, 2, 0], relativeTo: nil)
+let simulation = root.components[SDFPhysicsSimulationComponent.self]!.simulation
 subscription = simulation.subscribe(to: SDFCollisionEvents.Began.self, on: gear) { event in
     print("hit \(event.entityB.name) with impulse \(event.impulse)")
 }
 ```
 
-| RealityKit | SDFCollisionKit |
+| RealityKit | RealitySDFPhysics |
 | --- | --- |
-| `PhysicsSimulationComponent` | `SDFSimulationComponent` |
-| `PhysicsBodyComponent` + `CollisionComponent` | `SDFBodyComponent` (mode, mass, material, locks, damping, gravity, filter, trigger) |
+| `PhysicsSimulationComponent` | `SDFPhysicsSimulationComponent` |
+| `PhysicsBodyComponent` + `CollisionComponent` | `SDFPhysicsBodyComponent` (mode, mass, material, locks, damping, gravity, filter, trigger) |
 | `ShapeResource` | `SDFShape`: analytical, or baked from an entity's meshes |
-| `PhysicsMotionComponent` | `SDFMotionComponent` |
-| `addForce`, `applyLinearImpulse`, … | `entity.sdfPhysics.addForce`, … |
-| `CollisionEvents`, `PhysicsSimulationEvents` | `SDFCollisionEvents`, `SDFSimulationEvents` |
+| `PhysicsMotionComponent` | `SDFPhysicsMotionComponent` |
+| `addForce`, `applyLinearImpulse`, … | `entity.sdf.addForce`, … |
+| `CollisionEvents`, `PhysicsSimulationEvents` | `SDFCollisionEvents`, `SDFPhysicsSimulationEvents` |
 | `raycast`, `convexCast` | `raycast`, and `overlaps(of:at:)`: does a shape fit here? |
 
 The documentation catalog covers getting started, migrating from RealityKit physics, shapes and
@@ -72,12 +72,12 @@ In `Samples/`, macOS apps built on the public API:
   bit-identical runs of upstream's: bodies have the density of water rather than upstream's unit
   density, and random placements come from another generator. Loading or resetting a scene
   always plays out the same.
-- `RealityKitSamples`: Apple's RealityKit physics samples ported to SDF bodies, keeping Apple's
+- `SDFRealityKitSamples`: Apple's RealityKit physics samples ported to SDF bodies, keeping Apple's
   structure and values so that the two can be compared. So far:
   - [Simulating physics with collisions in your visionOS app](https://developer.apple.com/documentation/realitykit/simulating-physics-with-collisions-in-your-visionos-app),
     with a switch from spheres to concave tori.
   - [Simulating dice rolls as a component for your game](https://developer.apple.com/documentation/tabletopkit/simulating-dice-rolls-as-a-component-for-your-game),
-    with Apple's seven dice models (MIT, see `Samples/RealityKitSamples/Dice/Models/LICENSE.txt`). Its
+    with Apple's seven dice models (MIT, see `Samples/SDFRealityKitSamples/Dice/Models/LICENSE.txt`). Its
     The roll is forecast with `SDFSimulation.forecast()`, an exact copy of the simulation: the
     engine is deterministic, so the real roll lands exactly as predicted.
 
@@ -86,7 +86,7 @@ In `Samples/`, macOS apps built on the public API:
   chain of 2008 with pedals to drag and boards that light up over the plato, and a planetary
   gear set. It shares the window of `SDFDemos`, the `SDFDemoViewer` module, whose
   `DemoInteraction` lets a scene take the drag, as the Absolut pedals do.
-- `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, SDFCollisionKit
+- `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, RealitySDFPhysics
   against RealityKit's physics, in a window. The scene, the timings and the view are the
   `SDFBenchmarks` module; `Samples/BenchmarksApp` wraps it in an Xcode project for iPhone and
   Vision Pro, where the same table runs on the device.
@@ -96,7 +96,7 @@ mechanics scenes, and `sdf-video` renders a showcase video.
 
 ```sh
 swift run -c release SDFDemos
-swift run -c release RealityKitSamples
+swift run -c release SDFRealityKitSamples
 swift run -c release SDFMechanics
 swift run -c release Benchmarks
 swift run -c release sdf-snapshot [--mechanics] out/ [steps] [scene index...]
@@ -104,6 +104,8 @@ swift test
 ```
 
 Use release builds: debug builds of the engine are several times slower.
+
+## Performance
 
 Apple M1, release, 240 steps at 60 Hz with the paper's settings (`preset: .paper`: 4 substeps of
 20 velocity and 20 position iterations). The default, `.realTime` (2 substeps of 10 and 4), costs
@@ -121,7 +123,7 @@ vary by up to about 20% between runs.
 | Bunny Pile | 28 | 2.4 | 8.5–9.8 |
 | Primitives | 49 | 2.7 | 6.6 |
 
-## Notes
+## Design
 
 - **Deterministic.** Sampling is seeded, per pair of bodies when multithreaded, and the solver
   takes its contacts in a fixed order, so the same bodies and inputs give bit-identical results
@@ -130,18 +132,36 @@ vary by up to about 20% between runs.
   upstream's (`SolverReferenceTests`).
 - **Threads.** The simulation steps on the main actor; its collision detection and its contact
   solver run on several threads, and baking in the background.
+- **Joints.** Revolute and prismatic joints with limits, motors and springs, solved as soft
+  constraints in the form of Box3D's, with the contacts first so pins hold against them.
+- **A hand, not a teleport.** Dragging holds a body with a soft, force-limited pull, so a gear or
+  a link pulled into another stops against it rather than passing through.
+- **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
+  pushed (`isSleepingEnabled`).
+- **Baked once.** Shapes baked from meshes can be cached on disk (`SDFShape.cached`), so a scene
+  loads in a fraction of a second after its first bake.
+
+## Known gaps
+
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies don't push each other;
   give a moving entity one or the other. `entity.addSDFColliders()` gives an entity's RealityKit
   collision shapes to the SDF simulation as static or kinematic bodies, so SDF bodies land on the
   floors and tables a scene already has.
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.
-- **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
-  pushed (`isSleepingEnabled`).
-- **Not yet available:** joints, continuous collision detection and shape sweeps.
+- **Not yet available:** continuous collision detection, shape sweeps, spherical and fixed joints.
+
+## Siblings
+
+[RealityBox3D](https://github.com/elkraneo/RealityBox3D) wraps Erin Catto's Box3D with the same
+conventions: types named as RealityKit's with the engine's prefix (`B3PhysicsBodyComponent`,
+`SDFPhysicsBodyComponent`), one entity accessor (`entity.b3`, `entity.sdf`), the same samples and
+articles. Pick it for convex and compound bodies, ragdolls, vehicles and character controllers;
+pick this one for exact contact between concave shapes. Both run side by side in one RealityKit
+scene, each stepping its own entities.
 
 ## License
 
 MIT (see [LICENSE](LICENSE)). The vendored engine is MIT too, by Chris Giles (see
 `Sources/SDFCore/upstream/LICENSE`), and the dice models of the dice sample are Apple's, under the
-license in `Samples/RealityKitSamples/Dice/Models/LICENSE.txt`. Please cite the paper when using
+license in `Samples/SDFRealityKitSamples/Dice/Models/LICENSE.txt`. Please cite the paper when using
 this work.

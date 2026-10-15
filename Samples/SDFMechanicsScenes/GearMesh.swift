@@ -1,4 +1,4 @@
-import SDFCollisionKit
+import RealitySDFPhysics
 import simd
 
 /// Spur gears with involute teeth, generated as closed meshes to bake: the shape that meshes,

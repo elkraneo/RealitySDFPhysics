@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 import RealityKit
-import SDFCollisionKit
+import RealitySDFPhysics
 import SDFDemoScenes
 import simd
 
@@ -29,7 +29,7 @@ final class DemoModel {
     @ObservationIgnored var frameUpdates: EventSubscription?
 
     /// The root's simulation settings, applied on change
-    var settings: SDFSimulationComponent {
+    var settings: SDFPhysicsSimulationComponent {
         didSet { root.components.set(settings) }
     }
 
@@ -58,8 +58,8 @@ final class DemoModel {
     }
 
     /// The paper's settings on one thread, as in the upstream demo
-    private static func paperSettings(_ simulation: SDFSimulation) -> SDFSimulationComponent {
-        var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
+    private static func paperSettings(_ simulation: SDFSimulation) -> SDFPhysicsSimulationComponent {
+        var settings = SDFPhysicsSimulationComponent(simulation: simulation, preset: .paper)
         settings.isMultithreaded = false
         return settings
     }
@@ -70,7 +70,7 @@ final class DemoModel {
         defer { isLoading = false }
         // No simulation while the scene is built, then a new one with the same settings, so that
         // loading a scene, or resetting it, always plays out the same
-        root.components.remove(SDFSimulationComponent.self)
+        root.components.remove(SDFPhysicsSimulationComponent.self)
         do {
             try await scenes[index].load(into: root)
             errorMessage = nil
@@ -129,11 +129,11 @@ final class DemoModel {
     }
 }
 
-private extension SDFSimulationComponent {
+private extension SDFPhysicsSimulationComponent {
     /// The same settings for another simulation
     @MainActor
-    func with(_ simulation: SDFSimulation) -> SDFSimulationComponent {
-        var copy = SDFSimulationComponent(simulation: simulation, metersPerUnit: metersPerUnit)
+    func with(_ simulation: SDFSimulation) -> SDFPhysicsSimulationComponent {
+        var copy = SDFPhysicsSimulationComponent(simulation: simulation, metersPerUnit: metersPerUnit)
         copy.gravity = gravity
         copy.solverIterations = solverIterations
         copy.collisionOptions = collisionOptions
