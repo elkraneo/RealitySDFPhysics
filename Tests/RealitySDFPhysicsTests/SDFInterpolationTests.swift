@@ -97,4 +97,58 @@ import simd
         // From there, two steps on at its speed
         #expect(abs(ball.position.x - 5) < 0.05 && abs(ball.position.y - 5) < 0.5 && ball.position.z == 5)
     }
+
+    /// A handler of the step's events that moves the entity moves its body
+    @Test func handlersCanTeleport() {
+        let (root, ball, simulation) = Self.fallingBall(interpolated: true)
+        var moved = false
+        let subscription = simulation.subscribe(to: SDFPhysicsSimulationEvents.DidSimulate.self) { _ in
+            if !moved, simulation.stepCount == 10 { ball.position = [0, 50, 0]; moved = true }
+        }
+        for frame in Self.jittery.prefix(30) { simulation.update(root: root, deltaTime: frame) }
+        withExtendedLifetime(subscription) {}
+        #expect(moved)
+        #expect(abs(ball.position.y - 50) < 2, "\(ball.position)")
+    }
+
+    /// A body made anew, for a new shape, starts from its simulated pose, not the one it shows
+    @Test func newShapeKeepsTheSimulatedPose() {
+        var finals: [SIMD3<Float>] = []
+        for changesShape in [false, true] {
+            let (root, ball, simulation) = Self.fallingBall(interpolated: true)
+            for (index, frame) in Self.jittery.prefix(60).enumerated() {
+                if changesShape, index == 30 {
+                    var body = ball.components[SDFPhysicsBodyComponent.self]!
+                    body.shape = .sphere(radius: 0.1)
+                    ball.components.set(body)
+                }
+                simulation.update(root: root, deltaTime: frame)
+            }
+            simulation.step(root: root)
+            finals.append(ball.position)
+        }
+        #expect(simd_distance(finals[0], finals[1]) < 1e-4, "\(finals)")
+    }
+
+    /// A position that isn't finite is refused, and doesn't spread into what the entity shows
+    @Test func nonfiniteMoveIsRepaired() {
+        let (root, ball, simulation) = Self.fallingBall(interpolated: true)
+        for frame in Self.jittery.prefix(20) { simulation.update(root: root, deltaTime: frame) }
+        ball.position = [.nan, 0, 0]
+        for frame in Self.jittery.prefix(10) { simulation.update(root: root, deltaTime: frame) }
+        #expect(ball.position.x.isFinite && ball.position.y.isFinite, "\(ball.position)")
+    }
+
+    /// Paused, a body shows its simulated pose, and resumes from it without stepping back
+    @Test func pauseDoesNotStepBack() {
+        let (root, ball, simulation) = Self.fallingBall(interpolated: true)
+        for frame in Self.jittery.prefix(20) { simulation.update(root: root, deltaTime: frame) }
+        root.components[SDFPhysicsSimulationComponent.self]!.isPaused = true
+        simulation.update(root: root, deltaTime: 1.0 / 60)
+        let paused = ball.position.x
+        root.components[SDFPhysicsSimulationComponent.self]!.isPaused = false
+        // A frame too short for a step
+        simulation.update(root: root, deltaTime: 0)
+        #expect(ball.position.x >= paused, "\(ball.position.x) after \(paused)")
+    }
 }
