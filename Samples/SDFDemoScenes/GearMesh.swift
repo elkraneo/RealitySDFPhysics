@@ -76,7 +76,7 @@ public enum GearMesh {
     /// The gear baked, at `resolution` cells across its diameter
     public static func shape(teeth: Int, module: Float, thickness: Float, shift: Float = 0, resolution: Int = 100) throws -> SDFShape {
         let mesh = mesh(teeth: teeth, module: module, thickness: thickness, shift: shift)
-        return try SDFShape(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
+        return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
     }
 
     /// The mesh of an internal gear about the y axis: a ring whose teeth point inward, the shape
@@ -162,6 +162,6 @@ public enum GearMesh {
     public static func ringShape(teeth: Int, module: Float, thickness: Float, outerRadius: Float, shift: Float = 0,
                                  resolution: Int = 240) throws -> SDFShape {
         let mesh = ringMesh(teeth: teeth, module: module, thickness: thickness, outerRadius: outerRadius, shift: shift)
-        return try SDFShape(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
+        return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
     }
 }

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <map>
 #include <tuple>
 #include <unordered_map>
@@ -212,6 +213,154 @@ SDFShapeMesh sdf_shape_mesh(const SDFShape *shape)
     mesh.vertexCount = (int32_t)m.positions.size();
     mesh.indexCount = (int32_t)m.indices.size();
     return mesh;
+}
+
+} // extern "C"
+
+// MARK: Baked data
+
+// The data of a baked shape: this header, then the grid (nx * ny * nz float4 of distance and
+// gradient), the curvature seeds, and the engine's normalized mesh (positions, normals, indices).
+// Every field is 4 bytes, in the machine's byte order; the magic number rejects the other order.
+struct BakedHeader
+{
+    uint32_t magic;
+    uint32_t version;
+    int32_t nx, ny, nz;
+    float3 origin;
+    float cell;
+    AABB bounds;
+    float3 center;
+    float unitScale;
+    float boundingRadius;
+    uint32_t flags;
+    float volume;
+    float3 centerOfMass;
+    float3x3 inertia;
+    uint32_t seedCount, vertexCount, indexCount;
+};
+static_assert(sizeof(BakedHeader) == 37 * 4, "BakedHeader must be tightly packed");
+
+static const uint32_t bakedMagic = 0x42464453; // "SDFB"
+enum : uint32_t
+{
+    BakedWatertight = 1,
+    BakedConvex = 2,
+    BakedUniformCurvature = 4,
+};
+
+static uint64_t bakedSize(const BakedHeader &h)
+{
+    return sizeof(BakedHeader) + (uint64_t)h.nx * h.ny * h.nz * sizeof(float4) + (uint64_t)h.seedCount * sizeof(float3) +
+           (uint64_t)h.vertexCount * 2 * sizeof(float3) + (uint64_t)h.indexCount * sizeof(uint32_t);
+}
+
+template <typename T> static void put(uint8_t *&out, const std::vector<T> &values)
+{
+    if (!values.empty())
+        memcpy(out, values.data(), values.size() * sizeof(T));
+    out += values.size() * sizeof(T);
+}
+
+template <typename T> static void take(const uint8_t *&in, std::vector<T> &values, uint64_t count)
+{
+    values.resize(count);
+    if (count > 0)
+        memcpy(values.data(), in, count * sizeof(T));
+    in += count * sizeof(T);
+}
+
+// VoxelSdf can only be built by baking a mesh: a shape is loaded into one baked from a
+// tetrahedron at the lowest resolution, which takes microseconds, with all of its fields replaced
+static std::shared_ptr<VoxelSdf> placeholderVoxelSdf()
+{
+    Mesh mesh;
+    mesh.positions = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    mesh.indices = {0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3};
+    return std::make_shared<VoxelSdf>(mesh, "", 1);
+}
+
+extern "C" {
+
+int64_t sdf_shape_bake_data(const SDFShape *shape, void *buffer, int64_t capacity)
+{
+    auto voxel = dynamic_cast<const VoxelSdf *>(shape->shape.get());
+    if (!voxel || voxel->mesh.normals.size() != voxel->mesh.positions.size())
+        return 0;
+    BakedHeader h = {};
+    h.magic = bakedMagic;
+    h.version = SDF_BAKED_DATA_VERSION;
+    h.nx = voxel->nx, h.ny = voxel->ny, h.nz = voxel->nz;
+    h.origin = voxel->origin;
+    h.cell = voxel->cell;
+    h.bounds = voxel->bounds;
+    h.center = shape->center;
+    h.unitScale = shape->unitScale;
+    h.boundingRadius = shape->boundingRadius;
+    h.flags = (shape->watertight ? BakedWatertight : 0) | (voxel->convex ? BakedConvex : 0) |
+              (shape->uniformCurvature ? BakedUniformCurvature : 0);
+    h.volume = voxel->volume;
+    h.centerOfMass = voxel->centerOfMass;
+    h.inertia = voxel->inertia;
+    h.seedCount = (uint32_t)voxel->seeds.size();
+    h.vertexCount = (uint32_t)voxel->mesh.positions.size();
+    h.indexCount = (uint32_t)voxel->mesh.indices.size();
+    uint64_t size = bakedSize(h);
+    if (!buffer || capacity < (int64_t)size)
+        return (int64_t)size;
+
+    uint8_t *out = (uint8_t *)buffer;
+    memcpy(out, &h, sizeof(h));
+    out += sizeof(h);
+    put(out, voxel->grid);
+    put(out, voxel->seeds);
+    put(out, voxel->mesh.positions);
+    put(out, voxel->mesh.normals);
+    put(out, voxel->mesh.indices);
+    return (int64_t)size;
+}
+
+SDFShape *sdf_shape_from_data(const void *data, int64_t size)
+{
+    BakedHeader h;
+    if (!data || size < (int64_t)sizeof(h))
+        return nullptr;
+    memcpy(&h, data, sizeof(h));
+    if (h.magic != bakedMagic || h.version != SDF_BAKED_DATA_VERSION || h.nx < 2 || h.ny < 2 || h.nz < 2 ||
+        h.indexCount % 3 != 0 || bakedSize(h) != (uint64_t)size || !(h.cell > 0) || !(h.unitScale > 0))
+        return nullptr;
+
+    auto voxel = placeholderVoxelSdf();
+    const uint8_t *in = (const uint8_t *)data + sizeof(h);
+    voxel->nx = h.nx, voxel->ny = h.ny, voxel->nz = h.nz;
+    voxel->origin = h.origin;
+    voxel->cell = h.cell;
+    voxel->bounds = h.bounds;
+    voxel->watertight = h.flags & BakedWatertight;
+    voxel->convex = h.flags & BakedConvex;
+    voxel->volume = h.volume;
+    voxel->centerOfMass = h.centerOfMass;
+    voxel->inertia = h.inertia;
+    take(in, voxel->grid, (uint64_t)h.nx * h.ny * h.nz);
+    take(in, voxel->seeds, h.seedCount);
+    take(in, voxel->mesh.positions, h.vertexCount);
+    take(in, voxel->mesh.normals, h.vertexCount);
+    take(in, voxel->mesh.indices, h.indexCount);
+    for (uint32_t i : voxel->mesh.indices)
+        if (i >= h.vertexCount)
+            return nullptr;
+
+    SDFShape *handle = new SDFShape();
+    handle->shape = voxel;
+    handle->center = h.center;
+    handle->unitScale = h.unitScale;
+    handle->boundingRadius = h.boundingRadius;
+    handle->watertight = h.flags & BakedWatertight;
+    handle->uniformCurvature = h.flags & BakedUniformCurvature;
+    handle->display = voxel->mesh;
+    for (float3 &p : handle->display.positions)
+        p = p / handle->unitScale + handle->center;
+    return handle;
 }
 
 } // extern "C"

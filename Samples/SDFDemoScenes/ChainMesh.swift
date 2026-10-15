@@ -91,12 +91,12 @@ public struct ChainMesh {
 
     public func linkShape(resolution: Int = 128) throws -> SDFShape {
         let mesh = linkMesh()
-        return try SDFShape(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
+        return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
     }
 
     public func sprocketShape(teeth: Int, resolution: Int = 160) throws -> SDFShape {
         let mesh = sprocketMesh(teeth: teeth)
-        return try SDFShape(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
+        return try SDFShape.cached(baking: mesh.positions, indices: mesh.indices, resolution: resolution)
     }
 
     /// Triangles of extruded outlines, each fanned from a center it is star-shaped about

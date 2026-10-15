@@ -1,3 +1,4 @@
+import Foundation
 internal import SDFCore
 import simd
 
@@ -9,7 +10,7 @@ public final class SDFShape: @unchecked Sendable {
     // The engine never mutates a shape after creating it
     let handle: OpaquePointer
 
-    private init(_ handle: OpaquePointer) {
+    init(_ handle: OpaquePointer) {
         self.handle = handle
     }
 
@@ -80,6 +81,8 @@ public final class SDFShape: @unchecked Sendable {
     public enum BakeError: Error {
         /// The mesh has no triangles, an index out of range or no extent
         case invalidMesh
+        /// The data isn't that of a baked shape, or was saved by another version
+        case invalidData
     }
 
     /// Bakes a closed triangle mesh into a voxel SDF with `resolution` cells across its longest
@@ -88,6 +91,24 @@ public final class SDFShape: @unchecked Sendable {
         let flat = positions.flatMap { [$0.x, $0.y, $0.z] }
         guard let handle = sdf_shape_bake(flat, Int32(positions.count), indices, Int32(indices.count), Int32(resolution))
         else { throw BakeError.invalidMesh }
+        self.init(handle)
+    }
+
+    /// The data of a baked shape, to load with `init(bakedData:)` instead of baking it again: the
+    /// grid and everything derived from the mesh. Nil for the analytical shapes.
+    public func bakedData() -> Data? {
+        let size = sdf_shape_bake_data(handle, nil, 0)
+        guard size > 0 else { return nil }
+        var data = Data(count: Int(size))
+        data.withUnsafeMutableBytes { _ = sdf_shape_bake_data(handle, $0.baseAddress, size) }
+        return data
+    }
+
+    /// Loads a shape saved with `bakedData()`, identical to the one saved. Data saved by a version of
+    /// the library that bakes or saves differently is refused, and should be baked again.
+    public convenience init(bakedData data: Data) throws {
+        guard let handle = data.withUnsafeBytes({ sdf_shape_from_data($0.baseAddress, Int64($0.count)) })
+        else { throw BakeError.invalidData }
         self.init(handle)
     }
 
