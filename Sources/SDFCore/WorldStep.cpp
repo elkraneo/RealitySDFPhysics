@@ -131,10 +131,16 @@ struct Hinge
     float pseudoRow[2], pseudoLower, pseudoUpper;
 };
 
-float3x3 inverseMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
+// The effective mass of a point constraint, or zero when locks leave nothing to move
+float3x3 pointMass(const Mover &a, const Mover &b, float3 rA, float3 rB)
 {
     float3x3 sA = skew(rA), sB = skew(rB);
-    return a.linearMass() + b.linearMass() + sA * a.invInertia * transpose(sA) + sB * b.invInertia * transpose(sB);
+    float3x3 k = a.linearMass() + b.linearMass() + sA * a.invInertia * transpose(sA) + sB * b.invInertia * transpose(sB);
+    float det = dot(k[0], cross(k[1], k[2]));
+    float scale = maxComponent(abs(k[0])) + maxComponent(abs(k[1])) + maxComponent(abs(k[2]));
+    if (!(det > 1e-12f * scale * scale * scale))
+        return identity3() * 0.0f;
+    return inverse(k);
 }
 
 float angularMass(const Mover &a, const Mover &b, float3 dir)
@@ -433,7 +439,8 @@ void SDFWorld::step()
             for (JointRecord &joint : joints)
             {
                 BodyRecord &a = record(joint.a), &b = record(joint.b);
-                if (a.asleep != b.asleep && canMove(a.asleep ? b : a))
+                const BodyRecord &awake = a.asleep ? b : a;
+                if (a.asleep != b.asleep && canMove(awake) && (isDynamic(awake) || isMoving(*awake.body)))
                     wake(a.asleep ? a : b);
             }
         }
@@ -544,14 +551,17 @@ void SDFWorld::step()
             j.axis = rotate(joint.a->orientation, joint.axisA);
             float3 axisB = rotate(joint.b->orientation, joint.axisB);
             tangents(j.axis, j.row[0], j.row[1]);
-            j.pointMass = inverse(inverseMass(*j.a, *j.b, j.rA, j.rB));
+            j.pointMass = pointMass(*j.a, *j.b, j.rA, j.rB);
             for (int i = 0; i < 2; i++)
                 j.rowMass[i] = angularMass(*j.a, *j.b, j.row[i]);
             j.axialMass = angularMass(*j.a, *j.b, j.axis);
             j.pointError = (joint.b->position + j.rB) - (joint.a->position + j.rA);
-            // For a small tilt t about a row, axisB is about axis + t * cross(row, axis), so the
-            // tilt is what cross(axis, axisB) has along the row
+            // The rotation that takes axis to axisB, as an angle times a direction; for a small
+            // tilt t about a row, axisB is about axis + t * cross(row, axis), so the tilt is what
+            // cross(axis, axisB) has along the row. Antiparallel axes tilt by pi about a row.
             float3 tilt = cross(j.axis, axisB);
+            float sine = length(tilt), cosine = dot(j.axis, axisB);
+            tilt = sine > 1e-6f ? tilt * (atan2f(sine, cosine) / sine) : (cosine < 0 ? j.row[0] * 3.14159265f : float3{0, 0, 0});
             for (int i = 0; i < 2; i++)
                 j.rowError[i] = dot(tilt, j.row[i]);
             j.angle = jointAngle(joint);
@@ -638,11 +648,19 @@ void SDFWorld::step()
         // The passes over the hinges. Each pass runs over the hinges before the contacts.
 
         auto warmStartHinge = [](Hinge &j) {
-            const JointRecord &joint = *j.joint;
+            JointRecord &joint = *j.joint;
             j.a->applyImpulse(j.rA, -joint.linearImpulse);
             j.b->applyImpulse(j.rB, joint.linearImpulse);
-            float3 angular = j.row[0] * joint.angularImpulse[0] + j.row[1] * joint.angularImpulse[1] +
-                             j.axis * (joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse);
+            // The alignment rows' impulse, carried as a vector so that it survives the rows' turn;
+            // a limit's impulse only while the limit is reached
+            joint.angularImpulse = joint.angularImpulse - j.axis * dot(joint.angularImpulse, j.axis);
+            if (!joint.hasLimit || j.angle > joint.lowerAngle)
+                joint.lowerImpulse = 0;
+            if (!joint.hasLimit || j.angle < joint.upperAngle)
+                joint.upperImpulse = 0;
+            if (!joint.hasMotor)
+                joint.motorImpulse = 0;
+            float3 angular = joint.angularImpulse + j.axis * (joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse);
             j.a->applyAngularImpulse(-angular);
             j.b->applyAngularImpulse(angular);
         };
@@ -695,8 +713,8 @@ void SDFWorld::step()
             {
                 float cdot = dot(j.row[i], B.angularVelocity - A.angularVelocity);
                 float lambda = -cdot * j.rowMass[i];
-                joint.angularImpulse[i] += lambda;
                 float3 impulse = j.row[i] * lambda;
+                joint.angularImpulse += impulse;
                 j.a->applyAngularImpulse(-impulse);
                 j.b->applyAngularImpulse(impulse);
             }
@@ -949,6 +967,10 @@ void SDFWorld::sleep()
                      lengthSq(r.torque) == 0 && &b != s.dragBody;
         r.stillTime = still ? r.stillTime + s.dt : 0;
     }
+    // A running motor keeps its bodies awake
+    for (const JointRecord &joint : joints)
+        if (joint.hasMotor && joint.motorSpeed != 0)
+            record(joint.a).stillTime = record(joint.b).stillTime = 0;
 
     // Islands: awake dynamic bodies joined by their contacts. None touches a sleeping body, which
     // would have woken.

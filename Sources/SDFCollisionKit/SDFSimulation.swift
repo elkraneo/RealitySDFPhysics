@@ -39,8 +39,8 @@ public final class SDFSimulation {
     var events = EventRouter()
     /// Pairs touching after the last step
     var touching: [PairKey: (entityA: Entity, entityB: Entity)] = [:]
-    /// The engine's joints, by their index in the root's ``SDFJointsComponent``
-    var jointStates: [Int: JointState] = [:]
+    /// The engine's joints, by their pins
+    var jointStates: [JointKey: JointState] = [:]
 
     public init() {
         _ = registration

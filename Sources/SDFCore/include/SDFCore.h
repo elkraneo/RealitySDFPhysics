@@ -220,15 +220,16 @@ void sdf_world_apply_angular_impulse(SDFWorld *world, SDFBodyID body, const floa
 
 typedef uint32_t SDFJointID;    // 0 is never a valid joint
 
-// A hinge: the anchors coincide and the axes stay aligned, leaving the rotation about the axis
-// free. Given in world space at the bodies' current poses; the angle is zero then. A limit bounds
-// the angle of body B relative to body A about the axis, in radians within (-pi, pi); a motor
-// drives it at a speed with up to a torque. Unless they collide, the two bodies ignore each other.
+// A hinge: a frame on each body, given in world space at the bodies' current poses (the scale is
+// ignored). The joint brings the frames' origins together and aligns their x axes, which is the
+// hinge's axis, leaving the rotation about it free. The angle is that of frame B relative to
+// frame A about the axis, zero when the frames coincide; a limit bounds it, in radians within
+// (-pi, pi), and a motor drives it at a speed with up to a torque. Unless asked to collide, the
+// two bodies ignore each other.
 typedef struct
 {
     SDFBodyID bodyA, bodyB;
-    float anchor[3];
-    float axis[3];
+    SDFPose frameA, frameB;
     bool hasLimit;
     float lowerAngle, upperAngle;
     bool hasMotor;

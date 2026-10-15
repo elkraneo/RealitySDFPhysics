@@ -82,6 +82,12 @@ public struct SDFJointsComponent: Component, Equatable {
 // MARK: Synchronization
 
 extension SDFSimulation {
+    /// A joint's identity: its pins, by entity and name
+    struct JointKey: Hashable {
+        var entityA: Entity.ID, pinA: String
+        var entityB: Entity.ID, pinB: String
+    }
+
     /// A joint in the engine, with what it was made from, to tell a change from a repeat
     struct JointState {
         var id: SDFJointID
@@ -93,14 +99,16 @@ extension SDFSimulation {
     /// Runs after the bodies, which the pins' entities must have. A joint whose pins' entities
     /// have no body yet waits for them.
     func synchronizeJoints(root: Entity) {
-        var seen: Set<Int> = []
+        var seen: Set<JointKey> = []
         let joints = root.components[SDFJointsComponent.self]?.joints ?? []
-        for (index, joint) in joints.enumerated() {
+        for joint in joints {
             guard let entityA = joint.pin0.entity, let entityB = joint.pin1.entity,
                   let bodyA = bodies[entityA.id]?.id, let bodyB = bodies[entityB.id]?.id
             else { continue }
-            seen.insert(index)
-            if let state = jointStates[index] {
+            let key = JointKey(entityA: entityA.id, pinA: joint.pin0.name, entityB: entityB.id, pinB: joint.pin1.name)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            if let state = jointStates[key] {
                 if state.bodyA == bodyA, state.bodyB == bodyB, state.joint.pin0 == joint.pin0, state.joint.pin1 == joint.pin1,
                    state.joint.checksForInternalCollisions == joint.checksForInternalCollisions {
                     // The same joint; its limit and motor can change in place
@@ -112,21 +120,23 @@ extension SDFSimulation {
                         let motor = joint.motor ?? .init(targetVelocity: 0, maxTorque: 0)
                         sdf_world_set_joint_motor(world, state.id, joint.motor != nil, motor.targetVelocity, motor.maxTorque)
                     }
-                    jointStates[index]?.joint = joint
+                    jointStates[key]?.joint = joint
                     continue
                 }
                 sdf_world_remove_joint(world, state.id)
-                jointStates[index] = nil
+                jointStates[key] = nil
             }
-            // The anchor and axis in the root's frame, where the engine works
-            guard let anchor = joint.pin0.position(relativeTo: root), let orientation = joint.pin0.orientation(relativeTo: root)
+            // The pins' frames in the root's frame, where the engine works
+            guard let positionA = joint.pin0.position(relativeTo: root), let orientationA = joint.pin0.orientation(relativeTo: root),
+                  let positionB = joint.pin1.position(relativeTo: root), let orientationB = joint.pin1.orientation(relativeTo: root)
             else { continue }
             var def = sdf_default_revolute_joint()
             def.bodyA = bodyA
             def.bodyB = bodyB
-            def.anchor = (anchor.x, anchor.y, anchor.z)
-            let axis = orientation.act([1, 0, 0])
-            def.axis = (axis.x, axis.y, axis.z)
+            def.frameA = SDFPose(position: (positionA.x, positionA.y, positionA.z),
+                                 orientation: (orientationA.vector.x, orientationA.vector.y, orientationA.vector.z, orientationA.vector.w), scale: 1)
+            def.frameB = SDFPose(position: (positionB.x, positionB.y, positionB.z),
+                                 orientation: (orientationB.vector.x, orientationB.vector.y, orientationB.vector.z, orientationB.vector.w), scale: 1)
             if let limit = joint.angularLimit {
                 def.hasLimit = true
                 def.lowerAngle = limit.lowerBound
@@ -140,19 +150,21 @@ extension SDFSimulation {
             def.collideConnected = joint.checksForInternalCollisions
             let id = sdf_world_add_revolute_joint(world, def)
             if id != 0 {
-                jointStates[index] = JointState(id: id, bodyA: bodyA, bodyB: bodyB, joint: joint)
+                jointStates[key] = JointState(id: id, bodyA: bodyA, bodyB: bodyB, joint: joint)
             }
         }
-        for (index, state) in jointStates where !seen.contains(index) {
+        for (key, state) in jointStates where !seen.contains(key) {
             sdf_world_remove_joint(world, state.id)
-            jointStates[index] = nil
+            jointStates[key] = nil
         }
     }
 
-    /// The angle of a joint of the root's component: the rotation of `pin1`'s entity relative to
-    /// `pin0`'s about the axis, in radians, or nil while the joint isn't in the simulation
-    public func angle(ofJointAt index: Int) -> Float? {
-        guard let state = jointStates[index] else { return nil }
+    /// The angle of a joint: the rotation of `pin1`'s entity relative to `pin0`'s about the axis,
+    /// in radians, or nil while the joint isn't in the simulation
+    public func angle(of joint: SDFRevoluteJoint) -> Float? {
+        guard let entityA = joint.pin0.entity, let entityB = joint.pin1.entity,
+              let state = jointStates[JointKey(entityA: entityA.id, pinA: joint.pin0.name, entityB: entityB.id, pinB: joint.pin1.name)]
+        else { return nil }
         return sdf_world_joint_angle(world, state.id)
     }
 }

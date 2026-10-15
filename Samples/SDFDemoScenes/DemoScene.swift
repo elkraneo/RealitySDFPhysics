@@ -28,6 +28,7 @@ public struct DemoScene: Identifiable, Sendable {
         for child in Array(builder.root.children) {
             root.addChild(child)
         }
+        root.components.set(SDFJointsComponent(joints: builder.joints))
     }
 }
 
@@ -36,6 +37,8 @@ public struct DemoScene: Identifiable, Sendable {
 public struct DemoBuilder {
     let root: Entity
     var random: SeededRandom
+    /// The joints of the scene, set on the simulation entity once the bodies are in place
+    public var joints: [SDFRevoluteJoint] = []
 
     /// Bodies are added as children of `root`
     public init(root: Entity, seed: UInt64 = 0x853c49e6748fea9b) {
@@ -48,6 +51,23 @@ public struct DemoBuilder {
     public mutating func drop(_ shapeName: String, above target: SIMD3<Float>) async throws -> Entity {
         let position = target + SIMD3(random.uniform(-0.5, 0.5), 4, random.uniform(-0.5, 0.5))
         return try await spawn(shapeName, at: position, orientation: random.orientation())
+    }
+
+    /// Adds a body of a shape with a mesh of its own, such as a generated gear
+    @discardableResult
+    public mutating func spawn(_ shape: SDFShape, mesh: MeshResource, named name: String, at position: SIMD3<Float>,
+                               orientation: simd_quatf = simd_quatf(angle: 0, axis: [0, 1, 0]), scale: Float = 1,
+                               mode: PhysicsBodyMode = .dynamic) -> Entity {
+        let color = mode == .dynamic ? random.pastel() : SIMD3(0.72, 0.72, 0.76)
+        var material = PhysicallyBasedMaterial()
+        material.baseColor = .init(tint: .init(red: CGFloat(color.x), green: CGFloat(color.y), blue: CGFloat(color.z), alpha: 1))
+        material.roughness = 0.55
+        let entity = ModelEntity(mesh: mesh, materials: [material])
+        entity.name = name
+        entity.transform = Transform(scale: SIMD3(repeating: scale), rotation: orientation, translation: position)
+        entity.components.set(SDFBodyComponent(shape: shape, mode: mode))
+        root.addChild(entity)
+        return entity
     }
 
     /// Adds a body of a named shape with a pastel color, or gray when static
@@ -147,6 +167,25 @@ extension DemoScene {
                 try await b.spawn(names[n % names.count], at: [(x - 1.5) * 1.3, 1 + layer * 1.4, (z - 1.5) * 1.3],
                                   orientation: b.random.orientation())
                 n += 1
+            }
+        },
+        DemoScene(id: 11, name: "Gears", description: "Involute gears of 20 and 10 teeth on hinges, the big one driven by a motor: the small one turns by contact, twice as fast",
+                  target: [0.79, 0.5, 0], distance: 6) { b in
+            let module: Float = 0.1, thickness: Float = 0.4
+            let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1]) // The pin's x axis along y
+            let base = try await b.spawn("Box", at: [0.79, -0.5, 0], scale: 0.4, mode: .static, isVisible: false)
+            // Pitch radii 1 and 0.5, with 0.08 of backlash: four times the contact skin, which
+            // keeps the flanks a skin apart. Oiled steel: the default friction wedges the teeth.
+            for (name, teeth, x, turn) in [("driver", 20, Float(0), Float(0)), ("driven", 10, 1.58, Float.pi / 10)] {
+                let shape = try GearMesh.shape(teeth: teeth, module: module, thickness: thickness)
+                let gear = b.spawn(shape, mesh: try MeshResource.generate(from: shape), named: name, at: [x, 0.5, 0],
+                                   orientation: simd_quatf(angle: turn, axis: [0, 1, 0]))
+                gear.components[SDFBodyComponent.self]!.material = SDFMaterial(staticFriction: 0.1, dynamicFriction: 0.1, restitution: 0)
+                let pin0 = base.pins.set(named: name, position: gear.position, orientation: axle, relativeTo: b.root)
+                let pin1 = gear.pins.set(named: "hub", orientation: gear.orientation.inverse * axle)
+                var joint = SDFRevoluteJoint(pin0: pin0, pin1: pin1)
+                if name == "driver" { joint.motor = SDFRevoluteJoint.Motor(targetVelocity: 1, maxTorque: 500) }
+                b.joints.append(joint)
             }
         },
     ]

@@ -71,7 +71,7 @@ struct JointRecord
     // Accumulated impulses of the last substep, to warm start the next: the point constraint,
     // the two rows that align the axes, the motor and the limits
     float3 linearImpulse = {0, 0, 0};
-    float angularImpulse[2] = {0, 0};
+    float3 angularImpulse = {0, 0, 0}; // World space, perpendicular to the axis
     float motorImpulse = 0, lowerImpulse = 0, upperImpulse = 0;
 };
 

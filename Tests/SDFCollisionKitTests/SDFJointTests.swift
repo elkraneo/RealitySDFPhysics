@@ -64,7 +64,7 @@ import simd
         try limited.addToSimulation()
         box.components.set(SDFMotionComponent(linearVelocity: [0, 0, 6]))
         run(240)
-        let angle = try #require(simulation.angle(ofJointAt: 0))
+        let angle = try #require(simulation.angle(of: limited))
         #expect(abs(angle) <= 0.35, "angle \(angle)")
         #expect(gap(limited) < 0.02)
     }
@@ -82,6 +82,40 @@ import simd
         let w = wheel.components[SDFMotionComponent.self]!.angularVelocity
         #expect(abs(w.y - 5) < 0.2, "spins at \(w)")
         #expect(gap(joint) < 0.01)
+    }
+
+    @Test func separatedPinsAreBroughtTogether() throws {
+        // The pins start 0.3 apart and the box's pin turned 90° about the hinge: the joint pulls
+        // the box up to the anchor, and the turn is the joint's angle, not an error
+        let anchor = addBody(.box(halfExtents: [0.1, 0.1, 0.1]), mode: .static, at: [0, 2.5, 0])
+        let box = addBody(.box(halfExtents: [0.1, 0.5, 0.1]), at: [0, 1.7, 0])
+        let pin0 = anchor.pins.set(named: "hinge")
+        let pin1 = box.pins.set(named: "top", position: [0, 0.5, 0], orientation: simd_quatf(angle: .pi / 2, axis: [1, 0, 0]))
+        let joint = SDFRevoluteJoint(pin0: pin0, pin1: pin1)
+        try joint.addToSimulation()
+        run(120)
+        #expect(gap(joint) < 0.02, "pins \(gap(joint)) apart")
+        let angle = try #require(simulation.angle(of: joint))
+        #expect(abs(abs(angle) - .pi / 2) < 0.1, "angle \(angle)")
+    }
+
+    @Test func motorKeepsItsBodyAwake() throws {
+        var settings = root.components[SDFSimulationComponent.self]!
+        settings.isSleepingEnabled = true
+        root.components.set(settings)
+        let base = addBody(.box(halfExtents: [0.5, 0.1, 0.5]), mode: .static, at: [0, 0, 0])
+        let wheel = addBody(.cylinder(radius: 0.5, halfHeight: 0.1), at: [0, 1, 0])
+        wheel.components.set(SDFMotionComponent())
+        let axle = simd_quatf(angle: .pi / 2, axis: [0, 0, 1])
+        var joint = SDFRevoluteJoint(pin0: base.pins.set(named: "axle", position: [0, 1, 0], orientation: axle),
+                                     pin1: wheel.pins.set(named: "hub", orientation: axle))
+        // Slower than the sleep threshold
+        joint.motor = SDFRevoluteJoint.Motor(targetVelocity: 0.02, maxTorque: 100)
+        try joint.addToSimulation()
+        run(240)
+        #expect(!simulation.isSleeping(wheel))
+        let w = wheel.components[SDFMotionComponent.self]!.angularVelocity
+        #expect(abs(w.y - 0.02) < 0.005, "spins at \(w)")
     }
 
     @Test func chainHangsWithoutStretching() throws {

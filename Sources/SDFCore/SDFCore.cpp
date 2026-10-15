@@ -657,10 +657,13 @@ void sdf_world_apply_angular_impulse(SDFWorld *world, SDFBodyID id, const float 
 SDFRevoluteJointDef sdf_default_revolute_joint(void)
 {
     SDFRevoluteJointDef def = {};
-    def.axis[0] = 1;
-    def.collideConnected = false;
+    def.frameA.orientation[3] = def.frameB.orientation[3] = 1;
+    def.frameA.scale = def.frameB.scale = 1;
     return def;
 }
+
+// Limits live within (-pi, pi), where the angle is measured
+static float clampAngle(float angle) { return std::clamp(angle, -3.14f, 3.14f); }
 
 SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def)
 {
@@ -670,26 +673,26 @@ SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def
     Body &a = *recordA->body, &b = *recordB->body;
     if (a.isStatic && b.isStatic)
         return 0;
-    float3 anchor = toFloat3(def.anchor), axis = toFloat3(def.axis);
-    for (float v : {anchor.x, anchor.y, anchor.z, axis.x, axis.y, axis.z, def.lowerAngle, def.upperAngle, def.motorSpeed, def.maxMotorTorque})
+    if (!isValid(def.frameA) || !isValid(def.frameB))
+        return 0;
+    for (float v : {def.lowerAngle, def.upperAngle, def.motorSpeed, def.maxMotorTorque})
         if (!std::isfinite(v))
             return 0;
-    if (lengthSq(axis) == 0)
-        return 0;
-    axis = normalize(axis);
-    float3 normal, binormal;
-    tangents(axis, normal, binormal);
+    quat qA = toQuat(def.frameA.orientation), qB = toQuat(def.frameB.orientation);
+    float3 x = {1, 0, 0}, y = {0, 1, 0};
 
     JointRecord joint;
     joint.id = world->nextJointID++;
     joint.bodyA = def.bodyA, joint.bodyB = def.bodyB;
     joint.a = &a, joint.b = &b;
     quat invA = conjugate(a.orientation), invB = conjugate(b.orientation);
-    joint.anchorA = rotate(invA, anchor - a.position), joint.anchorB = rotate(invB, anchor - b.position);
-    joint.axisA = rotate(invA, axis), joint.axisB = rotate(invB, axis);
-    joint.normalA = rotate(invA, normal), joint.normalB = rotate(invB, normal);
+    joint.anchorA = rotate(invA, toFloat3(def.frameA.position) - a.position);
+    joint.anchorB = rotate(invB, toFloat3(def.frameB.position) - b.position);
+    joint.axisA = rotate(invA, rotate(qA, x)), joint.axisB = rotate(invB, rotate(qB, x));
+    joint.normalA = rotate(invA, rotate(qA, y)), joint.normalB = rotate(invB, rotate(qB, y));
     joint.hasLimit = def.hasLimit;
-    joint.lowerAngle = std::min(def.lowerAngle, def.upperAngle), joint.upperAngle = std::max(def.lowerAngle, def.upperAngle);
+    joint.lowerAngle = clampAngle(std::min(def.lowerAngle, def.upperAngle));
+    joint.upperAngle = clampAngle(std::max(def.lowerAngle, def.upperAngle));
     joint.hasMotor = def.hasMotor;
     joint.motorSpeed = def.motorSpeed, joint.maxMotorTorque = std::max(def.maxMotorTorque, 0.0f);
     joint.collideConnected = def.collideConnected;
@@ -716,7 +719,7 @@ void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID id, bool enabled, flo
     if (!joint || !std::isfinite(lowerAngle) || !std::isfinite(upperAngle))
         return;
     joint->hasLimit = enabled;
-    joint->lowerAngle = std::min(lowerAngle, upperAngle), joint->upperAngle = std::max(lowerAngle, upperAngle);
+    joint->lowerAngle = clampAngle(std::min(lowerAngle, upperAngle)), joint->upperAngle = clampAngle(std::max(lowerAngle, upperAngle));
     joint->lowerImpulse = joint->upperImpulse = 0;
     world->disturb(joint->a);
 }
