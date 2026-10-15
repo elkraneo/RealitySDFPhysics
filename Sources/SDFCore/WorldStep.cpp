@@ -118,8 +118,15 @@ float effectiveMass(const Mover &a, const Mover &b, float3 rA, float3 rB, float3
     return k > lockedShare * free ? 1.0f / k : 0.0f;
 }
 
+// A spring and damper on a row, in the soft step's terms (see makeSoft below). The defaults, of
+// a spring with no stiffness, apply no impulse.
+struct Softness
+{
+    float biasRate = 0, massScale = 0, impulseScale = 1;
+};
+
 // A hinge for one substep: the point constraint, the two rows that keep the axes aligned, and
-// the axial rows of the motor and the limits. The position errors are corrected with pseudo
+// the axial rows of the spring, the motor and the limits. The position errors are corrected with pseudo
 // velocities, as the contacts' penetration is.
 struct Hinge
 {
@@ -138,6 +145,28 @@ struct Hinge
     // of a frequency and damping ratio, as a rate at which errors are corrected, a scale on the
     // effective mass and a scale on the accumulated impulse, with massScale + impulseScale = 1
     float biasRate, massScale, impulseScale;
+    Softness spring;           // Of the spring's own frequency and damping ratio
+};
+
+// A slider (prismatic joint) for one substep, Box3D's prismatic joint: B's anchor held on the line
+// through A's anchor along the axis, by two rows perpendicular to it; the orientations locked, by
+// the hinge's two alignment rows and a twist row about the axis; and the axial rows of the spring,
+// the motor and the limits. The linear rows act at B's anchor, so A's arm reaches to it.
+struct Slider
+{
+    JointRecord *joint;
+    Mover *a, *b;
+    Body *bodyA, *bodyB;
+    float3 rA, rB;             // From the centers of mass to B's anchor, world space
+    float3 axis;               // Of body A, world space
+    float3 row[2];             // Perpendicular to the axis: the linear rows, and the tilts of the axes
+    float linearMass[2], axialMass;
+    float rowMass[2], twistMass;
+    float linearError[2];      // Of B's anchor off the line
+    float rowError[2];         // Tilt of B's axis from A's about each row
+    float translation, angle;
+    float biasRate, massScale, impulseScale;
+    Softness spring;
 };
 
 // Erin Catto's soft constraint coefficients for a frequency, a damping ratio and a substep
@@ -146,6 +175,35 @@ void makeSoft(float hertz, float zeta, float h, float &biasRate, float &massScal
     float omega = 2 * 3.14159265f * hertz;
     float a1 = 2 * zeta + h * omega, a2 = h * omega * a1, a3 = 1 / (1 + a2);
     biasRate = omega / a1, massScale = a2 * a3, impulseScale = a3;
+}
+
+// A spring's softness, where no stiffness means no spring
+Softness makeSoft(float hertz, float zeta, float h)
+{
+    Softness soft;
+    if (hertz > 0)
+        makeSoft(hertz, zeta, h, soft.biasRate, soft.massScale, soft.impulseScale);
+    return soft;
+}
+
+// The rotation that takes axis to axisB, as an angle times a direction, measured about each of
+// two rows perpendicular to axis; for a small tilt t about a row, axisB is about
+// axis + t * cross(row, axis), so the tilt is what cross(axis, axisB) has along the row.
+// Antiparallel axes tilt by pi about a row.
+void tiltAbout(float3 axis, float3 axisB, const float3 row[2], float error[2])
+{
+    float3 tilt = cross(axis, axisB);
+    float sine = length(tilt), cosine = dot(axis, axisB);
+    tilt = sine > 1e-6f ? tilt * (atan2f(sine, cosine) / sine) : (cosine < 0 ? row[0] * 3.14159265f : float3{0, 0, 0});
+    for (int i = 0; i < 2; i++)
+        error[i] = dot(tilt, row[i]);
+}
+
+// An angle brought within (-pi, pi]
+float wrapAngle(float angle)
+{
+    float turn = 2 * 3.14159265f;
+    return angle - turn * roundf(angle / turn);
 }
 
 // The effective mass of a point constraint, or zero when locks leave nothing to move. Locks
@@ -313,6 +371,13 @@ float jointAngle(const JointRecord &joint)
     float3 axis = rotate(joint.a->orientation, joint.axisA);
     float3 nA = rotate(joint.a->orientation, joint.normalA), nB = rotate(joint.b->orientation, joint.normalB);
     return atan2f(dot(cross(nA, nB), axis), dot(nA, nB));
+}
+
+float jointTranslation(const JointRecord &joint)
+{
+    float3 d = (joint.b->position + rotate(joint.b->orientation, joint.anchorB)) -
+               (joint.a->position + rotate(joint.a->orientation, joint.anchorA));
+    return dot(d, rotate(joint.a->orientation, joint.axisA));
 }
 
 void SDFWorld::step()
@@ -565,8 +630,9 @@ void SDFWorld::step()
             }
         }
 
-        // Build the hinges. Those of sleeping pairs rest, keeping their impulses.
+        // Build the joints. Those of sleeping pairs rest, keeping their impulses.
         std::vector<Hinge> hinges;
+        std::vector<Slider> sliders;
         for (JointRecord &joint : joints)
         {
             BodyRecord &ra = record(joint.a), &rb = record(joint.b);
@@ -575,31 +641,59 @@ void SDFWorld::step()
             auto indexOf = [&](const Body *body) {
                 return (int)(std::find_if(s.bodies.begin(), s.bodies.end(), [&](auto &p) { return p.get() == body; }) - s.bodies.begin());
             };
+            Mover *a = &movers[indexOf(joint.a)], *b = &movers[indexOf(joint.b)];
+            float3 rA = rotate(joint.a->orientation, joint.anchorA), rB = rotate(joint.b->orientation, joint.anchorB);
+            float3 axis = rotate(joint.a->orientation, joint.axisA);
+            float3 axisB = rotate(joint.b->orientation, joint.axisB);
+            // At most half the substep rate. Box3D caps at a quarter with one solve per substep;
+            // swept to convergence the rows take a half, and a hanging chain sags a quarter as much.
+            float biasRate, massScale, impulseScale;
+            makeSoft(min(jointHertz, 0.5f / h), jointDampingRatio, h, biasRate, massScale, impulseScale);
+            Softness spring = joint.hasSpring ? makeSoft(joint.springHertz, joint.springDampingRatio, h) : Softness();
+
+            if (joint.kind == JointRecord::prismatic)
+            {
+                Slider j;
+                j.joint = &joint;
+                j.a = a, j.b = b;
+                j.bodyA = joint.a, j.bodyB = joint.b;
+                float3 d = (joint.b->position + rB) - (joint.a->position + rA);
+                j.rA = rA + d, j.rB = rB;
+                j.axis = axis;
+                tangents(j.axis, j.row[0], j.row[1]);
+                for (int i = 0; i < 2; i++)
+                {
+                    j.linearMass[i] = effectiveMass(*a, *b, j.rA, j.rB, j.row[i]);
+                    j.rowMass[i] = angularMass(*a, *b, j.row[i]);
+                    j.linearError[i] = dot(d, j.row[i]);
+                }
+                j.axialMass = effectiveMass(*a, *b, j.rA, j.rB, j.axis);
+                j.twistMass = angularMass(*a, *b, j.axis);
+                tiltAbout(j.axis, axisB, j.row, j.rowError);
+                j.translation = dot(d, j.axis);
+                j.angle = jointAngle(joint);
+                j.biasRate = biasRate, j.massScale = massScale, j.impulseScale = impulseScale;
+                j.spring = spring;
+                sliders.push_back(j);
+                continue;
+            }
+
             Hinge j;
             j.joint = &joint;
-            j.a = &movers[indexOf(joint.a)], j.b = &movers[indexOf(joint.b)];
+            j.a = a, j.b = b;
             j.bodyA = joint.a, j.bodyB = joint.b;
-            j.rA = rotate(joint.a->orientation, joint.anchorA), j.rB = rotate(joint.b->orientation, joint.anchorB);
-            j.axis = rotate(joint.a->orientation, joint.axisA);
-            float3 axisB = rotate(joint.b->orientation, joint.axisB);
+            j.rA = rA, j.rB = rB;
+            j.axis = axis;
             tangents(j.axis, j.row[0], j.row[1]);
             j.pointMass = pointMass(*j.a, *j.b, j.rA, j.rB);
             for (int i = 0; i < 2; i++)
                 j.rowMass[i] = angularMass(*j.a, *j.b, j.row[i]);
             j.axialMass = angularMass(*j.a, *j.b, j.axis);
             j.pointError = (joint.b->position + j.rB) - (joint.a->position + j.rA);
-            // The rotation that takes axis to axisB, as an angle times a direction; for a small
-            // tilt t about a row, axisB is about axis + t * cross(row, axis), so the tilt is what
-            // cross(axis, axisB) has along the row. Antiparallel axes tilt by pi about a row.
-            float3 tilt = cross(j.axis, axisB);
-            float sine = length(tilt), cosine = dot(j.axis, axisB);
-            tilt = sine > 1e-6f ? tilt * (atan2f(sine, cosine) / sine) : (cosine < 0 ? j.row[0] * 3.14159265f : float3{0, 0, 0});
-            for (int i = 0; i < 2; i++)
-                j.rowError[i] = dot(tilt, j.row[i]);
+            tiltAbout(j.axis, axisB, j.row, j.rowError);
             j.angle = jointAngle(joint);
-            // At most half the substep rate. Box3D caps at a quarter with one solve per substep;
-            // swept to convergence the rows take a half, and a hanging chain sags a quarter as much.
-            makeSoft(min(jointHertz, 0.5f / h), jointDampingRatio, h, j.biasRate, j.massScale, j.impulseScale);
+            j.biasRate = biasRate, j.massScale = massScale, j.impulseScale = impulseScale;
+            j.spring = spring;
             hinges.push_back(j);
         }
 
@@ -678,7 +772,7 @@ void SDFWorld::step()
             c.b->applyPseudoImpulse(c.rB, impulse);
         };
 
-        // The passes over the hinges. Each pass runs over the hinges before the contacts.
+        // The passes over the joints. Each pass runs over the joints after the contacts.
 
         auto warmStartHinge = [](Hinge &j) {
             JointRecord &joint = *j.joint;
@@ -690,12 +784,15 @@ void SDFWorld::step()
                 joint.lowerImpulse = joint.upperImpulse = 0;
             if (!joint.hasMotor)
                 joint.motorImpulse = 0;
-            float3 angular = joint.angularImpulse + j.axis * (joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse);
+            if (!joint.hasSpring)
+                joint.springImpulse = 0;
+            float3 angular = joint.angularImpulse + j.axis * (joint.springImpulse + joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse);
             j.a->applyAngularImpulse(-angular);
             j.b->applyAngularImpulse(angular);
         };
 
-        // The hinge's rows, as Box3D solves a revolute joint: the motor rigid; the limits
+        // The hinge's rows, as Box3D solves a revolute joint (revolute_joint.c): the spring soft by
+        // its own frequency and damping, pulling the angle toward its target; the motor rigid; the limits
         // speculative when not reached, soft when reached; the alignment rows and the point
         // constraint soft, pulling toward zero error. Box3D applies the rows once per substep and
         // once more without bias after the positions move; here they are swept to convergence
@@ -705,10 +802,21 @@ void SDFWorld::step()
             Body &A = *j.bodyA, &B = *j.bodyB;
             float massScale = useBias ? j.massScale : 1, impulseScale = useBias ? j.impulseScale : 0;
 
+            if (joint.hasSpring)
+            {
+                // The way to the target the short way round, which the spring takes always soft
+                float c = wrapAngle(j.angle - joint.springTarget);
+                float cdot = dot(j.axis, B.angularVelocity - A.angularVelocity);
+                float lambda = -j.spring.massScale * j.axialMass * (cdot + j.spring.biasRate * c) - j.spring.impulseScale * joint.springImpulse;
+                joint.springImpulse += lambda;
+                j.a->applyAngularImpulse(-j.axis * lambda);
+                j.b->applyAngularImpulse(j.axis * lambda);
+            }
+
             if (joint.hasMotor)
             {
                 float cdot = dot(j.axis, B.angularVelocity - A.angularVelocity) - joint.motorSpeed;
-                float previous = joint.motorImpulse, limit = joint.maxMotorTorque * h;
+                float previous = joint.motorImpulse, limit = joint.maxMotorForce * h;
                 joint.motorImpulse = clamp(previous - cdot * j.axialMass, -limit, limit);
                 float3 impulse = j.axis * (joint.motorImpulse - previous);
                 j.a->applyAngularImpulse(-impulse);
@@ -719,13 +827,13 @@ void SDFWorld::step()
             {
                 // The angle measured about the middle of the limits, so that its wrap at a half
                 // turn falls as far from both stops as it can
-                float middle = 0.5f * (joint.lowerAngle + joint.upperAngle), turn = 2 * 3.14159265f;
+                float middle = 0.5f * (joint.lower + joint.upper), turn = 2 * 3.14159265f;
                 float angle = j.angle - middle;
                 angle = angle - turn * roundf(angle / turn) + middle;
                 // Lower: the angle stays at or above it. Away from it, only an approach that
                 // would cross it within the substep is stopped.
                 {
-                    float c = angle - joint.lowerAngle, bias = 0, ms = 1, is = 0;
+                    float c = angle - joint.lower, bias = 0, ms = 1, is = 0;
                     if (c > 0)
                         bias = c / h;
                     else if (useBias)
@@ -738,7 +846,7 @@ void SDFWorld::step()
                     j.b->applyAngularImpulse(impulse);
                 }
                 {
-                    float c = joint.upperAngle - angle, bias = 0, ms = 1, is = 0;
+                    float c = joint.upper - angle, bias = 0, ms = 1, is = 0;
                     if (c > 0)
                         bias = c / h;
                     else if (useBias)
@@ -774,8 +882,111 @@ void SDFWorld::step()
             j.b->applyImpulse(j.rB, lambda);
         };
 
+        // A slider's linear rows act along a direction at B's anchor, on A at the point that
+        // coincides with it
+        auto sliderVelocity = [](const Slider &j, float3 dir) {
+            const Body &A = *j.bodyA, &B = *j.bodyB;
+            return dot((B.velocity + cross(B.angularVelocity, j.rB)) - (A.velocity + cross(A.angularVelocity, j.rA)), dir);
+        };
+        auto pushSlider = [](Slider &j, float3 impulse) {
+            j.a->applyImpulse(j.rA, -impulse);
+            j.b->applyImpulse(j.rB, impulse);
+        };
 
-        // Every pass takes the contacts, then the hinges, which so have the last word of each
+        auto warmStartSlider = [&](Slider &j) {
+            JointRecord &joint = *j.joint;
+            if (!joint.hasLimit)
+                joint.lowerImpulse = joint.upperImpulse = 0;
+            if (!joint.hasMotor)
+                joint.motorImpulse = 0;
+            if (!joint.hasSpring)
+                joint.springImpulse = 0;
+            // The perpendicular rows' impulse, carried as a vector as the hinge's alignment is
+            joint.linearImpulse = joint.linearImpulse - j.axis * dot(joint.linearImpulse, j.axis);
+            pushSlider(j, joint.linearImpulse + j.axis * (joint.springImpulse + joint.motorImpulse + joint.lowerImpulse - joint.upperImpulse));
+            j.a->applyAngularImpulse(-joint.angularImpulse);
+            j.b->applyAngularImpulse(joint.angularImpulse);
+        };
+
+        // The slider's rows, as Box3D solves a prismatic joint (prismatic_joint.c), in its order:
+        // the spring, the motor and the limits along the axis, as the hinge's about its axis; the
+        // orientations, by the hinge's alignment rows and a twist row; and B's anchor on the line.
+        // Box3D locks the orientations with one 3 by 3 block; rows, as the hinge's, keep each lock
+        // that leaves a direction all but immovable out of the others.
+        auto solveSlider = [&](Slider &j) {
+            JointRecord &joint = *j.joint;
+            Body &A = *j.bodyA, &B = *j.bodyB;
+
+            if (joint.hasSpring)
+            {
+                float c = j.translation - joint.springTarget;
+                float cdot = sliderVelocity(j, j.axis);
+                float lambda = -j.spring.massScale * j.axialMass * (cdot + j.spring.biasRate * c) - j.spring.impulseScale * joint.springImpulse;
+                joint.springImpulse += lambda;
+                pushSlider(j, j.axis * lambda);
+            }
+
+            if (joint.hasMotor)
+            {
+                float cdot = sliderVelocity(j, j.axis) - joint.motorSpeed;
+                float previous = joint.motorImpulse, limit = joint.maxMotorForce * h;
+                joint.motorImpulse = clamp(previous - cdot * j.axialMass, -limit, limit);
+                pushSlider(j, j.axis * (joint.motorImpulse - previous));
+            }
+
+            if (joint.hasLimit)
+            {
+                // Speculative when not reached, soft when reached
+                {
+                    float c = j.translation - joint.lower, bias = 0, ms = 1, is = 0;
+                    if (c > 0)
+                        bias = c / h;
+                    else
+                        bias = j.biasRate * c, ms = j.massScale, is = j.impulseScale;
+                    float cdot = sliderVelocity(j, j.axis);
+                    float previous = joint.lowerImpulse;
+                    joint.lowerImpulse = max(previous - ms * j.axialMass * (cdot + bias) - is * previous, 0.0f);
+                    pushSlider(j, j.axis * (joint.lowerImpulse - previous));
+                }
+                {
+                    float c = joint.upper - j.translation, bias = 0, ms = 1, is = 0;
+                    if (c > 0)
+                        bias = c / h;
+                    else
+                        bias = j.biasRate * c, ms = j.massScale, is = j.impulseScale;
+                    float cdot = -sliderVelocity(j, j.axis);
+                    float previous = joint.upperImpulse;
+                    joint.upperImpulse = max(previous - ms * j.axialMass * (cdot + bias) - is * previous, 0.0f);
+                    pushSlider(j, j.axis * (previous - joint.upperImpulse));
+                }
+            }
+
+            // The orientations stay locked: the axes aligned, and no twist about them
+            for (int i = 0; i < 3; i++)
+            {
+                float3 dir = i < 2 ? j.row[i] : j.axis;
+                float mass = i < 2 ? j.rowMass[i] : j.twistMass, error = i < 2 ? j.rowError[i] : j.angle;
+                float cdot = dot(dir, B.angularVelocity - A.angularVelocity);
+                float accumulated = dot(joint.angularImpulse, dir);
+                float lambda = -j.massScale * mass * (cdot + j.biasRate * error) - j.impulseScale * accumulated;
+                float3 impulse = dir * lambda;
+                joint.angularImpulse += impulse;
+                j.a->applyAngularImpulse(-impulse);
+                j.b->applyAngularImpulse(impulse);
+            }
+
+            // B's anchor stays on the line
+            for (int i = 0; i < 2; i++)
+            {
+                float cdot = sliderVelocity(j, j.row[i]);
+                float accumulated = dot(joint.linearImpulse, j.row[i]);
+                float lambda = -j.massScale * j.linearMass[i] * (cdot + j.biasRate * j.linearError[i]) - j.impulseScale * accumulated;
+                joint.linearImpulse += j.row[i] * lambda;
+                pushSlider(j, j.row[i] * lambda);
+            }
+        };
+
+        // Every pass takes the contacts, then the joints (hinges and sliders), which so have the last word of each
         // iteration: a jammed chain's contacts must not pull its pins apart. A hinge is cheap
         // next to a contact and a chain of them converges slowly, so each pass sweeps the hinges
         // several times.
@@ -784,11 +995,17 @@ void SDFWorld::step()
         auto warmStartHinges = [&] {
             for (Hinge &j : hinges)
                 warmStartHinge(j);
+            for (Slider &j : sliders)
+                warmStartSlider(j);
         };
         auto solveHingeVelocities = [&] {
             for (int i = 0; i < hingeSweeps; i++)
+            {
                 for (Hinge &j : hinges)
                     solveHinge(j, true);
+                for (Slider &j : sliders)
+                    solveSlider(j);
+            }
         };
         auto noHinges = [] {};
         auto solve = [&](auto &&forEach) {
@@ -912,8 +1129,8 @@ void SDFWorld::step()
                         if (threadCount > 1)
                             pool.barrier();
                     }
-                    // The hinges after every color, on one thread, with the others waiting
-                    if (!hinges.empty())
+                    // The joints after every color, on one thread, with the others waiting
+                    if (!hinges.empty() || !sliders.empty())
                     {
                         if (thread == 0)
                             hingePass();
