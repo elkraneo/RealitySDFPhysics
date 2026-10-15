@@ -76,7 +76,9 @@ public enum SDFSimulationEvents {
 
 extension SDFSimulation {
     /// Calls a handler with every event of a type, or only those that involve an entity. The
-    /// subscription lasts until the returned value is cancelled or released.
+    /// subscription lasts until the returned value is cancelled or released. Collision events are
+    /// only tracked while something subscribes to them: the first step after the first
+    /// subscription reports every pair in contact as begun.
     ///
     /// ```swift
     /// subscription = simulation.subscribe(to: SDFCollisionEvents.Began.self, on: gear) { event in
@@ -103,6 +105,14 @@ extension SDFSimulation {
 
     /// Sends the contact events of the last step
     func sendCollisionEvents() {
+        // Without a handler for any collision event the pairs are not tracked, so the first step
+        // after a subscription reports every pair in contact as begun
+        guard events.hasHandlers(for: SDFCollisionEvents.Began.self) || events.hasHandlers(for: SDFCollisionEvents.Updated.self)
+            || events.hasHandlers(for: SDFCollisionEvents.Ended.self)
+        else {
+            touching = [:]
+            return
+        }
         let count = Int(sdf_world_pairs(world, nil, 0))
         var pairs = [SDFPair](repeating: SDFPair(), count: count)
         _ = pairs.withUnsafeMutableBufferPointer { sdf_world_pairs(world, $0.baseAddress, Int32(count)) }

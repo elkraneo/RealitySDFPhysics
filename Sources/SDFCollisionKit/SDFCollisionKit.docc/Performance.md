@@ -55,6 +55,8 @@ cheap to begin with.
   tori before the narrow phase, and it skips the scan of the curvature seeds for a pair of tori
   or capsules, whose seeds cover the whole surface and add nothing over uniform samples. The
   single-threaded path is the reference's, pair for pair and sample for sample.
+- Subscribe to collision events only where they are used. While nothing subscribes, the pairs
+  in contact are not tracked, which at 400 tori is a third of the synchronization.
 
 ## Limits
 
