@@ -338,6 +338,10 @@ SDFWorld *sdf_world_copy(const SDFWorld *world)
         copy->records[entry.first] = record;
         copy->ids[record.body] = entry.first;
     }
+    copy->nextJointID = world->nextJointID;
+    copy->joints = world->joints;
+    for (JointRecord &joint : copy->joints)
+        joint.a = bodies.at(joint.a), joint.b = bodies.at(joint.b);
     return copy;
 }
 
@@ -480,6 +484,9 @@ void sdf_world_remove_body(SDFWorld *world, SDFBodyID id)
 
     if (solver.dragBody == body)
         solver.dragBody = nullptr;
+    auto &joints = world->joints;
+    joints.erase(std::remove_if(joints.begin(), joints.end(), [&](const JointRecord &j) { return j.a == body || j.b == body; }),
+                 joints.end());
     auto &pairs = world->pairs;
     pairs.erase(std::remove_if(pairs.begin(), pairs.end(), [&](const PairRecord &p) { return p.bodyA == id || p.bodyB == id; }),
                 pairs.end());
@@ -642,6 +649,96 @@ void sdf_world_apply_angular_impulse(SDFWorld *world, SDFBodyID id, const float 
     BodyRecord *record = world->find(id);
     if (record && record->mode == SDFBodyDynamic)
         record->body->angularVelocity += lockedInverseInertia(*record) * toFloat3(impulse);
+}
+
+
+// MARK: Joints
+
+SDFRevoluteJointDef sdf_default_revolute_joint(void)
+{
+    SDFRevoluteJointDef def = {};
+    def.axis[0] = 1;
+    def.collideConnected = false;
+    return def;
+}
+
+SDFJointID sdf_world_add_revolute_joint(SDFWorld *world, SDFRevoluteJointDef def)
+{
+    BodyRecord *recordA = world->find(def.bodyA), *recordB = world->find(def.bodyB);
+    if (!recordA || !recordB || def.bodyA == def.bodyB)
+        return 0;
+    Body &a = *recordA->body, &b = *recordB->body;
+    if (a.isStatic && b.isStatic)
+        return 0;
+    float3 anchor = toFloat3(def.anchor), axis = toFloat3(def.axis);
+    for (float v : {anchor.x, anchor.y, anchor.z, axis.x, axis.y, axis.z, def.lowerAngle, def.upperAngle, def.motorSpeed, def.maxMotorTorque})
+        if (!std::isfinite(v))
+            return 0;
+    if (lengthSq(axis) == 0)
+        return 0;
+    axis = normalize(axis);
+    float3 normal, binormal;
+    tangents(axis, normal, binormal);
+
+    JointRecord joint;
+    joint.id = world->nextJointID++;
+    joint.bodyA = def.bodyA, joint.bodyB = def.bodyB;
+    joint.a = &a, joint.b = &b;
+    quat invA = conjugate(a.orientation), invB = conjugate(b.orientation);
+    joint.anchorA = rotate(invA, anchor - a.position), joint.anchorB = rotate(invB, anchor - b.position);
+    joint.axisA = rotate(invA, axis), joint.axisB = rotate(invB, axis);
+    joint.normalA = rotate(invA, normal), joint.normalB = rotate(invB, normal);
+    joint.hasLimit = def.hasLimit;
+    joint.lowerAngle = std::min(def.lowerAngle, def.upperAngle), joint.upperAngle = std::max(def.lowerAngle, def.upperAngle);
+    joint.hasMotor = def.hasMotor;
+    joint.motorSpeed = def.motorSpeed, joint.maxMotorTorque = std::max(def.maxMotorTorque, 0.0f);
+    joint.collideConnected = def.collideConnected;
+    world->joints.push_back(joint);
+    world->disturb(&a);
+    world->disturb(&b);
+    return joint.id;
+}
+
+void sdf_world_remove_joint(SDFWorld *world, SDFJointID id)
+{
+    JointRecord *joint = world->findJoint(id);
+    if (!joint)
+        return;
+    Body *a = joint->a, *b = joint->b;
+    world->joints.erase(world->joints.begin() + (joint - world->joints.data()));
+    world->disturb(a);
+    world->disturb(b);
+}
+
+void sdf_world_set_joint_limit(SDFWorld *world, SDFJointID id, bool enabled, float lowerAngle, float upperAngle)
+{
+    JointRecord *joint = world->findJoint(id);
+    if (!joint || !std::isfinite(lowerAngle) || !std::isfinite(upperAngle))
+        return;
+    joint->hasLimit = enabled;
+    joint->lowerAngle = std::min(lowerAngle, upperAngle), joint->upperAngle = std::max(lowerAngle, upperAngle);
+    joint->lowerImpulse = joint->upperImpulse = 0;
+    world->disturb(joint->a);
+}
+
+void sdf_world_set_joint_motor(SDFWorld *world, SDFJointID id, bool enabled, float speed, float maxTorque)
+{
+    JointRecord *joint = world->findJoint(id);
+    if (!joint || !std::isfinite(speed) || !std::isfinite(maxTorque))
+        return;
+    joint->hasMotor = enabled;
+    joint->motorSpeed = speed, joint->maxMotorTorque = std::max(maxTorque, 0.0f);
+    if (!enabled)
+        joint->motorImpulse = 0;
+    world->disturb(joint->a);
+}
+
+float sdf_world_joint_angle(const SDFWorld *world, SDFJointID id)
+{
+    for (const JointRecord &joint : world->joints)
+        if (joint.id == id)
+            return jointAngle(joint);
+    return 0;
 }
 
 // MARK: Contacts

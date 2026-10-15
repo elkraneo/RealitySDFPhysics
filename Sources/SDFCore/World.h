@@ -51,6 +51,33 @@ struct PairRecord
     float3 position = {0, 0, 0};
 };
 
+// A hinge between two bodies: their anchors coincide and their axes stay aligned, leaving one
+// rotation free, which a limit can bound and a motor can drive. Anchors, axes and the reference
+// normals that measure the angle are in each body's frame, from its center of mass.
+struct JointRecord
+{
+    SDFJointID id;
+    SDFBodyID bodyA, bodyB;
+    Body *a, *b;
+    float3 anchorA, anchorB;
+    float3 axisA, axisB;
+    float3 normalA, normalB;           // Perpendicular to the axes, aligned when the angle was zero
+    bool hasLimit = false;
+    float lowerAngle = 0, upperAngle = 0;
+    bool hasMotor = false;
+    float motorSpeed = 0, maxMotorTorque = 0;
+    bool collideConnected = false;
+
+    // Accumulated impulses of the last substep, to warm start the next: the point constraint,
+    // the two rows that align the axes, the motor and the limits
+    float3 linearImpulse = {0, 0, 0};
+    float angularImpulse[2] = {0, 0};
+    float motorImpulse = 0, lowerImpulse = 0, upperImpulse = 0;
+};
+
+// The angle of body B relative to body A about the hinge's axis, in (-pi, pi]
+float jointAngle(const JointRecord &joint);
+
 struct SDFWorld
 {
     // Upstream's solver holds the bodies, manifolds, parameters and random generator. Its step is
@@ -72,6 +99,8 @@ struct SDFWorld
     double solverMilliseconds = 0;
     SDFBodyID nextID = 1;
     std::unordered_map<SDFBodyID, BodyRecord> records;
+    SDFJointID nextJointID = 1;
+    std::vector<JointRecord> joints;
     std::unordered_map<const Body *, SDFBodyID> ids;
     std::vector<PairRecord> pairs;
 
@@ -88,6 +117,14 @@ struct SDFWorld
     }
 
     BodyRecord &record(const Body *body) { return records.at(ids.at(body)); }
+
+    JointRecord *findJoint(SDFJointID id)
+    {
+        for (JointRecord &joint : joints)
+            if (joint.id == id)
+                return &joint;
+        return nullptr;
+    }
 
     void step();
 

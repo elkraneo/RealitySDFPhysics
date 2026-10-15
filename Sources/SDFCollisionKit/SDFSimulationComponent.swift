@@ -226,6 +226,7 @@ let registration: Void = {
     SDFBodyComponent.registerComponent()
     SDFMotionComponent.registerComponent()
     SDFSimulationComponent.registerComponent()
+    SDFJointsComponent.registerComponent()
 }()
 
 /// Advances every simulation in the scene with the frame time. Order your own systems after it with

@@ -19,7 +19,7 @@ public final class SDFSimulation {
     /// Steps taken so far
     public private(set) var stepCount = 0
 
-    private var bodies: [Entity.ID: Body] = [:]
+    var bodies: [Entity.ID: Body] = [:]
     private var entities: [SDFBodyID: Entity] = [:]
     private var accumulator: TimeInterval = 0
     /// Impulses for bodies that are created on the next update
@@ -39,6 +39,8 @@ public final class SDFSimulation {
     var events = EventRouter()
     /// Pairs touching after the last step
     var touching: [PairKey: (entityA: Entity, entityB: Entity)] = [:]
+    /// The engine's joints, by their index in the root's ``SDFJointsComponent``
+    var jointStates: [Int: JointState] = [:]
 
     public init() {
         _ = registration
@@ -96,6 +98,7 @@ public final class SDFSimulation {
         sdf_world_set_params(world, settings.engine)
         metersPerUnit = settings.metersPerUnit
         let dynamic = synchronize(root: root, deltaTime: deltaTime)
+        synchronizeJoints(root: root)
         // A force added every frame stays the same at any frame rate, or while paused
         activePushes.merge(updatePushes) { _, new in new }
         updatePushes = [:]
@@ -117,7 +120,7 @@ public final class SDFSimulation {
 
     // MARK: Bodies
 
-    private struct Pose {
+    struct Pose {
         var position: SIMD3<Float>
         var orientation: simd_quatf
 
@@ -168,7 +171,7 @@ public final class SDFSimulation {
         }
     }
 
-    private struct Body {
+    struct Body {
         var id: SDFBodyID
         var entity: Entity
         /// Kept alive, so that a new shape at the same address is not mistaken for it
