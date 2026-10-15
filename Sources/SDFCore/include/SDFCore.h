@@ -353,7 +353,8 @@ typedef struct
     float hertz;
     float dampingRatio;
     float maxForce;              // 0 for 50 times the body's weight (at 9.81 m/s² without gravity)
-    float maxSpeed;              // 0 for the contact margin per substep
+    float maxSpeed;              // Cap on the speed the pull asks for, 0 for the contact margin per
+                                 // substep; a body already moving faster isn't slowed by it
     float angularDamping;
 } SDFDragParams;
 SDFDragParams sdf_default_drag_params(void);

@@ -721,6 +721,10 @@ void SDFWorld::step()
             float gravity = length(s.gravity) > 0 ? length(s.gravity) : 9.81f / metersPerUnit;
             float maxForce = dragParams.maxForce > 0 ? dragParams.maxForce : 50 * body->mass * gravity;
             drag.maxImpulse = maxForce * h;
+            // The impulse carried over from the last substep within this one's limit, which a
+            // lower force or a shorter substep may have shrunk
+            if (lengthSq(dragImpulse) > drag.maxImpulse * drag.maxImpulse)
+                dragImpulse = normalize(dragImpulse) * drag.maxImpulse;
         }
         else
             dragImpulse = {0, 0, 0};

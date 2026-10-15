@@ -498,8 +498,10 @@ public final class SDFSimulation {
         /// The most force of the pull, in the simulation's units; nil for 50 times the body's
         /// weight, or `.infinity` for no limit
         public var maxForce: Float?
-        /// The fastest the spring pulls the grabbed point, in units per second; nil for the contact
-        /// margin per substep, 2.4 m/s with 2 substeps at 60 Hz, or `.infinity` for no limit
+        /// The fastest the spring asks the grabbed point to move, in units per second; nil for the
+        /// contact margin per substep, 2.4 m/s with 2 substeps at 60 Hz, or `.infinity` for no
+        /// limit. It caps the pull, not the body: one already moving faster, thrown or falling,
+        /// is not slowed by it.
         public var maxSpeed: Float?
         /// Damps the body's spin while it is held, per second
         public var angularDamping: Float
