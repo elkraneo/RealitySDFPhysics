@@ -66,8 +66,12 @@ public final class SDFSimulation {
         defer { isStepping = false }
         let dynamic = prepare(root: root, settings: settings, deltaTime: deltaTime)
         let timeStep = TimeInterval(settings.timeStep)
-        guard !settings.isPaused, timeStep > 0, timeStep.isFinite else { return }
+        guard !settings.isPaused, timeStep > 0, timeStep.isFinite else {
+            showSimulatedPoses(dynamic, root: root)
+            return
+        }
         accumulator += min(max(deltaTime, 0), 0.25)
+        if accumulator >= timeStep { showSimulatedPoses(dynamic, root: root) }
         var steps = 0
         while accumulator >= timeStep && steps < max(settings.maximumStepsPerFrame, 1) {
             step(root: root, dynamic: dynamic, timeStep: timeStep)
@@ -77,6 +81,11 @@ public final class SDFSimulation {
         // Drop the whole steps a slow frame could not catch up on, keep the fraction
         accumulator = accumulator.truncatingRemainder(dividingBy: timeStep)
         if steps > 0 { activePushes = [:] }
+        if settings.isInterpolationEnabled {
+            showInterpolatedPoses(dynamic, root: root, fraction: Float(accumulator / timeStep))
+        } else {
+            showSimulatedPoses(dynamic, root: root)
+        }
     }
 
     /// Synchronizes and takes exactly one step, also while paused. Does nothing when called from an
@@ -87,6 +96,7 @@ public final class SDFSimulation {
         defer { isStepping = false }
         let timeStep = TimeInterval(settings.timeStep)
         let dynamic = prepare(root: root, settings: settings, deltaTime: timeStep)
+        showSimulatedPoses(dynamic, root: root)
         guard timeStep > 0, timeStep.isFinite else { return }
         step(root: root, dynamic: dynamic, timeStep: timeStep)
         activePushes = [:]
@@ -156,6 +166,11 @@ public final class SDFSimulation {
             }
         }
 
+        init(position: SIMD3<Float>, orientation: simd_quatf) {
+            self.position = position
+            self.orientation = orientation
+        }
+
         init(_ pose: SDFPose) {
             position = SIMD3(pose.position.0, pose.position.1, pose.position.2)
             orientation = simd_quatf(ix: pose.orientation.0, iy: pose.orientation.1, iz: pose.orientation.2, r: pose.orientation.3)
@@ -180,8 +195,12 @@ public final class SDFSimulation {
         var scale: Float
         var massProperties: SDFPhysicsMassProperties
         var options: SDFPhysicsBodyComponent.Options
-        /// The entity's pose when last read or written
+        /// The entity's pose when last read or written, which is the simulated one
         var pose: Pose
+        /// The simulated pose before the last step, to interpolate from
+        var previous: Pose?
+        /// The interpolated pose the entity shows, when it shows one
+        var shown: Pose?
         /// The motion component when last read or written
         var motion: SDFPhysicsMotionComponent?
     }
@@ -238,14 +257,21 @@ public final class SDFSimulation {
             let (linear, angular) = velocity(from: body.pose, to: pose, over: deltaTime)
             sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale))
             sdf_world_set_body_velocity(world, body.id, [linear.x, linear.y, linear.z], [angular.x, angular.y, angular.z])
+            body.pose = pose
         case .dynamic:
-            // The entity moved since the last write: teleport the body
-            if !pose.isClose(to: body.pose) { sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale)) }
+            // The entity moved since the last write: teleport the body. One that still shows the
+            // interpolated pose keeps its simulated one.
+            if !pose.isClose(to: body.shown ?? body.pose) {
+                sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale))
+                body.pose = pose
+                body.previous = nil
+                body.shown = nil
+            }
             if let motion, motion != body.motion { setVelocity(of: body.id, motion) }
         default:
             if !pose.isClose(to: body.pose) { sdf_world_set_body_pose(world, body.id, pose.engine(scale: scale)) }
+            body.pose = pose
         }
-        body.pose = pose
         body.motion = motion
         bodies[entity.id] = body
     }
@@ -281,8 +307,17 @@ public final class SDFSimulation {
 
     private func writeBack(_ dynamic: [Entity], root: Entity) {
         for entity in dynamic {
-            guard var body = bodies[entity.id], !sdf_world_body_rested_through_step(world, body.id) else { continue }
+            guard var body = bodies[entity.id] else { continue }
+            guard !sdf_world_body_rested_through_step(world, body.id) else {
+                // Still: nothing to interpolate
+                if body.previous != nil {
+                    body.previous = nil
+                    bodies[entity.id] = body
+                }
+                continue
+            }
             let pose = Pose(sdf_world_body_pose(world, body.id))
+            body.previous = body.pose
             pose.write(to: entity, relativeTo: root)
             // Read back, so rounding in the transform is not mistaken for a teleport
             body.pose = Pose(of: entity, relativeTo: root)
@@ -294,6 +329,31 @@ public final class SDFSimulation {
                 entity.components.set(motion)
                 body.motion = motion
             }
+            bodies[entity.id] = body
+        }
+    }
+
+    /// Puts the bodies that show interpolated poses back at their simulated ones, before a step
+    /// or for `isInterpolationEnabled` turned off
+    private func showSimulatedPoses(_ dynamic: [Entity], root: Entity) {
+        for entity in dynamic {
+            guard var body = bodies[entity.id], body.shown != nil else { continue }
+            body.pose.write(to: entity, relativeTo: root)
+            body.pose = Pose(of: entity, relativeTo: root)
+            body.shown = nil
+            bodies[entity.id] = body
+        }
+    }
+
+    /// Shows the bodies that moved in the last step between that step's start and end
+    private func showInterpolatedPoses(_ dynamic: [Entity], root: Entity, fraction: Float) {
+        for entity in dynamic {
+            guard var body = bodies[entity.id], let previous = body.previous else { continue }
+            let shown = Pose(position: simd_mix(previous.position, body.pose.position, SIMD3(repeating: fraction)),
+                             orientation: simd_slerp(previous.orientation, body.pose.orientation, fraction))
+            shown.write(to: entity, relativeTo: root)
+            // Read back, so rounding in the transform is not mistaken for a teleport
+            body.shown = Pose(of: entity, relativeTo: root)
             bodies[entity.id] = body
         }
     }
