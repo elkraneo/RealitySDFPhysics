@@ -695,10 +695,15 @@ void SDFWorld::step()
 
             if (joint.hasLimit)
             {
+                // The angle measured about the middle of the limits, so that its wrap at a half
+                // turn falls as far from both stops as it can
+                float middle = 0.5f * (joint.lowerAngle + joint.upperAngle), turn = 2 * 3.14159265f;
+                float angle = j.angle - middle;
+                angle = angle - turn * roundf(angle / turn) + middle;
                 // Lower: the angle stays at or above it. Away from it, only an approach that
                 // would cross it within the substep is stopped.
                 {
-                    float c = j.angle - joint.lowerAngle, bias = 0, ms = 1, is = 0;
+                    float c = angle - joint.lowerAngle, bias = 0, ms = 1, is = 0;
                     if (c > 0)
                         bias = c / h;
                     else if (useBias)
@@ -711,7 +716,7 @@ void SDFWorld::step()
                     j.b->applyAngularImpulse(impulse);
                 }
                 {
-                    float c = joint.upperAngle - j.angle, bias = 0, ms = 1, is = 0;
+                    float c = joint.upperAngle - angle, bias = 0, ms = 1, is = 0;
                     if (c > 0)
                         bias = c / h;
                     else if (useBias)
@@ -914,8 +919,9 @@ void SDFWorld::step()
                 continue;
             body->velocity *= expf(-m.record->linearDamping * h);
             body->angularVelocity *= expf(-m.record->angularDamping * h);
-            // No more than a quarter turn per substep, as Box3D clamps: a runaway stays finite
-            float spin = length(body->angularVelocity), maxSpin = 0.25f * 3.14159265f / h;
+            // No more than half a turn per substep, so that a runaway stays finite: 377 rad/s at
+            // 2 substeps of 60 Hz, well past any wheel (Box3D clamps at an eighth of a turn)
+            float spin = length(body->angularVelocity), maxSpin = 3.14159265f / h;
             if (spin > maxSpin)
                 body->angularVelocity *= maxSpin / spin;
             body->position += (body->velocity + body->pseudoVelocity) * h;

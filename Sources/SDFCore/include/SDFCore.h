@@ -117,7 +117,8 @@ typedef struct
     float metersPerUnit;         // Length of a unit, for the drag limit and the default density
     bool sleeping;               // Puts islands of touching dynamic bodies to sleep once still
     // How stiffly joints hold: the frequency and damping ratio of the spring and damper their rows
-    // amount to, as in Box3D, with the frequency capped at a quarter of the substep rate
+    // amount to, as in Box3D, with the frequency capped at half the substep rate and no lower
+    // than 1 Hz, the damping ratio no lower than 0.1
     float jointHertz;
     float jointDampingRatio;
 } SDFParams;
