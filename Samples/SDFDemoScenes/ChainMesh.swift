@@ -182,7 +182,8 @@ public struct ChainLayout {
         while a < bottom + 2 * .pi + 1e-4 { wrapA.append(onA(a)); a += stepA }
         wrapA.reverse()
         // The runs share what is left, between the last pin of one wrap and the first of the next
-        let onRuns = max(links - wrapA.count - wrapB.count, 0)
+        precondition(links >= wrapA.count + wrapB.count + 2, "\(links) links can't reach around \(teethA) and \(teethB) teeth")
+        let onRuns = links - wrapA.count - wrapB.count
         let onTop = onRuns / 2, onBottom = onRuns - onTop
         func run(from: SIMD2<Float>, to: SIMD2<Float>, count: Int) -> [SIMD2<Float>] {
             (1...max(count, 1)).prefix(count).map { from + (to - from) * (Float($0) / Float(count + 1)) }

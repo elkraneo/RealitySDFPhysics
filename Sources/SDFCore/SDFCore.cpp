@@ -400,8 +400,12 @@ void sdf_world_set_params(SDFWorld *world, SDFParams p)
     if (world->sleeping && !p.sleeping)
         world->wakeAll();
     world->sleeping = p.sleeping;
-    setNonNegative(world->jointHertz, p.jointHertz);
-    setNonNegative(world->jointDampingRatio, p.jointDampingRatio);
+    // Soft rows need a frequency and some damping; at zero the rows would hold nothing, and at
+    // zero both the coefficients divide by zero
+    if (std::isfinite(p.jointHertz))
+        world->jointHertz = std::max(p.jointHertz, 1.0f);
+    if (std::isfinite(p.jointDampingRatio))
+        world->jointDampingRatio = std::max(p.jointDampingRatio, 0.1f);
 }
 
 void sdf_world_step(SDFWorld *world)

@@ -48,8 +48,9 @@ public struct SDFSimulationComponent: Component {
     public var restitutionThreshold: Float
     /// How stiffly joints hold: the frequency, in hertz, and damping ratio of the spring and
     /// damper their constraints amount to. The defaults are Box3D's, 60 Hz and 2; the frequency is
-    /// capped at half the substep rate, 60 Hz with 2 substeps at 60 Hz. Stiffer joints sag less
-    /// under load, softer ones forgive an over-constrained assembly such as a taut chain.
+    /// capped at half the substep rate, 60 Hz with 2 substeps at 60 Hz, and no lower than 1 Hz,
+    /// the damping ratio no lower than 0.1. Stiffer joints sag less under load, softer ones
+    /// forgive an over-constrained assembly such as a taut chain.
     public var jointStiffness: (hertz: Float, dampingRatio: Float)
 
     /// The parameters of the paper's collision detection
