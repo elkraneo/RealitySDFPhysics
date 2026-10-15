@@ -53,7 +53,7 @@ final class BenchmarkModel {
     }
 
     private func runTable() async {
-        emit("\(device.text), solver threads \(device.solverThreads)")
+        emit("\(device.text), solver threads \(ProcessInfo.processInfo.environment["SDF_SOLVER_THREADS"] ?? "\(device.solverThreads)")")
         emit("ms/step, mean / worst over \(Benchmark.steps) steps. SDFCollisionKit: the real-time preset with sleeping, and the")
         emit("paper's settings on threads and on one thread. RealityKit: 12-capsule tori, between its simulation events.")
         emit("tori   real time           paper               paper, one thread   RealityKit")
