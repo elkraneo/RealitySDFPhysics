@@ -1,10 +1,17 @@
 // Times the same pile of tori with RealitySDFPhysics and with RealityKit's physics, from 25 to 400
 // bodies, and prints a table.
 //
-//   swift run -c release sdf-bench [steps]
-//   swift run -c release sdf-bench quality [steps]
-//   swift run -c release sdf-bench phases [steps] [tori ...]
-//   swift run -c release sdf-bench soak [minutes] [tori ...]
+//   swift run -c release sdf-bench [tori ...] [--threads 1,8] [--runs 2] [--steps N]
+//   swift run -c release sdf-bench quality [tori ...] [--steps N]
+//   swift run -c release sdf-bench phases [tori ...] [--steps N]
+//   swift run -c release sdf-bench soak [tori ...] [--minutes M]
+//
+// The table times each count of tori (by default 25 to 400) over 300 steps. `--threads` lists the
+// thread counts of the paper's columns, by default the engine's own and 1: 1 runs on one thread,
+// a larger number sets SDF_SOLVER_THREADS, the size of the solver's pool, caller included, for
+// every threaded run (the narrow phase takes the width GCD gives it). The engine reads that
+// variable once per process, so the list holds at most one number above 1. `--runs` keeps the
+// fastest of that many runs of each column.
 //
 // `quality` compares RealitySDFPhysics's settings, from the paper's to RealityKit-like ones: step time,
 // deepest penetration, how still the pile ends, and bodies out of the box; and, for the default
@@ -34,9 +41,35 @@ import RealityKit
 import SDFBenchmarks
 import RealitySDFPhysics
 
-let mode = CommandLine.arguments.dropFirst().first.flatMap { ["quality", "phases", "soak"].contains($0) ? $0 : nil }
-let steps = CommandLine.arguments.dropFirst(mode == nil ? 1 : 2).first.flatMap { Int($0) } ?? Benchmark.steps
-let countArguments = CommandLine.arguments.dropFirst(3).compactMap { Int($0) }
+func usage() -> Never {
+    print("usage: sdf-bench [quality|phases|soak] [tori ...] [--threads 1,8] [--runs 2] [--steps N] [--minutes M]")
+    exit(1)
+}
+
+var arguments = Array(CommandLine.arguments.dropFirst())
+@MainActor func option(_ name: String) -> String? {
+    guard let index = arguments.firstIndex(of: name) else { return nil }
+    guard index + 1 < arguments.count else { usage() }
+    defer { arguments.removeSubrange(index...(index + 1)) }
+    return arguments[index + 1]
+}
+func number(_ text: String) -> Int {
+    guard let value = Int(text), value > 0 else { usage() }
+    return value
+}
+
+// 0 stands for the engine's own thread count, or SDF_SOLVER_THREADS when it is set
+let threads = (option("--threads").map { $0.split(separator: ",").map { number(String($0)) } } ?? [0, 1])
+    .reduce(into: [Int]()) { if !$0.contains($1) { $0.append($1) } }
+let runs = option("--runs").map(number) ?? 1
+let steps = option("--steps").map(number) ?? Benchmark.steps
+let minutes = option("--minutes").map(number) ?? 10
+let mode = arguments.first.flatMap { ["quality", "phases", "soak"].contains($0) ? $0 : nil }
+let countArguments = arguments.dropFirst(mode == nil ? 0 : 1).map(number)
+let poolThreads = Set(threads.filter { $0 > 1 })
+guard !threads.isEmpty, poolThreads.count <= 1 else { usage() }
+// The engine reads the pool's size once, at its first threaded step
+if let pool = poolThreads.first { setenv("SDF_SOLVER_THREADS", "\(pool)", 1) }
 let environment = ProcessInfo.processInfo.environment
 
 /// Collision detection overrides for experiments: SDF_BENCH_CURVATURE=0 turns curvature sampling
@@ -144,7 +177,6 @@ func soak(count: Int, minutes: Int, isSleepingEnabled: Bool) {
 }
 
 if mode == "soak" {
-    let minutes = steps == Benchmark.steps ? 10 : steps
     for count in countArguments.isEmpty ? [100] : countArguments {
         soak(count: count, minutes: minutes, isSleepingEnabled: true)
         soak(count: count, minutes: minutes, isSleepingEnabled: false)
@@ -192,19 +224,44 @@ func trace(_ timing: StepTiming, _ name: String) {
     print("       slowest steps (\(name)): " + timing.slowest.map { String(format: "#%d %.1f ms", $0.0, $0.1) }.joined(separator: ", "))
 }
 
+/// The fastest of `runs` results, by mean step time
+@MainActor func fastest<Result>(_ time: () async throws -> Result, mean: (Result) -> Double) async rethrows -> Result {
+    var best = try await time()
+    for _ in 1..<runs {
+        let result = try await time()
+        if mean(result) < mean(best) { best = result }
+    }
+    return best
+}
+@MainActor func fastest(_ time: () -> StepTiming) async -> StepTiming { await fastest(time, mean: \.mean) }
+
+func columnName(_ threads: Int) -> String {
+    switch threads {
+    case 0: "paper, threads"
+    case 1: "paper, one thread"
+    default: "paper, \(threads) threads"
+    }
+}
+
 print(DeviceInfo.current.text)
-print("ms/step, mean / worst. RealitySDFPhysics: the default real-time preset, with sleeping, and the paper's settings,")
-print("multithreaded and on one thread. RealityKit: 12-capsule tori, measured between its simulation events.")
-print("tori   real time           paper               paper, one thread   RealityKit")
-for count in TorusPile.counts {
-    let realTime = Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: true, preset: .realTime, configure: applyEnvironment)
+print("ms/step, mean / worst over \(steps) steps\(runs > 1 ? ", fastest of \(runs) runs" : ""). RealitySDFPhysics: the")
+print("real-time preset, with sleeping, and the paper's settings. RealityKit: 12-capsule tori, between its simulation events.")
+print("tori   " + (["real time"] + threads.map(columnName) + ["RealityKit"]).map { $0.padding(toLength: 20, withPad: " ", startingAt: 0) }
+    .joined())
+for count in countArguments.isEmpty ? TorusPile.counts : countArguments {
+    let realTime = await fastest {
+        Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: threads.contains { $0 != 1 }, preset: .realTime, configure: applyEnvironment)
+    }
     trace(realTime, "real time")
-    let sdf = Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: true, configure: applyEnvironment)
-    trace(sdf, "paper, threads")
-    let single = Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: false, configure: applyEnvironment)
-    trace(single, "paper, one thread")
-    let realityKit = try await Benchmark.timeRealityKit(count: count, steps: steps)
-    print(String(format: "%4d   %@     %@     %@     %@", count, realTime.text, sdf.text, single.text, realityKit.timing.text))
-    print(String(format: "       after \(steps) steps: real time \(realTime.check), paper \(sdf.check), RealityKit \(realityKit.timing.check) (frame estimate %.2f)",
+    var paper: [StepTiming] = []
+    for threadCount in threads {
+        paper.append(await fastest {
+            Benchmark.timeSDF(count: count, steps: steps, isMultithreaded: threadCount != 1, configure: applyEnvironment)
+        })
+        trace(paper.last!, columnName(threadCount))
+    }
+    let realityKit = try await fastest({ try await Benchmark.timeRealityKit(count: count, steps: steps) }, mean: \.timing.mean)
+    print(String(format: "%4d   ", count) + ([realTime] + paper + [realityKit.timing]).map { $0.text + "     " }.joined())
+    print(String(format: "       after \(steps) steps: real time \(realTime.check), paper \(paper[0].check), RealityKit \(realityKit.timing.check) (frame estimate %.2f)",
                  realityKit.frameEstimate))
 }

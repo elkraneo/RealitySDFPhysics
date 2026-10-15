@@ -95,7 +95,8 @@ showcase video.
 swift run -c release SDFDemos
 swift run -c release SDFRealityKitSamples
 swift run -c release Benchmarks
-swift run -c release sdf-snapshot out/ [steps] [scene index...]
+swift run -c release sdf-snapshot out/ [seconds] [scene name...]
+swift run -c release sdf-bench [tori ...] [--threads 1,8] [--runs 2] [--steps N]
 swift test
 ```
 

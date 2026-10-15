@@ -119,6 +119,13 @@ public struct DemoBuilder {
 }
 
 extension DemoScene {
+    /// The scene of that name, ignoring case, spaces and punctuation ("falling boxes: bend" and
+    /// "falling-boxes-bend" both name Falling Boxes: Bend)
+    public static func named(_ name: String) -> DemoScene? {
+        func key(_ text: String) -> String { text.lowercased().filter { $0.isLetter || $0.isNumber } }
+        return all.first { key($0.name) == key(name) }
+    }
+
     /// The 11 scenes of the paper's demo; the ids are the indices
     public static let all: [DemoScene] = [
         DemoScene(id: 0, name: "Box Stack", description: "Pyramid of analytical boxes (Fig. 5, left)",
