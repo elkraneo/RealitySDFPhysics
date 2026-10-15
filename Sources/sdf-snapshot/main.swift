@@ -1,8 +1,9 @@
 // Simulates every demo scene and renders it offscreen with RealityKit to a PNG, and prints timings.
 //
-//   swift run -c release sdf-snapshot [--single-threaded] <output directory> [steps >= 0] [scene index...]
+//   swift run -c release sdf-snapshot [--single-threaded] [--mechanics] <output directory> [steps >= 0] [scene index...]
 //
-// Steps default to 240 (4 s of simulated time).
+// Steps default to 240 (4 s of simulated time). The scenes are the paper's, or with --mechanics
+// those of the mechanics sample.
 
 import CoreGraphics
 import Foundation
@@ -11,21 +12,23 @@ import Metal
 import RealityKit
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 import UniformTypeIdentifiers
 
 func usage() -> Never {
-    print("usage: sdf-snapshot [--single-threaded] <output directory> [steps >= 0] [scene index...]")
+    print("usage: sdf-snapshot [--single-threaded] [--mechanics] <output directory> [steps >= 0] [scene index...]")
     exit(1)
 }
 
 let isMultithreaded = !CommandLine.arguments.contains("--single-threaded")
-let arguments = CommandLine.arguments.dropFirst().filter { $0 != "--single-threaded" }
+let scenes = CommandLine.arguments.contains("--mechanics") ? MechanicsScenes.all : DemoScene.all
+let arguments = CommandLine.arguments.dropFirst().filter { !["--single-threaded", "--mechanics"].contains($0) }
 guard let output = arguments.first else { usage() }
 let numbers = arguments.dropFirst().compactMap { Int($0) }
 guard numbers.count == arguments.count - 1 else { usage() }
 let steps = numbers.first ?? 240
-let selected = numbers.count > 1 ? Array(numbers.dropFirst()) : DemoScene.all.map(\.id)
-guard steps >= 0, selected.allSatisfy(DemoScene.all.indices.contains) else { usage() }
+let selected = numbers.count > 1 ? Array(numbers.dropFirst()) : scenes.map(\.id)
+guard steps >= 0, selected.allSatisfy(scenes.indices.contains) else { usage() }
 
 do {
     try FileManager.default.createDirectory(atPath: output, withIntermediateDirectories: true)
@@ -37,7 +40,7 @@ do {
 
     print("scene                     bodies  load ms  step ms (mean / max)  contacts  collision  pairs  queries/pair")
     for index in selected {
-        let scene = DemoScene.all[index]
+        let scene = scenes[index]
         let simulation = SDFSimulation()
         let root = Entity()
         var settings = SDFSimulationComponent(simulation: simulation, preset: .paper)
@@ -48,6 +51,8 @@ do {
         try await scene.load(into: root)
         let loadMilliseconds = Date().timeIntervalSince(loadStart) * 1000
         root.addChild(ContactMarkers.makeEntity())
+        // The Absolut scene's hung objects light up over the plato
+        let carrier = CarrierZone(root: root, simulation: simulation)
 
         var total = 0.0, slowest = 0.0, collision = 0.0, pairs = 0, queries = 0
         for _ in 0..<steps {
@@ -59,6 +64,7 @@ do {
             pairs += stats.pairs
             queries += stats.queries
         }
+        withExtendedLifetime(carrier) {}
 
         let renderer = try RealityRenderer()
         let camera = DemoStage.makeCamera()

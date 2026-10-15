@@ -8,6 +8,7 @@ let package = Package(
     products: [
         .library(name: "SDFCollisionKit", targets: ["SDFCollisionKit"]),
         .executable(name: "SDFDemos", targets: ["SDFDemos"]),
+        .executable(name: "SDFMechanics", targets: ["SDFMechanics"]),
         .executable(name: "RealityKitSamples", targets: ["RealityKitSamples"]),
         .executable(name: "sdf-snapshot", targets: ["sdf-snapshot"]),
         .executable(name: "sdf-video", targets: ["sdf-video"]),
@@ -34,10 +35,28 @@ let package = Package(
             path: "Samples/SDFDemoScenes",
             resources: [.copy("Resources/assets")]
         ),
+        // The window of the demo apps: a list of scenes, their parameters and an orbit camera
+        .target(
+            name: "SDFDemoViewer",
+            dependencies: ["SDFCollisionKit", "SDFDemoScenes"],
+            path: "Samples/SDFDemoViewer"
+        ),
         .executableTarget(
             name: "SDFDemos",
-            dependencies: ["SDFDemoScenes"],
+            dependencies: ["SDFDemoScenes", "SDFDemoViewer"],
             path: "Samples/SDFDemos"
+        ),
+        // Mechanisms on the joints, beyond the paper's demo: gears, chains, the Absolut chain and
+        // a planetary set, and their app
+        .target(
+            name: "SDFMechanicsScenes",
+            dependencies: ["SDFCollisionKit", "SDFDemoScenes"],
+            path: "Samples/SDFMechanicsScenes"
+        ),
+        .executableTarget(
+            name: "SDFMechanics",
+            dependencies: ["SDFCollisionKit", "SDFDemoViewer", "SDFMechanicsScenes"],
+            path: "Samples/SDFMechanics"
         ),
         // Apple's RealityKit physics samples, ported to SDF bodies: the scenes, shared by the app and
         // the video renderer, and the app
@@ -56,14 +75,14 @@ let package = Package(
         // Offscreen RealityKit renders of every demo scene
         .executableTarget(
             name: "sdf-snapshot",
-            dependencies: ["SDFDemoScenes"]
+            dependencies: ["SDFDemoScenes", "SDFMechanicsScenes"]
         ),
         // The same pile of tori timed with SDFCollisionKit and with RealityKit's physics: the
         // scene, the timings and a view that runs the standard table, shared by the command-line
         // tool, the macOS app and the device app
         .target(
             name: "SDFBenchmarks",
-            dependencies: ["SDFCollisionKit", "SDFDemoScenes"],
+            dependencies: ["SDFCollisionKit", "SDFDemoScenes", "SDFMechanicsScenes"],
             path: "Samples/SDFBenchmarks"
         ),
         .executableTarget(
@@ -78,11 +97,11 @@ let package = Package(
         // Showcase video of the demo scenes, rendered offscreen
         .executableTarget(
             name: "sdf-video",
-            dependencies: ["SDFDemoScenes", "RealityKitSampleScenes"]
+            dependencies: ["SDFDemoScenes", "SDFMechanicsScenes", "RealityKitSampleScenes"]
         ),
         .testTarget(
             name: "SDFCollisionKitTests",
-            dependencies: ["SDFCollisionKit", "SDFCore", "SDFDemoScenes"]
+            dependencies: ["SDFCollisionKit", "SDFCore", "SDFDemoScenes", "SDFMechanicsScenes"]
         ),
     ],
     cxxLanguageStandard: .cxx17

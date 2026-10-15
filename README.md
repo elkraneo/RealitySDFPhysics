@@ -67,7 +67,7 @@ baking, tuning the paper's parameters, and performance. Build it with Xcode's
 
 In `Samples/`, macOS apps built on the public API:
 
-- `SDFDemos`: the 11 scenes of the upstream demo, rebuilt in the `SDFDemoScenes` module with
+- `SDFDemos`: the 11 scenes of the paper's demo, rebuilt in the `SDFDemoScenes` module with
   their shapes, sizes and the paper's settings, on one thread, for comparison. They are not
   bit-identical runs of upstream's: bodies have the density of water rather than upstream's unit
   density, and random placements come from another generator. Loading or resetting a scene
@@ -81,19 +81,25 @@ In `Samples/`, macOS apps built on the public API:
     The roll is forecast with `SDFSimulation.forecast()`, an exact copy of the simulation: the
     engine is deterministic, so the real roll lands exactly as predicted.
 
+- `SDFMechanics`: mechanisms on the joints, beyond the paper's demo, in the
+  `SDFMechanicsScenes` module: involute gears, a roller chain around two sprockets, the Absolut
+  chain of 2008 with pedals to drag and boards that light up over the plato, and a planetary
+  gear set. It shares the window of `SDFDemos`, the `SDFDemoViewer` module, whose
+  `DemoInteraction` lets a scene take the drag, as the Absolut pedals do.
 - `Benchmarks`: the pile of tori of `sdf-bench` timed on the machine at hand, SDFCollisionKit
   against RealityKit's physics, in a window. The scene, the timings and the view are the
   `SDFBenchmarks` module; `Samples/BenchmarksApp` wraps it in an Xcode project for iPhone and
   Vision Pro, where the same table runs on the device.
 
-`sdf-snapshot` renders the demo scenes offscreen with timings, and `sdf-video` renders a showcase
-video.
+`sdf-snapshot` renders the demo scenes offscreen with timings, or with `--mechanics` the
+mechanics scenes, and `sdf-video` renders a showcase video.
 
 ```sh
 swift run -c release SDFDemos
 swift run -c release RealityKitSamples
+swift run -c release SDFMechanics
 swift run -c release Benchmarks
-swift run -c release sdf-snapshot out/ [steps] [scene index...]
+swift run -c release sdf-snapshot [--mechanics] out/ [steps] [scene index...]
 swift test
 ```
 

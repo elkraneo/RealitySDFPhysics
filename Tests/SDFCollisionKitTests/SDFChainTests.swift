@@ -1,6 +1,7 @@
 import RealityKit
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 import Testing
 import simd
 

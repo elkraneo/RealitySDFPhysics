@@ -1,6 +1,7 @@
 import RealityKit
 import SDFCollisionKit
 import SDFDemoScenes
+import SDFMechanicsScenes
 import Testing
 import simd
 
@@ -149,7 +150,7 @@ import simd
 
     @Test func chainLinkPulledAwayKeepsItsPins() async throws {
         root.components[SDFSimulationComponent.self]!.isSleepingEnabled = false
-        try await DemoScene.all[12].load(into: root)
+        try await MechanicsScenes.all.first { $0.name == "Chain" }!.load(into: root)
         for _ in 0..<60 { simulation.step(root: root) }
         let links = root.children.filter { $0.name.hasPrefix("link") }
         // The lowest link, pulled down and out of the loop
