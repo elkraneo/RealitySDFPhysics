@@ -185,6 +185,9 @@ package final class DiceScene {
     /// The held die, and the others pulled around it with "Toss all"
     @ObservationIgnored private var held: [(index: Int, offset: SIMD3<Float>)] = []
     @ObservationIgnored private var holding: AnyCancellable?
+    /// A grab, and where the pointer wants it, waiting for a new simulation's first step, which
+    /// adds the die's body
+    @ObservationIgnored private var pendingGrab: (point: SIMD3<Float>, target: SIMD3<Float>)?
     /// The height the dice are held at, in centimeters
     private let holdHeight: Float = 6
 
@@ -215,7 +218,7 @@ package final class DiceScene {
         // added as a force instead, outside the solver, is unstable on the light D4, which it
         // spins up from a still hold, and on a D20 held near a corner.
         simulation.dragOptions = SDFSimulation.DragOptions(hertz: 2.4, dampingRatio: 1, maxSpeed: 200, angularDamping: 5)
-        simulation.beginDrag(dice[index].entity, at: point)
+        pendingGrab = simulation.beginDrag(dice[index].entity, at: point) ? nil : (point, point)
         holding = simulation.subscribe(to: SDFPhysicsSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
         stopWatchingRoll()
     }
@@ -223,15 +226,15 @@ package final class DiceScene {
     /// Moves the grabbed point's target to a point of the root's frame, for scripted tosses
     package func move(heldTo target: SIMD3<Float>) {
         guard !held.isEmpty else { return }
-        simulation.drag(to: target)
+        if pendingGrab != nil { pendingGrab?.target = target } else { simulation.drag(to: target) }
     }
 
     /// Moves the grabbed point's target under a point of the view, at the hold height
     package func move(to point: CGPoint, in size: CGSize) {
         let ray = camera.ray(through: point, in: size)
         let origin = root.convert(position: ray.origin, from: nil), direction = root.convert(direction: ray.direction, from: nil)
-        guard !held.isEmpty, abs(direction.y) > 1e-6 else { return }
-        simulation.drag(to: origin + direction * ((holdHeight - origin.y) / direction.y))
+        guard abs(direction.y) > 1e-6 else { return }
+        move(heldTo: origin + direction * ((holdHeight - origin.y) / direction.y))
     }
 
     /// Before every step: carries the held die's weight, which the drag pulls by the grabbed point,
@@ -240,6 +243,10 @@ package final class DiceScene {
     private func hold() {
         guard let (index, _) = held.first else { return }
         let entity = dice[index].entity
+        if let grab = pendingGrab, simulation.beginDrag(entity, at: grab.point) {
+            simulation.drag(to: grab.target)
+            pendingGrab = nil
+        }
         guard let mass = simulation.mass(of: entity) else { return }
         simulation.addForce(-mass * gravity, to: entity)
 
@@ -257,6 +264,7 @@ package final class DiceScene {
     package func toss(maxScore: Bool) {
         guard !held.isEmpty else { return }
         holding = nil
+        pendingGrab = nil
         simulation.endDrag()
         for (index, _) in held {
             let entity = dice[index].entity
@@ -329,6 +337,7 @@ package final class DiceScene {
     package func reset() {
         held = []
         holding = nil
+        pendingGrab = nil
         simulation.endDrag()
         stopWatchingRoll()
         for (index, die) in dice.enumerated() {

@@ -38,4 +38,20 @@ import simd
         let landed = try #require(simulation.transform(of: die)).translation
         #expect(length(SIMD2(landed.x, landed.z)) < 50 && landed.y > 0 && landed.y < 3)
     }
+
+    /// A die picked up by a script right after loading, before the simulation has its body, is
+    /// held once the first step adds it
+    @Test func pickUpBeforeFirstStep() async throws {
+        let scene = DiceScene()
+        try await scene.load()
+        let root = try #require(scene.content.children.first { $0.components.has(SDFPhysicsSimulationComponent.self) })
+        let simulation = try #require(root.components[SDFPhysicsSimulationComponent.self]).simulation
+        let die = try #require(root.findEntity(named: DieKind.d6.rawValue))
+        let center = die.position
+        scene.pickUp(die: 1, tossAll: false)
+        scene.move(heldTo: center + [0, 7, 0])
+        for _ in 0..<120 { simulation.step(root: root) }
+        // Hanging by the top of its center, 1 cm below the target
+        #expect(length(try #require(simulation.transform(of: die)).translation - (center + [0, 6, 0])) < 0.3)
+    }
 }
