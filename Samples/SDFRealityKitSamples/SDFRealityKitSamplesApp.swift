@@ -23,6 +23,7 @@ struct RealityKitSamplesApp: App {
 private enum Sample: String, CaseIterable, Identifiable {
     case physicsBodies = "Physics Bodies"
     case dice = "Dice"
+    case pendulum = "Newton's Cradle"
 
     var id: Self { self }
 
@@ -39,6 +40,11 @@ private enum Sample: String, CaseIterable, Identifiable {
             "The roll is forecast from an exact copy of the simulation, which is deterministic; Max score toss turns each die by a symmetry to land on its highest face, without adjusting the roll.",
             "Invisible walls keep the dice on the table; the pointer holds a die with a spring, and releases it with its velocity.",
         ]
+        case .pendulum: [
+            "SDF bodies and revolute joints in place of RealityKit's; Apple's sizes, masses, materials and slow-motion scale.",
+            "It behaves as a Newton's cradle: one ball in, one out; two in, two out. RealityKit shares the bounce among the touching balls, so one ball in sends four out.",
+            "The contact margin and restitution threshold are sized for 4 cm balls. Drag a ball with the pointer, or Lift one to three and let them go from 30 degrees.",
+        ]
         }
     }
 
@@ -51,12 +57,20 @@ private enum Sample: String, CaseIterable, Identifiable {
         case .dice:
             ("Simulating dice rolls as a component for your game",
              URL(string: "https://developer.apple.com/documentation/tabletopkit/simulating-dice-rolls-as-a-component-for-your-game")!)
+        case .pendulum:
+            ("Simulating physics joints in your RealityKit app",
+             URL(string: "https://developer.apple.com/documentation/realitykit/simulating-physics-joints-in-your-realitykit-app")!)
         }
     }
 }
 
 private struct SamplesView: View {
-    @State private var selection: Sample? = .physicsBodies
+    /// The first sample, or the one named after --sample at launch
+    @State private var selection: Sample? = {
+        let arguments = CommandLine.arguments
+        guard let index = arguments.firstIndex(of: "--sample"), index + 1 < arguments.count else { return .physicsBodies }
+        return Sample.allCases.first { $0.rawValue.caseInsensitiveCompare(arguments[index + 1]) == .orderedSame } ?? .physicsBodies
+    }()
 
     var body: some View {
         NavigationSplitView {
@@ -73,6 +87,7 @@ private struct SamplesView: View {
                     switch selection {
                     case .physicsBodies: PhysicsBodiesView()
                     case .dice: DiceView()
+                    case .pendulum: PendulumView()
                     }
                     Divider()
                     SampleReference(sample: selection)
