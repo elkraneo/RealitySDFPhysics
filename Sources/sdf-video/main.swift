@@ -414,7 +414,6 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
     rightPeg.components.set(SDFPhysicsBodyComponent(shape: .box(halfExtents: [pegHalfWidth, pegHeight / 2, pegHalfWidth]), mode: .static))
     right.addChild(sdfGround)
     right.addChild(rightPeg)
-    right.addChild(ContactMarkers.makeEntity())
     let torus = SDFShape.torus(majorRadius: major, minorRadius: minor)
     var rightRings: [Entity] = []
     for (index, drop) in drops.enumerated() {
@@ -436,13 +435,20 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
     renderer.activeCamera = camera
     renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.62, green: 0.70, blue: 0.80, alpha: 1))
 
-    // RealityKit's contact points, drawn as yellow dots
+    // Both sides' contact points, drawn as the same yellow dots
     var realityKitContacts: [SIMD3<Float>] = []
     let began = renderer.subscribe(to: CollisionEvents.Began.self) { event in realityKitContacts += event.contacts.map(\.point) }
     let updated = renderer.subscribe(to: CollisionEvents.Updated.self) { event in realityKitContacts += event.contacts.map(\.point) }
     var dots: [ModelEntity] = []
     let dotMesh = MeshResource.generateSphere(radius: 0.006)
-    let dotMaterial = UnlitMaterial(color: .init(red: 1, green: 0.85, blue: 0.1, alpha: 1))
+    // Seen through the rings, as in a physics debug view: most contacts are between rings, inside
+    // the stack. Transparent, so that they draw after the solid rings, and without the depth test.
+    var dotMaterial = PhysicallyBasedMaterial()
+    dotMaterial.baseColor = .init(tint: .black)
+    dotMaterial.emissiveColor = .init(color: .init(red: 1, green: 0.85, blue: 0.1, alpha: 1))
+    dotMaterial.emissiveIntensity = 1
+    dotMaterial.blending = .transparent(opacity: 0.95)
+    dotMaterial.readsDepth = false
 
     /// Rings with the peg through their hole, below its top: the peg's axis crosses the ring's
     /// plane inside the hole
@@ -468,15 +474,17 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
         realityKitContacts = []
         CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(frame), timescale: framesPerSecond))
         try await recorder.render(renderer, deltaTime: timeStep)
-        // Move the dots to this frame's contacts; they show in the next frame
-        while dots.count < realityKitContacts.count {
+        // Move the dots to this frame's contacts; they show in the next frame. RealitySDFPhysics's
+        // are in its root's decimeters.
+        let points = realityKitContacts + simulation.contacts().map { right.convert(position: $0.position, to: nil) }
+        while dots.count < points.count {
             let dot = ModelEntity(mesh: dotMesh, materials: [dotMaterial])
             renderer.entities.append(dot)
             dots.append(dot)
         }
         for (index, dot) in dots.enumerated() {
-            dot.isEnabled = index < realityKitContacts.count
-            if index < realityKitContacts.count { dot.position = realityKitContacts[index] }
+            dot.isEnabled = index < points.count
+            if index < points.count { dot.position = points[index] }
         }
         try await recorder.append(lines: [
             "Ring toss: \(count) rings of 300 g dropped over a peg one by one, same sizes, drops and simulated time",
