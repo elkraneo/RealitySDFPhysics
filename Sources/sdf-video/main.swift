@@ -7,7 +7,8 @@
 // of the paper's scenes; `spheres`, `tori`, `dice` and `cradle` drive the samples' scenes as the
 // app does, with the RealityKit systems stepping the simulation, a scripted toss and lifted balls.
 // `samples` is Apple's three samples in a row: spheres, dice and cradle. `compare` drops the same
-// rings over a peg with RealityKit's physics, each ring a compound of capsules, and with SDF bodies.
+// rings over a peg with RealityKit's physics, each ring a compound of capsules, and with SDF bodies;
+// 3 rings, or up to 20.
 // Offscreen, RealityKit has no environment light, which a RealityView gives by default; every reel
 // lights its scene with a studio.
 
@@ -25,9 +26,12 @@ let width = 1280, height = 720, framesPerSecond: Int32 = 60
 let paperCredit = "Giles & Andrews, Real-Time Collision Handling for SDFs via Caching and Importance Sampling (PG 2026)"
 
 let arguments = CommandLine.arguments.dropFirst()
-guard let output = arguments.first, arguments.count <= 2, ["demos", "spheres", "tori", "dice", "cradle", "samples", "compare"].contains(arguments.dropFirst().first ?? "demos")
+let ringCount = arguments.count == 3 && arguments.dropFirst().first == "compare" ? Int(arguments.last!) : 3
+guard let output = arguments.first, arguments.count <= 2 || ringCount != nil,
+      ["demos", "spheres", "tori", "dice", "cradle", "samples", "compare"].contains(arguments.dropFirst().first ?? "demos"),
+      let ringCount, (1...20).contains(ringCount)
 else {
-    print("usage: sdf-video <output.mp4> [demos | spheres | tori | dice | cradle | samples | compare]")
+    print("usage: sdf-video <output.mp4> [demos | spheres | tori | dice | cradle | samples | compare [rings, 3 by default]]")
     exit(1)
 }
 let reel = arguments.dropFirst().first ?? "demos"
@@ -309,24 +313,33 @@ func makeCapsuleWire(radius: Float, halfLength: Float) throws -> MeshResource {
     return try MeshResource(from: mesh)
 }
 
-/// A ring toss: three tori dropped over a peg. Left, RealityKit's physics, with each ring as the best
+/// A ring toss: tori dropped over a peg. Left, RealityKit's physics, with each ring as the best
 /// RealityKit has for a moving torus: a compound of 12 capsules around it, built by hand (from a mesh,
 /// it would generate a convex hull, which closes the hole). Right, RealitySDFPhysics with the torus
 /// itself. Each side draws its ring, what its physics collides with, and its contact points.
 @MainActor
-func renderComparison(_ recorder: Recorder) async throws {
-    // In meters
-    let major: Float = 0.15, minor: Float = 0.04, pegHalfWidth: Float = 0.03, pegHeight: Float = 0.5, segments = 12
-    let drops: [(offset: SIMD3<Float>, height: Float, tilt: Float)] = [
+func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
+    // In meters. The peg is tall enough for the rings stacked flat.
+    let major: Float = 0.15, minor: Float = 0.04, pegHalfWidth: Float = 0.03, segments = 12
+    let pegHeight = max(0.5, Float(count) * 2 * minor + 0.15)
+    // Three chosen drops, then more on the same pattern, each 0.3 m above the last
+    let chosen: [(offset: SIMD3<Float>, height: Float, tilt: Float)] = [
         ([0.03, 0, -0.02], 0.8, 0.15), ([-0.04, 0, 0.03], 1.1, -0.2), ([0.02, 0, 0.04], 1.4, 0.1),
     ]
+    let drops = (0..<count).map { i in
+        let drop = chosen[i % 3]
+        let turn = simd_quatf(angle: Float(i / 3) * 2.1, axis: [0, 1, 0])
+        return (offset: turn.act(drop.offset), height: pegHeight + 0.3 + 0.3 * Float(i), tilt: drop.tilt * (i / 3 % 2 == 0 ? 1 : -1))
+    }
     func material(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> PhysicallyBasedMaterial {
         var material = PhysicallyBasedMaterial()
         material.baseColor = .init(tint: .init(red: red, green: green, blue: blue, alpha: 1))
         material.roughness = 0.5
         return material
     }
-    let colors = [material(0.9, 0.35, 0.3), material(0.3, 0.7, 0.45), material(0.35, 0.5, 0.9)]
+    let palette = [material(0.9, 0.35, 0.3), material(0.3, 0.7, 0.45), material(0.35, 0.5, 0.9), material(0.95, 0.75, 0.25),
+                   material(0.65, 0.4, 0.85)]
+    let colors = drops.indices.map { palette[$0 % palette.count] }
     let pegMaterial = material(0.75, 0.72, 0.68)
     let pegShape = ShapeResource.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])
     let pegMesh = MeshResource.generateBox(size: [2 * pegHalfWidth, pegHeight, 2 * pegHalfWidth])
@@ -351,7 +364,7 @@ func renderComparison(_ recorder: Recorder) async throws {
     CMTimebaseSetRate(timebase, rate: 0)
     CMTimebaseSetTime(timebase, time: .zero)
     let left = Entity()
-    left.position = [-0.45, 0, 0]
+    left.position = [-0.6, 0, 0]
     var physics = PhysicsSimulationComponent()
     physics.clock = timebase
     left.components.set(physics)
@@ -378,14 +391,17 @@ func renderComparison(_ recorder: Recorder) async throws {
         ring.position = drop.offset + [0, drop.height, 0]
         ring.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
         ring.components.set(CollisionComponent(shapes: compound, mode: .default, collisionOptions: .fullContactInformation))
-        ring.components.set(PhysicsBodyComponent(shapes: compound, density: 1000))
+        var ringBody = PhysicsBodyComponent(shapes: compound, density: 1000)
+        // RealityKit's best for falling rings: without it, more of them are lost
+        ringBody.isContinuousCollisionDetectionEnabled = true
+        ring.components.set(ringBody)
         left.addChild(ring)
         leftRings.append(ring)
     }
 
     // RealitySDFPhysics, in a root of decimeters, with the contact markers of the demo
     let right = Entity()
-    right.position = [0.45, 0, 0]
+    right.position = [0.6, 0, 0]
     right.scale = SIMD3(repeating: 0.1)
     let simulation = SDFSimulation()
     right.components.set(SDFPhysicsSimulationComponent(simulation: simulation, metersPerUnit: 0.1))
@@ -416,7 +432,7 @@ func renderComparison(_ recorder: Recorder) async throws {
     try await lightWithStudio(renderer)
     let camera = PerspectiveCamera()
     camera.camera.fieldOfViewInDegrees = 40
-    camera.look(at: [0, 0.3, 0], from: [0, 0.9, 1.9], relativeTo: nil)
+    camera.look(at: [0, 0.3 + (pegHeight - 0.5) / 2, 0], from: [0, 1 + (pegHeight - 0.5), 2.3 + 1.5 * (pegHeight - 0.5)], relativeTo: nil)
     renderer.entities.append(contentsOf: [left, right, DemoStage.makeFloor(), DemoStage.makeLight(), camera])
     renderer.activeCamera = camera
     renderer.cameraSettings.colorBackground = .color(CGColor(red: 0.62, green: 0.70, blue: 0.80, alpha: 1))
@@ -439,7 +455,7 @@ func renderComparison(_ recorder: Recorder) async throws {
     }
 
     let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
-    for frame in 1...Int(6 * Double(framesPerSecond)) {
+    for frame in 1...Int((6 + 0.3 * Double(count - 3)) * Double(framesPerSecond)) {
         realityKitContacts = []
         CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(frame), timescale: framesPerSecond))
         try await recorder.render(renderer, deltaTime: timeStep)
@@ -454,15 +470,15 @@ func renderComparison(_ recorder: Recorder) async throws {
             if index < realityKitContacts.count { dot.position = realityKitContacts[index] }
         }
         try await recorder.append(lines: [
-            "Ring toss: three rings dropped over a peg, same sizes, drops and simulated time",
-            "left   RealityKit physics: each ring collides as the 12 capsules drawn over it (a compound built by hand)",
+            "Ring toss: \(count) rings dropped over a peg, same sizes, drops and simulated time",
+            "left   RealityKit physics: each ring collides as the 12 capsules drawn over it (a compound built by hand), with CCD",
             "right  RealitySDFPhysics: the torus itself",
             "contacts  RealityKit ● \(realityKitContacts.count) · RealitySDFPhysics ● \(simulation.contacts().count)",
-            "rings around the peg  RealityKit \(ringsOnPeg(leftRings, in: left))/3 · RealitySDFPhysics \(ringsOnPeg(rightRings, in: right))/3",
+            "rings around the peg  RealityKit \(ringsOnPeg(leftRings, in: left))/\(count) · RealitySDFPhysics \(ringsOnPeg(rightRings, in: right))/\(count)",
         ])
     }
     withExtendedLifetime((began, updated)) {}
-    print("rings around the peg: RealityKit \(ringsOnPeg(leftRings, in: left))/3, RealitySDFPhysics \(ringsOnPeg(rightRings, in: right))/3")
+    print("rings around the peg: RealityKit \(ringsOnPeg(leftRings, in: left))/\(count), RealitySDFPhysics \(ringsOnPeg(rightRings, in: right))/\(count)")
 }
 
 do {
@@ -477,7 +493,7 @@ do {
         try await renderPhysicsBodies(recorder, shape: .spheres, seconds: 6)
         try await renderDice(recorder)
         try await renderCradle(recorder)
-    case "compare": try await renderComparison(recorder)
+    case "compare": try await renderComparison(recorder, rings: ringCount)
     default: try await renderDemos(recorder)
     }
     let frames = try await recorder.finish()
