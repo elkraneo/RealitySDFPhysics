@@ -322,14 +322,15 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
     // In meters. The peg is tall enough for the rings stacked flat.
     let major: Float = 0.15, minor: Float = 0.04, pegHalfWidth: Float = 0.03, segments = 12
     let pegHeight = max(0.5, Float(count) * 2 * minor + 0.15)
-    // Three chosen drops, then more on the same pattern, each 0.3 m above the last
-    let chosen: [(offset: SIMD3<Float>, height: Float, tilt: Float)] = [
-        ([0.03, 0, -0.02], 0.8, 0.15), ([-0.04, 0, 0.03], 1.1, -0.2), ([0.02, 0, 0.04], 1.4, 0.1),
-    ]
+    // Plastic toss rings of 300 g, one let go every 0.4 s, 30 cm above the peg: three chosen
+    // drops, then more on the same pattern
+    let ringMass: Float = 0.3, releaseInterval = 0.4, dropHeight = pegHeight + 0.3
+    let chosen: [(offset: SIMD3<Float>, tilt: Float)] = [([0.03, 0, -0.02], 0.15), ([-0.04, 0, 0.03], -0.2), ([0.02, 0, 0.04], 0.1)]
     let drops = (0..<count).map { i in
         let drop = chosen[i % 3]
         let turn = simd_quatf(angle: Float(i / 3) * 2.1, axis: [0, 1, 0])
-        return (offset: turn.act(drop.offset), height: pegHeight + 0.3 + 0.3 * Float(i), tilt: drop.tilt * (i / 3 % 2 == 0 ? 1 : -1))
+        return (offset: turn.act(drop.offset), tilt: drop.tilt * (i / 3 % 2 == 0 ? 1 : -1),
+                frame: 1 + Int((Double(i) * releaseInterval * Double(framesPerSecond)).rounded()))
     }
     func material(_ red: CGFloat, _ green: CGFloat, _ blue: CGFloat) -> PhysicallyBasedMaterial {
         var material = PhysicallyBasedMaterial()
@@ -388,14 +389,13 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
             part.transform = Transform(rotation: capsule.rotation, translation: capsule.translation)
             ring.addChild(part)
         }
-        ring.position = drop.offset + [0, drop.height, 0]
+        ring.position = drop.offset + [0, dropHeight, 0]
         ring.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
         ring.components.set(CollisionComponent(shapes: compound, mode: .default, collisionOptions: .fullContactInformation))
-        var ringBody = PhysicsBodyComponent(shapes: compound, density: 1000)
+        var ringBody = PhysicsBodyComponent(shapes: compound, mass: ringMass)
         // RealityKit's best for falling rings: without it, more of them are lost
         ringBody.isContinuousCollisionDetectionEnabled = true
         ring.components.set(ringBody)
-        left.addChild(ring)
         leftRings.append(ring)
     }
 
@@ -421,10 +421,9 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
         // The mesh is the collision shape. In meters, scaled to the root's decimeters.
         let ring = ModelEntity(mesh: torusMesh, materials: [colors[index]])
         ring.scale = SIMD3(repeating: 10)
-        ring.position = 10 * (drop.offset + [0, drop.height, 0])
+        ring.position = 10 * (drop.offset + [0, dropHeight, 0])
         ring.orientation = simd_quatf(angle: drop.tilt, axis: [1, 0, 0])
-        ring.components.set(SDFPhysicsBodyComponent(shape: torus))
-        right.addChild(ring)
+        ring.components.set(SDFPhysicsBodyComponent(shape: torus, massProperties: .init(mass: ringMass)))
         rightRings.append(ring)
     }
 
@@ -460,7 +459,12 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
     }
 
     let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
-    for frame in 1...Int((6 + 0.3 * Double(count - 3)) * Double(framesPerSecond)) {
+    for frame in 1...(drops.last!.frame + 4 * Int(framesPerSecond)) {
+        // Let go of the rings whose time it is, on both sides at once
+        for (index, drop) in drops.enumerated() where drop.frame == frame {
+            left.addChild(leftRings[index])
+            right.addChild(rightRings[index])
+        }
         realityKitContacts = []
         CMTimebaseSetTime(timebase, time: CMTime(value: CMTimeValue(frame), timescale: framesPerSecond))
         try await recorder.render(renderer, deltaTime: timeStep)
@@ -475,7 +479,7 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
             if index < realityKitContacts.count { dot.position = realityKitContacts[index] }
         }
         try await recorder.append(lines: [
-            "Ring toss: \(count) rings dropped over a peg, same sizes, drops and simulated time",
+            "Ring toss: \(count) rings of 300 g dropped over a peg one by one, same sizes, drops and simulated time",
             "left   RealityKit physics: each ring collides as the 12 capsules drawn over it (a compound built by hand), with CCD",
             "right  RealitySDFPhysics: the torus itself",
             "contacts  RealityKit ● \(realityKitContacts.count) · RealitySDFPhysics ● \(simulation.contacts().count)",
