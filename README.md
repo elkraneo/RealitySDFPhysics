@@ -141,6 +141,9 @@ vary by up to about 20% between runs.
   constraints in the form of Box3D's, with the contacts first so pins hold against them.
 - **A hand, not a teleport.** Dragging holds a body with a soft, force-limited pull, so a gear or
   a link pulled into another stops against it rather than passing through.
+- **Smooth at any frame rate.** The simulation steps 60 times a second, and bodies show between
+  their last two steps by how far a frame is into the next (`isInterpolationEnabled`), so they
+  move evenly on 60, 90 and 120 Hz displays, and through frames that come early or late.
 - **Sleeping.** With the default preset, bodies at rest fall asleep and wake when touched, moved or
   pushed (`isSleepingEnabled`).
 - **Baked once.** Shapes baked from meshes can be cached on disk (`SDFShape.cached`), so a scene

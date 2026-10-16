@@ -43,6 +43,14 @@ public struct SDFPhysicsSimulationComponent: Component {
     /// Stops the simulation; bodies keep their velocities. `SDFSimulation.step(root:)` still steps.
     public var isPaused: Bool
 
+    /// Shows dynamic bodies between their last two steps, by the time a frame is into the next
+    /// step, so that they move smoothly whatever the display's rate: at 60 Hz, a frame that comes
+    /// a little early or late would otherwise take no step or two, and at 90 or 120 Hz frames would
+    /// alternate between moving and not. The bodies then show up to a step behind the simulation.
+    /// Handlers of the simulation's events, and `SDFSimulation.step(root:)`, see the simulated poses.
+    /// On by default.
+    public var isInterpolationEnabled = true
+
     /// Speed below which contacts do not bounce, whatever their restitution, so that resting
     /// bodies settle, in units per second. By default 1 m/s.
     public var restitutionThreshold: Float

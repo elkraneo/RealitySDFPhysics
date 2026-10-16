@@ -212,8 +212,11 @@ package final class DiceScene {
                 held.append((other, [10 * cos(angle), 0, 10 * sin(angle)]))
             }
         }
+        // In the die's frame as simulated: the entity may show it a little behind
         let entity = dice[index].entity
-        grab = (entity.convert(position: point, from: root), point)
+        let pose = simulation.transform(of: entity) ?? entity.transform
+        let anchor = pose.rotation.inverse.act(point - pose.translation) / pose.scale
+        grab = (anchor, point)
         holding = simulation.subscribe(to: SDFPhysicsSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
         stopWatchingRoll()
     }
