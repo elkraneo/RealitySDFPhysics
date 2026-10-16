@@ -10,8 +10,9 @@
 // - Invisible walls around the table keep the dice on it, as TabletopKit's table does.
 // - The dice are damped more than the engine's default, standing in for the rolling resistance
 //   that stops real dice within a second or two, which the engine doesn't model yet.
-// - The pointer holds a die by the point it grabbed, with a critically damped spring that carries
-//   its weight, and "Toss all" pulls the other dice into Apple's hexagon around it the same way.
+// - The pointer holds a die by the point it grabbed, with the simulation's drag, a spring solved
+//   with the bodies, which a force carrying the die's weight lets hold it at the pointer. "Toss
+//   all" pulls the other dice into Apple's hexagon around it with critically damped springs.
 //   Released dice keep their velocity, plus a random spin.
 // - When the dice are released, the simulation forecasts the roll: an exact copy of it steps
 //   ahead for a few milliseconds of each step. The engine is deterministic, so the forecast is
@@ -183,9 +184,10 @@ package final class DiceScene {
     private var gravity: SIMD3<Float> { root.components[SDFPhysicsSimulationComponent.self]!.gravity }
     /// The held die, and the others pulled around it with "Toss all"
     @ObservationIgnored private var held: [(index: Int, offset: SIMD3<Float>)] = []
-    /// The grabbed point, in the held die's frame, and where the pointer wants it, in the root's
-    @ObservationIgnored private var grab: (anchor: SIMD3<Float>, target: SIMD3<Float>)?
     @ObservationIgnored private var holding: AnyCancellable?
+    /// A grab, and where the pointer wants it, waiting for a new simulation's first step, which
+    /// adds the die's body
+    @ObservationIgnored private var pendingGrab: (point: SIMD3<Float>, target: SIMD3<Float>)?
     /// The height the dice are held at, in centimeters
     private let holdHeight: Float = 6
 
@@ -212,43 +214,43 @@ package final class DiceScene {
                 held.append((other, [10 * cos(angle), 0, 10 * sin(angle)]))
             }
         }
-        // In the die's frame as simulated: the entity may show it a little behind
-        let entity = dice[index].entity
-        let pose = simulation.transform(of: entity) ?? entity.transform
-        let anchor = pose.rotation.inverse.act(point - pose.translation) / pose.scale
-        grab = (anchor, point)
+        // The spring of the hand: the die follows within about a tenth of a second. A spring
+        // added as a force instead, outside the solver, is unstable on the light D4, which it
+        // spins up from a still hold, and on a D20 held near a corner.
+        simulation.dragOptions = SDFSimulation.DragOptions(hertz: 2.4, dampingRatio: 1, maxSpeed: 200, angularDamping: 5)
+        pendingGrab = simulation.beginDrag(dice[index].entity, at: point) ? nil : (point, point)
         holding = simulation.subscribe(to: SDFPhysicsSimulationEvents.WillSimulate.self) { [unowned self] _ in hold() }
         stopWatchingRoll()
     }
 
     /// Moves the grabbed point's target to a point of the root's frame, for scripted tosses
     package func move(heldTo target: SIMD3<Float>) {
-        grab?.target = target
+        guard !held.isEmpty else { return }
+        if pendingGrab != nil { pendingGrab?.target = target } else { simulation.drag(to: target) }
     }
 
     /// Moves the grabbed point's target under a point of the view, at the hold height
     package func move(to point: CGPoint, in size: CGSize) {
         let ray = camera.ray(through: point, in: size)
         let origin = root.convert(position: ray.origin, from: nil), direction = root.convert(direction: ray.direction, from: nil)
-        guard grab != nil, abs(direction.y) > 1e-6 else { return }
-        grab?.target = origin + direction * ((holdHeight - origin.y) / direction.y)
+        guard abs(direction.y) > 1e-6 else { return }
+        move(heldTo: origin + direction * ((holdHeight - origin.y) / direction.y))
     }
 
-    /// Before every step: pulls the grabbed point towards its target, and the other dice towards
-    /// their places around the held one, with critically damped springs that also carry the dice's
-    /// weight and calm their spin
+    /// Before every step: carries the held die's weight, which the drag pulls by the grabbed point,
+    /// and pulls the other dice towards their places around it, with critically damped springs
+    /// that also carry their weight
     private func hold() {
-        guard let grab, let (index, _) = held.first else { return }
+        guard let (index, _) = held.first else { return }
         let entity = dice[index].entity
-        guard let mass = simulation.mass(of: entity), let motion = entity.components[SDFPhysicsMotionComponent.self] else { return }
-        let frequency: Float = 15 // Radians per second: the die follows within about a tenth of a second
-        let anchor = entity.convert(position: grab.anchor, to: root)
-        let anchorVelocity = motion.linearVelocity + cross(motion.angularVelocity, anchor - entity.position)
-        let pull = frequency * frequency * (grab.target - anchor) - 2 * frequency * anchorVelocity
-        simulation.addForce(mass * pull, at: anchor, to: entity)
+        if let grab = pendingGrab, simulation.beginDrag(entity, at: grab.point) {
+            simulation.drag(to: grab.target)
+            pendingGrab = nil
+        }
+        guard let mass = simulation.mass(of: entity) else { return }
         simulation.addForce(-mass * gravity, to: entity)
-        simulation.addTorque(-mass * 2 * motion.angularVelocity, to: entity)
 
+        let frequency: Float = 15 // Radians per second, as the drag's 2.4 Hz
         let center = entity.position
         for (other, offset) in held.dropFirst() {
             let entity = dice[other].entity
@@ -262,7 +264,8 @@ package final class DiceScene {
     package func toss(maxScore: Bool) {
         guard !held.isEmpty else { return }
         holding = nil
-        grab = nil
+        pendingGrab = nil
+        simulation.endDrag()
         for (index, _) in held {
             let entity = dice[index].entity
             var motion = entity.components[SDFPhysicsMotionComponent.self] ?? SDFPhysicsMotionComponent()
@@ -334,7 +337,8 @@ package final class DiceScene {
     package func reset() {
         held = []
         holding = nil
-        grab = nil
+        pendingGrab = nil
+        simulation.endDrag()
         stopWatchingRoll()
         for (index, die) in dice.enumerated() {
             die.entity.transform = Transform(scale: SIMD3(repeating: 100), translation: [-15 + 6 * Float(index + 1), 1.5, 0])
