@@ -26,15 +26,15 @@ let width = 1280, height = 720, framesPerSecond: Int32 = 60
 let paperCredit = "Giles & Andrews, Real-Time Collision Handling for SDFs via Caching and Importance Sampling (PG 2026)"
 
 let arguments = CommandLine.arguments.dropFirst()
-let ringCount = arguments.count == 3 && arguments.dropFirst().first == "compare" ? Int(arguments.last!) : 3
-guard let output = arguments.first, arguments.count <= 2 || ringCount != nil,
-      ["demos", "spheres", "tori", "dice", "cradle", "samples", "compare"].contains(arguments.dropFirst().first ?? "demos"),
+let reel = arguments.dropFirst().first ?? "demos"
+// Only `compare` takes a third argument, its number of rings
+let ringCount = arguments.count <= 2 ? 3 : arguments.count == 3 && reel == "compare" ? Int(arguments.last!) : nil
+guard let output = arguments.first, ["demos", "spheres", "tori", "dice", "cradle", "samples", "compare"].contains(reel),
       let ringCount, (1...20).contains(ringCount)
 else {
     print("usage: sdf-video <output.mp4> [demos | spheres | tori | dice | cradle | samples | compare [rings, 3 by default]]")
     exit(1)
 }
-let reel = arguments.dropFirst().first ?? "demos"
 
 /// Writes rendered frames, with a HUD, to an H.264 MP4
 @MainActor
@@ -445,12 +445,17 @@ func renderComparison(_ recorder: Recorder, rings count: Int) async throws {
     let dotMesh = MeshResource.generateSphere(radius: 0.006)
     let dotMaterial = UnlitMaterial(color: .init(red: 1, green: 0.85, blue: 0.1, alpha: 1))
 
-    /// Rings with the peg through their hole, below its top
+    /// Rings with the peg through their hole, below its top: the peg's axis crosses the ring's
+    /// plane inside the hole
     func ringsOnPeg(_ rings: [Entity], in side: Entity) -> Int {
         rings.filter { ring in
             // In meters: the right side's root is scaled to decimeters
-            let position = ring.position(relativeTo: nil) - side.position(relativeTo: nil)
-            return simd_length(SIMD2(position.x, position.z)) < major - minor && position.y < pegHeight
+            let center = ring.position(relativeTo: nil) - side.position(relativeTo: nil)
+            let axis = ring.orientation(relativeTo: nil).act([0, 1, 0])
+            guard abs(axis.y) > 1e-3 else { return false }
+            let height: Float = center.y + (axis.x * center.x + axis.z * center.z) / axis.y
+            let hole: Float = major - minor
+            return simd_length(SIMD3<Float>(0, height, 0) - center) < hole && (0..<pegHeight).contains(height)
         }.count
     }
 
