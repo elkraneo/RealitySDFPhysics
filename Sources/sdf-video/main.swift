@@ -1,12 +1,13 @@
 // Renders short videos of the demo scenes and the RealityKit samples offscreen, with a HUD stating
 // what runs.
 //
-//   swift run -c release sdf-video <output.mp4> [demos | tori | dice | compare]
+//   swift run -c release sdf-video <output.mp4> [demos | tori | dice | cradle | samples | compare]
 //
 // Every frame is one simulation step at 60 Hz, so the videos play in real time. `demos` is a reel
-// of the paper's scenes; `tori` and `dice` drive the samples' scenes as the app does, with the
-// RealityKit systems stepping the simulation and a scripted toss. `compare` drops the same rings over
-// a peg with RealityKit's physics, each ring a compound of capsules, and with SDF bodies.
+// of the paper's scenes; `tori`, `dice` and `cradle` drive the samples' scenes as the app does, with
+// the RealityKit systems stepping the simulation, a scripted toss and lifted balls. `samples` is
+// the three in a row. `compare` drops the same rings over a peg with RealityKit's physics, each
+// ring a compound of capsules, and with SDF bodies.
 
 import AppKit
 import AVFoundation
@@ -22,9 +23,9 @@ let width = 1280, height = 720, framesPerSecond: Int32 = 60
 let paperCredit = "Giles & Andrews, Real-Time Collision Handling for SDFs via Caching and Importance Sampling (PG 2026)"
 
 let arguments = CommandLine.arguments.dropFirst()
-guard let output = arguments.first, arguments.count <= 2, ["demos", "tori", "dice", "compare"].contains(arguments.dropFirst().first ?? "demos")
+guard let output = arguments.first, arguments.count <= 2, ["demos", "tori", "dice", "cradle", "samples", "compare"].contains(arguments.dropFirst().first ?? "demos")
 else {
-    print("usage: sdf-video <output.mp4> [demos | tori | dice | compare]")
+    print("usage: sdf-video <output.mp4> [demos | tori | dice | cradle | samples | compare]")
     exit(1)
 }
 let reel = arguments.dropFirst().first ?? "demos"
@@ -160,14 +161,14 @@ func makeRenderer(for content: Entity) throws -> RealityRenderer {
 
 /// Apple's physics bodies sample with concave tori, which appear one at a time and clump
 @MainActor
-func renderTori(_ recorder: Recorder) async throws {
+func renderTori(_ recorder: Recorder, seconds: Double = 9) async throws {
     AttractionComponent.registerComponent()
     AttractionSystem.registerSystem()
     let scene = PhysicsBodiesScene()
     scene.reset(shape: .tori)
     let renderer = try makeRenderer(for: scene.content)
     let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
-    for _ in 0..<Int(9 * Double(framesPerSecond)) {
+    for _ in 0..<Int(seconds * Double(framesPerSecond)) {
         try await recorder.render(renderer, deltaTime: timeStep)
         let stats = scene.simulation.statistics
         try await recorder.append(lines: [
@@ -211,6 +212,55 @@ func renderDice(_ recorder: Recorder) async throws {
         }
         try await recorder.append(lines: lines, credit: "Dice models from Apple's sample · deterministic forecast with SDFSimulation.forecast()")
     }
+}
+
+/// Apple's Newton's cradle: one ball let go, then two, each coming out as as many on the far side
+@MainActor
+func renderCradle(_ recorder: Recorder) async throws {
+    let scene = PendulumScene()
+    scene.reset(pendulumCount: 5)
+    let renderer = try makeRenderer(for: scene.content)
+    // The chrome balls reflect a studio: offscreen there is no environment, and they would be black
+    let studio = Entity()
+    studio.components.set(ImageBasedLightComponent(source: .single(try await EnvironmentResource(equirectangular: makeStudio())),
+                                                   intensityExponent: 0.5))
+    scene.content.addChild(studio)
+    let timeStep = TimeInterval(SDFPhysicsSimulationComponent().timeStep)
+    for (count, seconds) in [(1, 4.5), (2, 4.5)] {
+        scene.lift(count)
+        var models: [Entity] = [scene.content]
+        while let entity = models.popLast() {
+            if entity.components.has(ModelComponent.self) {
+                entity.components.set(ImageBasedLightReceiverComponent(imageBasedLight: studio))
+            }
+            models += entity.children
+        }
+        for _ in 0..<Int(seconds * Double(framesPerSecond)) {
+            try await recorder.render(renderer, deltaTime: timeStep)
+            try await recorder.append(lines: [
+                "Apple's \"Simulating physics joints\", ported to RealitySDFPhysics",
+                "Newton's cradle on revolute joints: \(count == 1 ? "one ball in, one ball out" : "two balls in, two balls out")",
+                "RealityKit's physics, in Apple's sample: one ball in sends four out",
+            ], credit: "Apple's sample settings, sizes and joints · bounces resolved pair by pair (Guendelman, Bridson & Fedkiw 2003)")
+        }
+    }
+}
+
+/// An equirectangular studio: a light ceiling with a bright strip, a dark floor
+func makeStudio() -> CGImage {
+    let width = 512, height = 256
+    let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                            space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+    let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!, colors: [
+        CGColor(gray: 0.12, alpha: 1), CGColor(gray: 0.3, alpha: 1), CGColor(gray: 0.85, alpha: 1), CGColor(gray: 0.6, alpha: 1),
+    ] as CFArray, locations: [0, 0.48, 0.52, 1])!
+    // Bitmap coordinates start at the bottom: the floor, then the horizon, then the ceiling
+    context.drawLinearGradient(gradient, start: .zero, end: CGPoint(x: 0, y: height), options: [])
+    context.setFillColor(CGColor(gray: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: height * 3 / 4, width: width, height: 14))
+    context.fill(CGRect(x: width / 3, y: height / 2 + 10, width: width / 6, height: height / 3))
+    return context.makeImage()!
 }
 
 /// A ring toss: three tori dropped over a peg. Left, RealityKit's physics, with each ring as the best
@@ -372,6 +422,11 @@ do {
     switch reel {
     case "tori": try await renderTori(recorder)
     case "dice": try await renderDice(recorder)
+    case "cradle": try await renderCradle(recorder)
+    case "samples":
+        try await renderTori(recorder, seconds: 6)
+        try await renderDice(recorder)
+        try await renderCradle(recorder)
     case "compare": try await renderComparison(recorder)
     default: try await renderDemos(recorder)
     }
