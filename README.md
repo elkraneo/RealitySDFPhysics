@@ -13,20 +13,22 @@ This package replaces it for the entities you choose, with an API that mirrors R
 components. The paper's collision detection is vendored unmodified behind a C interface (see
 [UPSTREAM.md](UPSTREAM.md)), so your project does not need C++ interoperability.
 
-## When to use it
+## What it's good for
 
-This is a specialist: contact between concave and interlocking shapes as they are, without
-cutting them into convex pieces, which RealityKit's physics can't do for moving bodies. Gears that mesh by their teeth, rings on a peg, dice, hooks,
-chains on sprockets, scanned or baked meshes without a convex decomposition, and rolls forecast
-exactly before they happen.
+Contact between shapes as they are, concave and interlocking, without cutting them into convex
+pieces, which RealityKit's physics can't do for moving bodies:
 
-For everything else there are better tools:
+- **Parts that fit into each other:** gears that mesh by their teeth, rings on a peg, hooks,
+  chains on sprockets.
+- **Shapes without a convex decomposition:** scanned or baked meshes, used as they are.
+- **Dice:** rolls on the dice's real shape, forecast exactly before they happen.
 
-- **RealityKit's physics** is the default: built in, fast and tied into Reality Composer Pro.
-- **[RealityBox3D](https://github.com/elkraneo/RealityBox3D)** (Erin Catto's Box3D) for convex
-  and compound bodies when you need control over the engine, ragdolls, vehicles, character
-  controllers, or tall stacks.
-- **RealitySDFPhysics** for concave and interlocking shapes.
+What the other engines are good for:
+
+- **RealityKit's physics:** built in, fast and tied into Reality Composer Pro.
+- **[RealityBox3D](https://github.com/elkraneo/RealityBox3D)** (Erin Catto's Box3D): convex and
+  compound bodies with control over the engine, ragdolls, vehicles, character controllers, and
+  tall stacks.
 
 Tall stacks of boxes show the difference. Towers of 1 m boxes, 10 s at 60 Hz, on an Apple M1
 (October 2026, with a stacking scene outside this repository). Times are the engines' own steps,
@@ -211,7 +213,7 @@ vary by up to about 20% between runs.
   floors and tables a scene already has. RealityBox3D's bodies and these don't push each other
   either.
 - **Tall stacks.** Towers of more than a few boxes topple with the default preset, and towers of
-  40 with the paper's (see [When to use it](#when-to-use-it)). In traces of a buckling tower, the
+  40 with the paper's (see [What it's good for](#what-its-good-for)). In traces of a buckling tower, the
   contact points between two boxes bunched on one side of the face, and we think the column buckles
   where its support is one sided. Two solver experiments made towers of 20 stand, but at a cost we didn't
   accept: soft contacts made piles of tori settle slower and overlap deeper, and shock propagation

@@ -22,9 +22,9 @@ The rest is this package's: a solver that started as the reference's, with techn
 Catto's Box2D v3 and Box3D (soft joints, graph coloring to solve contacts on several threads),
 bounces taken pair by pair as in Guendelman, Bridson and Fedkiw (2003), and the RealityKit API.
 
-Use it where shapes are concave or interlock: gears, rings, dice, hooks, chains, baked meshes. For
-convex bodies, RealityKit's physics is the default, and
-[RealityBox3D](https://github.com/elkraneo/RealityBox3D) suits tall stacks, ragdolls and vehicles;
+It's good for shapes that are concave or interlock: gears, rings, dice, hooks, chains, baked
+meshes. RealityKit's physics is good for convex bodies with the least setup, and
+[RealityBox3D](https://github.com/elkraneo/RealityBox3D) for tall stacks, ragdolls and vehicles;
 towers of more than a few boxes topple here (see <doc:Performance>).
 
 The API mirrors RealityKit's physics components, so code that uses `PhysicsBodyComponent` moves
