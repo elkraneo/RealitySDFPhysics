@@ -13,6 +13,57 @@ This package replaces it for the entities you choose, with an API that mirrors R
 components. The paper's collision detection is vendored unmodified behind a C interface (see
 [UPSTREAM.md](UPSTREAM.md)), so your project does not need C++ interoperability.
 
+## What it's good for
+
+Contact between shapes as they are, concave and interlocking, without cutting them into convex
+pieces, which RealityKit's physics can't do for moving bodies:
+
+- **Parts that fit into each other:** gears that mesh by their teeth, rings on a peg, hooks,
+  chains on sprockets.
+- **Shapes without a convex decomposition:** scanned or baked meshes, used as they are.
+- **Dice:** rolls on the dice's real shape, forecast exactly before they happen.
+
+What the other engines are good for:
+
+- **RealityKit's physics:** built in, fast and tied into Reality Composer Pro.
+- **[RealityBox3D](https://github.com/elkraneo/RealityBox3D)** (Erin Catto's Box3D): convex and
+  compound bodies with control over the engine, ragdolls, vehicles, character controllers, and
+  tall stacks.
+
+Tall stacks of boxes show the difference. Towers of 1 m boxes, 10 s at 60 Hz, on an Apple M1
+(October 2026, with a stacking scene outside this repository). Times are the engines' own steps,
+without the synchronization of the entities:
+
+| | Tower of 10 | Tower of 20 | Tower of 40 | Pyramid of 820 boxes |
+| --- | --- | --- | --- | --- |
+| RealitySDFPhysics, `.realTime` | falls | falls | falls | 710 fall |
+| RealitySDFPhysics, `.paper` | stands | stands | falls | stands, 29 ms a step |
+| RealityKit's physics | stands | stands | falls | stands, 0.8 ms |
+| Box3D | stands | stands | stands (80 too) | stands, 0.8 ms on one thread |
+
+The engines run side by side in one scene, each stepping its own entities, so a scene can use
+each where it is best (see [Known gaps](#known-gaps) for what they don't share).
+
+## What comes from where
+
+- **The paper** (Giles and Andrews, and their reference implementation, vendored unmodified in
+  `Sources/SDFCore/upstream/`): the collision detection, which is the core of the package: the
+  signed distance shapes and the voxel baking of meshes, the contact search of Algorithm 1 with
+  its cached and importance-sampled points, and the contact manifolds. Our solver also started as
+  the reference's (sequential impulses, with split impulses for the overlap, and its friction),
+  and with every option at its default it still takes the same steps (`SolverReferenceTests`).
+- **Box2D v3 and Box3D** (Erin Catto): techniques in our solver, not code. The soft step
+  that joints and the drag are solved with, the forms of the revolute and prismatic joints and of
+  the motor joint the drag follows, the graph coloring that solves contacts on several threads,
+  and restitution by a threshold.
+- **Guendelman, Bridson and Fedkiw (2003)**: bounces taken pair by pair before the contacts are
+  solved together, for a Newton's cradle that behaves as one.
+- **Ours**: the RealityKit API and its synchronization, the per body options (separate static
+  and dynamic friction, restitution, damping, locks, filters, triggers, forces), joints with limits, motors and springs,
+  determinism on several threads and `forecast()`, sleeping, interpolation between steps, reading
+  RealityKit meshes and the disk cache of baked shapes, the broad phase's sphere test, and
+  RealityKit colliders as SDF bodies.
+
 ## Usage
 
 ```swift
@@ -159,7 +210,15 @@ vary by up to about 20% between runs.
 - **Not RealityKit physics.** SDF bodies and `PhysicsBodyComponent` bodies don't push each other;
   give a moving entity one or the other. `entity.addSDFColliders()` gives an entity's RealityKit
   collision shapes to the SDF simulation as static or kinematic bodies, so SDF bodies land on the
-  floors and tables a scene already has.
+  floors and tables a scene already has. RealityBox3D's bodies and these don't push each other
+  either.
+- **Tall stacks.** Towers of more than a few boxes topple with the default preset, and towers of
+  40 with the paper's (see [What it's good for](#what-its-good-for)). In traces of a buckling tower, the
+  contact points between two boxes bunched on one side of the face, and we think the column buckles
+  where its support is one sided. Two solver experiments made towers of 20 stand, but at a cost we didn't
+  accept: soft contacts made piles of tori settle slower and overlap deeper, and shock propagation
+  either kept the towers awake and drifting or made the piles overlap deeper. Use RealityBox3D for
+  stacks.
 - **Discrete.** Collisions are detected at each substep, so very fast thin bodies can tunnel.
 - **Not yet available:** continuous collision detection, shape sweeps, spherical and fixed joints.
 
@@ -168,9 +227,7 @@ vary by up to about 20% between runs.
 [RealityBox3D](https://github.com/elkraneo/RealityBox3D) wraps Erin Catto's Box3D with the same
 conventions: types named as RealityKit's with the engine's prefix (`B3PhysicsBodyComponent`,
 `SDFPhysicsBodyComponent`), one entity accessor (`entity.b3`, `entity.sdf`), the same samples and
-articles. Pick it for convex and compound bodies, ragdolls, vehicles and character controllers;
-pick this one for exact contact between concave shapes. Both run side by side in one RealityKit
-scene, each stepping its own entities.
+articles. Both run side by side in one RealityKit scene, each stepping its own entities.
 
 ## License
 

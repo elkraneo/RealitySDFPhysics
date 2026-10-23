@@ -65,5 +65,9 @@ cheap to begin with.
 - **Scalar solver.** The contact solver takes one contact at a time; with many contacts, it stays
   a large part of a multithreaded step. On an M1, 400 tori take about 2.5 ms a step for the solver,
   against 6 ms on one thread.
-- **No joints yet.**
+- **Tall stacks.** With the default preset, a tower of 10 boxes topples within 10 s; with
+  ``SDFPhysicsSimulationComponent/Preset/paper``, a tower of 20 stands and one of 40 topples. In
+  traces of a buckling tower, the contact points between two boxes bunched on one side of the
+  face, which likely leaves the column a one sided support. RealityKit's physics stacks as high as the paper preset for a
+  fraction of the cost, and Box3D higher.
 - **Uniform scale.** A body's entity can be scaled, but uniformly.
