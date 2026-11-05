@@ -20,11 +20,10 @@ The geometry then encloses the intended volume, yet the winding-based voxel inte
 positive distance where negative distance was expected. More random overlap samples cannot
 repair the field's input orientation.
 
-The placement reproduction contained six such slabs. Correcting their cap winding restored all
-six overlap queries at both 64 and 128 cells. A local full-building fixture also verified all 57
-wall-centre overlaps at both resolutions and negative known-interior samples at 128 cells. The
-fixture is not shipped in this library; optional local verification uses `SDF_PLACEMENT_FIXTURE`.
-The regular regression tests contain only six wall shapes rebased to local centroids.
+In a placement reproduction with six such slabs, correcting their cap winding restored all six
+overlap queries at both 64 and 128 cells. The regression tests contain those six wall shapes,
+rebased to local centroids. `SDFPlacementOverlapTests` can also check walls from a mesh file of
+your own, named by the `SDF_PLACEMENT_FIXTURE` environment variable; no such file ships here.
 
 These checks are necessary, not a signed-distance accuracy certificate. They do not detect
 self-intersections, establish the intended material/void orientation of disconnected or nested

@@ -20,17 +20,15 @@ number of results. Timing is observational, never a pass/fail threshold.
 Run:
 
 ```sh
-SDF_QUERY_BENCHMARK=1 swift test -c release \
-  --scratch-path /Volumes/Faulty/Phoebe-scratch/build-sdf-query-perf \
-  --filter SDFQueryPerformanceTests
+SDF_QUERY_BENCHMARK=1 swift test -c release --filter SDFQueryPerformanceTests
 ```
 
 The benchmark is disabled by default. Two functional query tests run normally.
 
 ## Observed medians, microseconds per query
 
-The table uses the second post-change run (`/private/tmp/sdf-query-after-repeat.log`). A preceding
-post-change run showed the same main result (57-body nearest ray 71.37 to 5.70 microseconds).
+The table is from the second of two runs after the change. The first showed the same main result
+(57-body nearest ray 71.37 to 5.70 microseconds).
 Concurrent development/build activity and machine state can affect these measurements.
 
 | Bodies | Query | Legacy wrapper | Modified wrapper |
@@ -67,7 +65,7 @@ expensive sampled casts or establish that an interactive drag is fast.
   The functional tests cover that distinction, masks selecting either group, unmatched/empty
   masks, hit ordering, positions/normals/separation, and empty/growing/shrinking worlds.
 
-The existing app trace `placement-before-broadphase.trace` did not capture a useful drag stack.
-It is not evidence of a before/after drag improvement. No phone profiling or continuous-collision
+No app-level profile of a drag was captured, so this is not evidence of a before/after drag
+improvement. No phone profiling or continuous-collision
 accuracy result is inferred from this microbenchmark. Additional native overlap/cast work must be
 measured separately with its own correctness fixtures.
