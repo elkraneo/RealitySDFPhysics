@@ -6,11 +6,16 @@ extension SDFSimulation {
     public struct SampledShapeCastHit {
         /// Fraction of the requested motion, in 0...1. This is not an exact time of impact.
         public let fraction: Float
+        /// The sampled pose that overlapped, in the simulation root's frame: the start for an
+        /// initial overlap, exactly the destination for fraction 1, otherwise an interpolation.
         public let transform: Transform
+        /// The overlaps at that pose, as `overlaps(of:at:margin:mask:)` returns them, without
+        /// excluded entities and with separation at most the margin. Never empty.
         public let contacts: [Overlap]
         /// The preceding sampled fraction, or nil for an initial overlap. A clear sample does not
         /// prove the intervening path was clear.
         public let previousSampleFraction: Float?
+        /// Poses queried, including the hit pose. At most `maxSamples`.
         public let sampleCount: Int
     }
 
@@ -22,11 +27,18 @@ extension SDFSimulation {
         case incomplete(lastSampleFraction: Float, sampleCount: Int)
     }
 
+    /// Invalid arguments of `sampledShapeCast`. Nothing is queried when one is thrown.
     public enum SampledShapeCastError: Error, Equatable {
+        /// `maxTranslationStep` or `maxRotationStep` is not finite and positive.
         case invalidStep
+        /// `maxSamples` is less than one.
         case invalidSampleBudget
+        /// `margin` is not finite and nonnegative.
         case invalidMargin
+        /// A pose has a nonfinite translation, scale or rotation, a zero-length rotation, or the
+        /// distance between the two translations overflows.
         case invalidTransform
+        /// The scale is not positive and uniform, or differs between the start and the end.
         case unsupportedScale
     }
 
@@ -37,6 +49,14 @@ extension SDFSimulation {
     /// and this inherits the overlap query's approximate SDF geometry and contact search. In
     /// particular, `.noHitInSamples` is not a no-tunnelling guarantee. Rotation samples are bounded in
     /// radians, not in linear corner travel: choose a smaller angle for larger shapes.
+    ///
+    /// The motion is divided into equal intervals, as many as the larger of translation distance /
+    /// `maxTranslationStep` and rotation angle / `maxRotationStep` (rounded up, at least one for
+    /// any change), and each interval's end is queried in turn, stopping at the first contact.
+    /// The default budget of 512 samples (511 intervals) at 1 cm per step therefore reaches the
+    /// destination of a translation of at most about 5.1 m; a longer one returns `.incomplete`.
+    /// Raise `maxSamples` or `maxTranslationStep` for long motions; each sample costs one overlap
+    /// query.
     ///
     /// The initial and destination poses are included if the budget permits. Scale must be
     /// positive, uniform and unchanged. The mask selects target body groups (as with `overlaps`);

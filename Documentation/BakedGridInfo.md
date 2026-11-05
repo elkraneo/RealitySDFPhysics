@@ -1,8 +1,9 @@
 # Baked grid diagnostics
 
-`SDFShape.bakedGridInfo` reports the actual voxel sample dimensions, spacing and live sample
-payload of a baked shape. Analytical shapes return `nil`. The getter reads existing immutable
-metadata; it does not serialize or copy the grid. Loading `bakedData()` preserves the information.
+`SDFShape.bakedGridInfo` reports the actual voxel sample dimensions, spacing, live sample
+payload and interior sample count of a baked shape. Analytical shapes return `nil`. The getter
+reads existing immutable metadata and counts interior samples in one pass over the grid; it does
+not serialize or copy the grid. Loading `bakedData()` preserves the information.
 The C facade exposes the same values through `sdf_shape_baked_grid_info`.
 
 ```swift
@@ -11,6 +12,7 @@ if let info = shape.bakedGridInfo {
     print(info.cellSize)         // Original shape-local units, normalization undone
     print(info.sampleCount)
     print(info.gridPayloadBytes)
+    print(info.interiorSampleCount) // Zero: no sample is inside, queries cannot see penetration
 }
 ```
 
@@ -25,9 +27,9 @@ padding = 3
 ```
 
 Thus `resolution³` is not the sample count. Short axes have fewer samples; every axis also includes
-boundary/padding samples. An earlier cube-per-shape memory estimate for the placement experiment
-was incorrect. The live grid dimensions, rather than that estimate, should guide its resolution
-and storage evaluation. No vendored engine or serialization format changes were made for this API.
+boundary/padding samples, so a cube-per-shape memory estimate overstates thin shapes. Use the live
+grid dimensions to evaluate resolution and storage. No vendored engine or serialization format
+changes were made for this API.
 
 For a 10 × 2 × 0.2 unit box at resolution 64, the metadata test reports:
 
@@ -38,8 +40,7 @@ For a 10 × 2 × 0.2 unit box at resolution 64, the metadata test reports:
 | Local cell size | 0.15625 units |
 | Live sample payload | 204,480 bytes (about 0.195 MiB) |
 
-The corresponding 10 × 10 × 10 cube has 71³ samples and a 5,726,576 byte payload. This example
-is not a measurement of the game's building fixture. Rotating a mesh can change its axis-aligned
+The corresponding 10 × 10 × 10 cube has 71³ samples and a 5,726,576 byte payload. Rotating a mesh can change its axis-aligned
 bounds and therefore its grid dimensions even if its geometry has the same volume.
 
 ## Coordinate units and memory limits
@@ -48,7 +49,9 @@ bounds and therefore its grid dimensions even if its geometry has the same volum
 know a body's entity transform. For simulation-root units, multiply by the body's uniform scale;
 for physical meters multiply that result by the simulation's meters-per-unit. A rendered RealityKit
 world transform is a separate coordinate conversion. Grid spacing is not a collision-error bound,
-contact margin, or guarantee that every thin feature is resolved.
+contact margin, or guarantee that every thin feature is resolved: a part needs a grid node inside
+it, and `interiorSampleCount` counts samples deeper than a thousandth of a cell inside the surface
+(see [NodeWinding.md](NodeWinding.md) for the resolution rule).
 
 `gridPayloadBytes` is `grid.size() * sizeof(float4)`, covering the live distance/gradient samples.
 It **excludes** spare vector capacity, retained meshes and indices, curvature seeds, solver bodies,

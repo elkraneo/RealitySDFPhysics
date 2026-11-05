@@ -96,6 +96,19 @@ import simd
         #expect(fraction > 0 && fraction < 0.03)
     }
 
+    /// 512 samples at the default 1 cm step cover about 5.1 m; a 6 m drag must not report clear.
+    @Test func theDefaultBudgetEndsShortOfALongDrag() throws {
+        obstacle(.box(halfExtents: [0.5, 0.5, 0.5]), at: [50, 0, 0])
+        simulation.step(root: root)
+        let short = try simulation.sampledShapeCast(of: .sphere(radius: 0.1), from: Transform(), to: Transform(translation: [5, 0, 0]))
+        guard case let .noHitInSamples(count) = short else { Issue.record("Expected 5 m to fit, got \(short)"); return }
+        #expect(count > 500 && count <= 512)
+        let long = try simulation.sampledShapeCast(of: .sphere(radius: 0.1), from: Transform(), to: Transform(translation: [6, 0, 0]))
+        guard case let .incomplete(fraction, samples) = long else { Issue.record("Expected incomplete, got \(long)"); return }
+        #expect(samples == 512)
+        #expect(fraction > 0.8 && fraction < 0.9)
+    }
+
     @Test func destinationIsCheckedAndZeroMotionUsesOneSample() throws {
         simulation.step(root: root)
         let shape = SDFShape.sphere(radius: 0.2)

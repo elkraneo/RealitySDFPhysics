@@ -3,11 +3,20 @@ import simd
 /// Topological checks on the triangle mesh before voxel baking. These do not establish that the
 /// resolution captures every thin feature, or that a consistently oriented mesh is self-intersection free.
 public struct SDFMeshValidation: Sendable, Equatable {
+    /// Distinct vertices after welding positions closer than the baker's quantization cell
+    /// (1e-5 of the longest bounding-box side). Zero when `hasFiniteNonzeroExtent` is false.
     public let weldedVertexCount: Int
+    /// Complete index triples, `indices.count / 3`, including invalid and degenerate triangles.
     public let triangleCount: Int
+    /// Positions with an infinite or NaN coordinate. Any of them makes the mesh invalid.
     public let nonFiniteVertexCount: Int
+    /// True when every position is finite and the bounding box has a nonzero, finite longest side,
+    /// so the baker can normalize the mesh. When false, no welding or edge checks were done.
     public let hasFiniteNonzeroExtent: Bool
+    /// Indices that are not less than `positions.count`. Their triangles are left out of the edge
+    /// checks, and any of them makes the mesh invalid.
     public let invalidIndexCount: Int
+    /// Trailing indices that do not make a whole triangle (`indices.count % 3`), from 0 to 2.
     public let incompleteTriangleIndexCount: Int
     /// Triangles with two welded corners in one place, or with no area relative to the mesh's
     /// extent (squared normalized cross product at most 1e-20). They are reported here and left
@@ -15,8 +24,12 @@ public struct SDFMeshValidation: Sendable, Equatable {
     /// drops triangles whose welded corners coincide, and node winding skips zero-area triangles.
     /// The legacy bake still measures distance to a zero-area triangle with distinct corners.
     public let degenerateTriangleCount: Int
+    /// Welded edges used by exactly one nondegenerate triangle: holes or open borders.
     public let boundaryEdgeCount: Int
+    /// Welded edges used by more than two nondegenerate triangles.
     public let nonManifoldEdgeCount: Int
+    /// Welded edges used by two nondegenerate triangles that traverse it in the same direction,
+    /// so one of the two faces points the wrong way relative to its neighbour.
     public let inconsistentlyOrientedEdgeCount: Int
 
     /// Closed two-manifold connectivity, independent of triangle winding.

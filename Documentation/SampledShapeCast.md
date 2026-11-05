@@ -27,6 +27,8 @@ The start is always checked; zero motion uses one query. The destination is incl
 sample budget permits: any change of pose, however small, is sampled at both ends, and the last
 sample is exactly the requested destination. The rotation angle is measured in double precision,
 so rotations far below a step (or below Float's `acos` resolution) are not mistaken for none. A collision at the start has fraction zero and no preceding sample.
+The default budget, 512 samples at 1 cm, reaches the destination of a translation of
+at most about 5.1 m; longer motions return `.incomplete` unless `maxSamples` or the step is raised.
 Positive uniform scale must stay unchanged. Invalid transforms, steps, margin or budget throw.
 Queries inspect already-synchronized bodies, including triggers; pending RealityKit changes must
 be synchronized through the normal simulation update first. Exclusions filter results, not query
