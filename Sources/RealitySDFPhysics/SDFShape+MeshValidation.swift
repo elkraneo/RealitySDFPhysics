@@ -9,6 +9,11 @@ public struct SDFMeshValidation: Sendable, Equatable {
     public let hasFiniteNonzeroExtent: Bool
     public let invalidIndexCount: Int
     public let incompleteTriangleIndexCount: Int
+    /// Triangles with two welded corners in one place, or with no area relative to the mesh's
+    /// extent (squared normalized cross product at most 1e-20). They are reported here and left
+    /// out of `isClosed` and `isConsistentlyOriented`, as the bakers leave them out: the voxel bake
+    /// drops triangles whose welded corners coincide, and node winding skips zero-area triangles.
+    /// The legacy bake still measures distance to a zero-area triangle with distinct corners.
     public let degenerateTriangleCount: Int
     public let boundaryEdgeCount: Int
     public let nonManifoldEdgeCount: Int
@@ -25,9 +30,11 @@ public struct SDFMeshValidation: Sendable, Equatable {
         validTriangles && nonManifoldEdgeCount == 0 && inconsistentlyOrientedEdgeCount == 0
     }
 
+    /// Degenerate triangles are left out of the closed and oriented checks, as the bakers leave
+    /// them out (see `degenerateTriangleCount`), but at least one triangle must have area.
     private var validTriangles: Bool {
-        triangleCount > 0 && hasFiniteNonzeroExtent && nonFiniteVertexCount == 0 && invalidIndexCount == 0
-            && incompleteTriangleIndexCount == 0 && degenerateTriangleCount == 0
+        triangleCount > degenerateTriangleCount && hasFiniteNonzeroExtent && nonFiniteVertexCount == 0
+            && invalidIndexCount == 0 && incompleteTriangleIndexCount == 0
     }
 }
 

@@ -238,7 +238,7 @@ SDFShape *sdf_shape_bake_node_winding(const float *positions, int32_t vertexCoun
     std::unique_ptr<SDFShape> handle(sdf_shape_bake(positions,vertexCount,indices,indexCount,resolution));
     if (!handle) return nullptr;
     auto *voxel = dynamic_cast<VoxelSdf *>(handle->shape.get());
-    if (!voxel || !voxel->watertight) return nullptr;
+    if (!voxel) return nullptr;
     const Mesh &mesh = voxel->mesh;
     // computeNormals() can split the baked display mesh at hard normal seams. Weld indices
     // again for validation only, without touching the field's triangles or display normals.
@@ -252,23 +252,30 @@ SDFShape *sdf_shape_bake_node_winding(const float *positions, int32_t vertexCoun
         auto result = welded.emplace(key,(int)welded.size());
         remap[i] = result.first->second;
     }
+    // Zero-area triangles are left out of the topology check and the winding sum, as
+    // validateMesh leaves them out: they enclose nothing, and atan2 of their solid angle is
+    // unstable. (The baker already dropped triangles whose welded corners coincide.) Upstream's
+    // isWatertight counts their edges, so it is not required here; this check is stricter.
+    std::vector<int> solid;
     std::map<std::pair<int,int>,std::pair<int,int>> edges;
     for (int t = 0; t < mesh.triangleCount(); t++) {
         if (lengthSq(cross(mesh.vertex(t,1)-mesh.vertex(t,0),mesh.vertex(t,2)-mesh.vertex(t,0))) <= 1e-20f)
-            return nullptr;
+            continue;
+        solid.push_back(t);
         for (int j = 0; j < 3; j++) {
             int from = remap[mesh.indices[3*t+j]], to = remap[mesh.indices[3*t+(j+1)%3]];
             auto &use = edges[{std::min(from,to),std::max(from,to)}];
             use.first++; use.second += from < to ? 1 : -1;
         }
     }
+    if (solid.empty()) return nullptr;
     for (const auto &edge : edges)
         if (edge.second.first != 2 || edge.second.second != 0) return nullptr;
 
     for (int z = 0; z < voxel->nz; z++) for (int y = 0; y < voxel->ny; y++) for (int x = 0; x < voxel->nx; x++) {
         float3 p = voxel->origin + float3{(float)x,(float)y,(float)z}*voxel->cell;
         double angle = 0;
-        for (int t = 0; t < mesh.triangleCount(); t++)
+        for (int t : solid)
             angle += nodeSolidAngle(p,mesh.vertex(t,0),mesh.vertex(t,1),mesh.vertex(t,2));
         bool inside = fabs(angle) > 6.2831853071795864769; // |winding| > 1/2
         float4 &node = voxel->grid[x+voxel->nx*(y+voxel->ny*z)];

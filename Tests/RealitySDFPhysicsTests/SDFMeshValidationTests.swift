@@ -58,6 +58,25 @@ import simd
         #expect(!nonManifold.isConsistentlyOriented)
     }
 
+    /// A zero-area triangle encloses nothing, and the bakers leave it out, so it must not make an
+    /// otherwise closed mesh fail validation. It is still counted.
+    @Test func degenerateTrianglesAreCountedButDoNotOpenAClosedMesh() throws {
+        let mesh = SDFShape.box(halfExtents: [1, 1, 1]).surface
+        // Corners that weld together, and three distinct collinear corners on the top face.
+        let positions = mesh.positions + [[-0.37, 1, 0.13], [0.01, 1, 0.13], [0.41, 1, 0.13]]
+        let n = UInt32(mesh.positions.count)
+        for extra: [UInt32] in [[mesh.indices[0], mesh.indices[0], mesh.indices[1]], [n, n + 1, n + 2]] {
+            let indices = mesh.indices + extra
+            let report = SDFShape.validateMesh(positions: positions, indices: indices)
+            #expect(report.degenerateTriangleCount == 1)
+            #expect(report.isClosed && report.isConsistentlyOriented)
+            // Node winding accepts what validation accepts.
+            let shape = try SDFShape(baking: positions, indices: indices, resolution: 16, signMethod: .nodeWinding)
+            #expect(abs(shape.distance(at: .zero).distance + 1) < 0.05)
+            #expect(shape.distance(at: [0, 1.2, 0]).distance > 0)
+        }
+    }
+
     @Test func malformedInputReturnsDiagnosticsWithoutTrapping() {
         let invalid = SDFShape.validateMesh(positions: positions, indices: [0,1,99,0,1])
         #expect(invalid.invalidIndexCount == 1)

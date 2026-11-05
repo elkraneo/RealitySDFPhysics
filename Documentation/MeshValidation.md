@@ -3,7 +3,10 @@
 `SDFShape.validateMesh(positions:indices:)` checks a triangle mesh without allocating a voxel grid.
 It welds seam vertices using the baker's extent-based quantization and reports invalid indices,
 incomplete triangles, nonfinite coordinates, degenerate triangles, open edges, nonmanifold edges
-and inconsistent traversal of shared edges.
+and inconsistent traversal of shared edges. Degenerate triangles (corners that weld together, or
+no area relative to the mesh's extent) are counted in `degenerateTriangleCount` and left out of
+`isClosed` and `isConsistentlyOriented`, as the bakers leave them out of their topology; node
+winding's topology check accepts exactly the meshes these two checks accept.
 
 A mesh can be closed while some faces point inward. Check both `isClosed` and
 `isConsistentlyOriented` before relying on the signed interior. Existing `isWatertight` describes
