@@ -299,6 +299,12 @@ bool sdf_shape_baked_grid_info(const SDFShape *shape, SDFBakedGridInfo *info)
     info->cellSize = voxel->cell / shape->unitScale;
     info->sampleCount = static_cast<int64_t>(voxel->grid.size());
     info->gridPayloadBytes = static_cast<int64_t>(voxel->grid.size() * sizeof(float4));
+    // Nodes lying on the surface store a distance of rounding size, of either sign
+    int64_t interior = 0;
+    const float depth = -1e-3f * voxel->cell;
+    for (const float4 &node : voxel->grid)
+        interior += node.x < depth;
+    info->interiorSampleCount = interior;
     return true;
 }
 

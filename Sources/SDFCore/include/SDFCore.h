@@ -69,12 +69,15 @@ SDFShape *sdf_shape_from_data(const void *data, int64_t size);
 // Read-only dimensions of a baked voxel grid, including padding. Analytical shapes return false.
 // cellSize is in the caller's original shape units, before an entity's uniform scale.
 // gridPayloadBytes counts live (distance, gradient) samples only, not total shape or process memory.
+// interiorSampleCount counts samples deeper inside than a thousandth of a cell (samples on the
+// surface store rounding-size distances of either sign); zero means the field has no inside, as happens when the thinnest part of the mesh is under about one cell thick.
 typedef struct
 {
     int32_t sampleDimensions[3];
     float cellSize;
     int64_t sampleCount;
     int64_t gridPayloadBytes;
+    int64_t interiorSampleCount;
 } SDFBakedGridInfo;
 bool sdf_shape_baked_grid_info(const SDFShape *shape, SDFBakedGridInfo *info);
 

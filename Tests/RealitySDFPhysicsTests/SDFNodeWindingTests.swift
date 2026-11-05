@@ -23,6 +23,31 @@ import simd
         #expect(simd_normalize(corrected.distance(at: [0,-0.09,0]).gradient).y < -0.99)
     }
 
+    /// Upstream grid nodes lie at the bounds' minimum plus whole cells, so an axis-aligned slab has
+    /// an interior node only when its thickness exceeds the cell. A 0.2 m slab at 64 cells across
+    /// its longest side keeps an interior up to a 12.8 m span and loses it beyond.
+    @Test func thinSlabNeedsAnInteriorNodeAndReportsWhenItHasNone() throws {
+        for (span, expectInterior) in [(Float(12.6), true), (13.0, false), (20.0, false)] {
+            let mesh = box([span/2,0.1,span/3])
+            let shape = try SDFShape(baking: mesh.positions,indices: mesh.indices,resolution: 64,signMethod: .nodeWinding)
+            let grid = try #require(shape.bakedGridInfo)
+            #expect(abs(grid.cellSize - span/64) < 1e-4)
+            #expect((grid.cellSize < 0.2) == expectInterior)
+            #expect((grid.interiorSampleCount > 0) == expectInterior, "span \(span)")
+            #expect((shape.distance(at: .zero).distance < 0) == expectInterior, "span \(span)")
+        }
+        // The documented resolution rule restores an interior for any slab orientation.
+        let mesh = box([10,0.1,20/3])
+        let resolution = try #require(SDFShape.minimumResolution(forThickness: 0.2, longestExtent: 20))
+        #expect(resolution == 200)
+        #expect(SDFShape.minimumResolution(forThickness: 0.2, longestExtent: 0.1) == 8)
+        #expect(SDFShape.minimumResolution(forThickness: 0, longestExtent: 20) == nil)
+        #expect(SDFShape.minimumResolution(forThickness: .nan, longestExtent: 20) == nil)
+        let shape = try SDFShape(baking: mesh.positions,indices: mesh.indices,resolution: resolution,signMethod: .nodeWinding)
+        #expect(try #require(shape.bakedGridInfo).interiorSampleCount > 0)
+        #expect(shape.distance(at: .zero).distance < 0)
+    }
+
     @Test func cubeDistancesAndOutwardGradientsRemainConsistent() throws {
         let mesh = box([1,1,1])
         let shape = try SDFShape(baking: mesh.positions,indices: mesh.indices,resolution: 24,signMethod: .nodeWinding)

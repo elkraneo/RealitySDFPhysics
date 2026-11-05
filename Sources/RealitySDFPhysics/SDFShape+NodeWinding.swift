@@ -21,6 +21,10 @@ extension SDFShape {
     /// Opt-in node sign correction. Cost is proportional to grid nodes times triangles, in
     /// addition to the legacy bake; call off the main actor for large meshes. No mesh repair or
     /// automatic resolution increase is performed. Nested cavities require oppositely wound shells.
+    ///
+    /// Only existing grid nodes are corrected: a part thinner than about one cell has no interior
+    /// node and its field stays positive. Use a resolution of at least
+    /// `minimumResolution(forThickness:longestExtent:)` and check `bakedGridInfo`.
     public convenience init(baking positions: [SIMD3<Float>], indices: [UInt32], resolution: Int = 100,
                             signMethod: BakeSignMethod) throws {
         if signMethod == .legacy {

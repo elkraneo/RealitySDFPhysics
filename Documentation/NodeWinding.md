@@ -19,6 +19,30 @@ apply votes to unjittered nodes. For a 12.4 × 0.2 × 4 m box at 64 cells across
 only interior grid layer can be voted outside. The legacy baked box reports positive distance at
 its centre and at y = ±0.09 m; node winding restores negative distance at those tested points.
 
+## Precondition: the thinnest part must contain a grid node
+
+Node winding only corrects the sign of nodes that exist. The baker scales the mesh so its longest
+bounding-box side spans `resolution` cells (`bakedGridInfo.cellSize` = longest side / resolution,
+in the shape's units) and places nodes at the bounds' minimum plus whole cells. A part with no node
+strictly inside it has no negative sample, and the interpolated field stays positive throughout
+it: overlap queries see a phantom gap.
+
+- An axis-aligned slab has an interior node only when its thickness exceeds one cell. A 0.2 m
+  slab at resolution 64 keeps its interior up to a 12.8 m longest side, and loses it beyond
+  (with 13–20 m sides, distances at the slab centre are positive, up to about +0.036 m).
+- A slab at an arbitrary orientation is only guaranteed an interior node when its thickness is at
+  least √3 cells.
+- So choose **resolution ≥ 2 × longest side / thinnest thickness** (two cells across the
+  thinnest part). `SDFShape.minimumResolution(forThickness:longestExtent:)` computes this.
+
+To detect the failure after baking, compare the known thickness with `bakedGridInfo.cellSize`
+(`thickness >= 2 * cellSize`), and check `bakedGridInfo.interiorSampleCount`: zero means no sample
+of the field is inside, so no query can report penetration. A nonzero count does not prove that
+every thin part kept its interior; only the cell-size comparison covers individual parts. The
+same precondition applies to the legacy bake.
+
+## What it does not guarantee
+
 This is **node sign correction, not an exact continuous signed-distance or collision guarantee**.
 The field still uses trilinear interpolation of a finite grid. Features with no interior grid
 samples can still disappear; corners and finite-grid distances remain approximate. Choose a
