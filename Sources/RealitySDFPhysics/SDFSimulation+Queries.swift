@@ -26,18 +26,38 @@ extension SDFSimulation {
     ///   - mask: The groups of the bodies to test
     public func raycast(origin: SIMD3<Float>, direction: SIMD3<Float>, length: Float = 100,
                         query: CollisionCastQueryType = .all, mask: CollisionGroup = .all) -> [RaycastHit] {
-        // At most one hit per body
-        var buffer = [SDFRayHit](repeating: SDFRayHit(), count: Int(sdf_world_stats(world).bodies))
-        let count = buffer.withUnsafeMutableBufferPointer {
-            sdf_world_raycast(world, [origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z],
-                              length, mask.rawValue, $0.baseAddress, Int32($0.count))
+        guard mask.rawValue != 0 else { return [] }
+        // The native functions write POD results, so no zero-initialized Swift scratch array is needed.
+        let capacity = Int(sdf_world_stats(world).bodies)
+        guard capacity > 0 else { return [] }
+        return withUnsafeTemporaryAllocation(of: SDFRayHit.self, capacity: capacity) { buffer in
+            let count = min(capacity, Int(sdf_world_raycast(
+                world, [origin.x, origin.y, origin.z], [direction.x, direction.y, direction.z],
+                length, mask.rawValue, buffer.baseAddress, Int32(capacity))))
+            if query != .all {
+                // Preserve the API's nearest-hit semantics for both .nearest and .any without
+                // creating entity wrappers for every hit, sorting them, then copying a prefix.
+                var nearest: SDFRayHit?
+                for index in 0..<count {
+                    let hit = buffer[index]
+                    guard entity(of: hit.body) != nil else { continue }
+                    if nearest == nil || hit.distance < nearest!.distance { nearest = hit }
+                }
+                guard let hit = nearest, let entity = entity(of: hit.body) else { return [] }
+                return [RaycastHit(entity: entity, position: SIMD3(hit.position.0, hit.position.1, hit.position.2),
+                                   normal: SIMD3(hit.normal.0, hit.normal.1, hit.normal.2), distance: hit.distance)]
+            }
+            var hits: [RaycastHit] = []
+            hits.reserveCapacity(count)
+            for index in 0..<count {
+                let hit = buffer[index]
+                guard let entity = entity(of: hit.body) else { continue }
+                hits.append(RaycastHit(entity: entity, position: SIMD3(hit.position.0, hit.position.1, hit.position.2),
+                                       normal: SIMD3(hit.normal.0, hit.normal.1, hit.normal.2), distance: hit.distance))
+            }
+            hits.sort { $0.distance < $1.distance }
+            return hits
         }
-        let hits = buffer.prefix(Int(count)).compactMap { hit -> RaycastHit? in
-            guard let entity = entity(of: hit.body) else { return nil }
-            return RaycastHit(entity: entity, position: SIMD3(hit.position.0, hit.position.1, hit.position.2),
-                              normal: SIMD3(hit.normal.0, hit.normal.1, hit.normal.2), distance: hit.distance)
-        }.sorted { $0.distance < $1.distance }
-        return query == .all ? hits : Array(hits.prefix(1))
     }
 
     /// Casts a ray between two points (in the root's frame)
@@ -65,19 +85,24 @@ extension SDFSimulation {
     /// same answer, and it does not change the simulation.
     public func overlaps(of shape: SDFShape, at transform: Transform, margin: Float = 0,
                          mask: CollisionGroup = .all) -> [Overlap] {
+        guard mask.rawValue != 0 else { return [] }
+        let capacity = Int(sdf_world_stats(world).bodies)
+        guard capacity > 0 else { return [] }
         let q = transform.rotation.vector
         let pose = SDFPose(position: (transform.translation.x, transform.translation.y, transform.translation.z),
                            orientation: (q.x, q.y, q.z, q.w), scale: transform.scale.x)
-        // At most one result per body
-        var buffer = [SDFOverlap](repeating: SDFOverlap(), count: Int(sdf_world_stats(world).bodies))
-        let count = buffer.withUnsafeMutableBufferPointer {
-            sdf_world_overlaps(world, shape.handle, pose, margin, mask.rawValue, $0.baseAddress, Int32($0.count))
-        }
-        return buffer.prefix(Int(count)).compactMap { overlap in
-            guard let entity = entity(of: overlap.body) else { return nil }
-            return Overlap(entity: entity, position: SIMD3(overlap.position.0, overlap.position.1, overlap.position.2),
-                           normal: SIMD3(overlap.normal.0, overlap.normal.1, overlap.normal.2),
-                           separation: overlap.separation)
+        return withUnsafeTemporaryAllocation(of: SDFOverlap.self, capacity: capacity) { buffer in
+            let count = min(capacity, Int(sdf_world_overlaps(
+                world, shape.handle, pose, margin, mask.rawValue, buffer.baseAddress, Int32(capacity))))
+            var hits: [Overlap] = []
+            hits.reserveCapacity(count)
+            for index in 0..<count {
+                let hit = buffer[index]
+                guard let entity = entity(of: hit.body) else { continue }
+                hits.append(Overlap(entity: entity, position: SIMD3(hit.position.0, hit.position.1, hit.position.2),
+                                    normal: SIMD3(hit.normal.0, hit.normal.1, hit.normal.2), separation: hit.separation))
+            }
+            return hits
         }
     }
 }

@@ -114,6 +114,16 @@ The documentation catalog covers getting started, migrating from RealityKit phys
 baking, tuning the paper's parameters, and performance. Build it with Xcode's
 **Product › Build Documentation**.
 
+Notes on the placement and diagnostics APIs of 0.4.0 (see [CHANGELOG.md](CHANGELOG.md)):
+
+- [Checking a mesh before baking](Documentation/MeshValidation.md): `SDFShape.validateMesh`.
+- [Baked grid information](Documentation/BakedGridInfo.md): `SDFShape.bakedGridInfo`.
+- [Node winding](Documentation/NodeWinding.md): the opt-in `.nodeWinding` bake for thin parts,
+  its resolution precondition and its cost.
+- [Sampled shape casts](Documentation/SampledShapeCast.md): `SDFSimulation.sampledShapeCast`,
+  and why it is not a continuous sweep.
+- [Query performance](Documentation/QueryPerformance.md): the ray and overlap query changes.
+
 ## Samples
 
 In `Samples/`, macOS apps built on the public API:

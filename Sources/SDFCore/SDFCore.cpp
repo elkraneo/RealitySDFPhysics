@@ -4,7 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <dispatch/dispatch.h>
 #include <map>
+#include <memory>
+#include <limits>
 #include <tuple>
 #include <unordered_map>
 
@@ -185,7 +188,145 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
     return handle;
 }
 
+// Generalized winding at the actual node. Double precision keeps cancellation in cavities and
+// on far-away nodes stable. No ray-origin jitter, and no edits to the vendored implementation.
+static double nodeSolidAngle(float3 p, float3 a, float3 b, float3 c)
+{
+    double v[3][3] = {{(double)a.x-p.x,(double)a.y-p.y,(double)a.z-p.z},
+                      {(double)b.x-p.x,(double)b.y-p.y,(double)b.z-p.z},
+                      {(double)c.x-p.x,(double)c.y-p.y,(double)c.z-p.z}};
+    auto dot3 = [](const double *x, const double *y) { return x[0]*y[0]+x[1]*y[1]+x[2]*y[2]; };
+    double la = sqrt(dot3(v[0],v[0])), lb = sqrt(dot3(v[1],v[1])), lc = sqrt(dot3(v[2],v[2]));
+    double determinant = v[0][0]*(v[1][1]*v[2][2]-v[1][2]*v[2][1])
+                       - v[0][1]*(v[1][0]*v[2][2]-v[1][2]*v[2][0])
+                       + v[0][2]*(v[1][0]*v[2][1]-v[1][1]*v[2][0]);
+    double denominator = la*lb*lc + dot3(v[0],v[1])*lc + dot3(v[1],v[2])*la + dot3(v[2],v[0])*lb;
+    return 2.0*atan2(determinant,denominator);
+}
+
+SDFShape *sdf_shape_bake_node_winding(const float *positions, int32_t vertexCount, const uint32_t *indices,
+                                    int32_t indexCount, int32_t resolution)
+{
+    if (!positions || !indices || vertexCount <= 0 || indexCount < 3 || indexCount % 3 != 0)
+        return nullptr;
+    AABB bounds = emptyAABB();
+    for (int i = 0; i < vertexCount; i++) {
+        float3 p = {positions[3*i],positions[3*i+1],positions[3*i+2]};
+        if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) return nullptr;
+        grow(bounds,p);
+    }
+    float extent = maxComponent(size(bounds));
+    if (!(extent > 0) || !std::isfinite(extent)) return nullptr;
+    const float3 midpoint = center(bounds);
+    const float unitScale = 1.0f/extent;
+    if (!std::isfinite(midpoint.x) || !std::isfinite(midpoint.y) || !std::isfinite(midpoint.z)
+        || !std::isfinite(unitScale)) return nullptr;
+    // Validate the arithmetic the unchanged constructor will perform before it casts dimensions
+    // to int or allocates its grid. This is an overflow check, not a promise that arbitrary grids
+    // fit the host's available memory.
+    const float gridCell = 1.0f/std::max(8,resolution);
+    const float3 normalizedSize = (bounds.max-midpoint)*unitScale - (bounds.min-midpoint)*unitScale;
+    uint64_t samples = 1;
+    for (int axis = 0; axis < 3; axis++) {
+        float span = ceilf(normalizedSize[axis]/gridCell);
+        if (!std::isfinite(span) || span < 0 || (double)span+7 > std::numeric_limits<int>::max()) return nullptr;
+        uint64_t dimension = (uint64_t)span+7;
+        if (samples > std::numeric_limits<size_t>::max()/sizeof(float4)/dimension) return nullptr;
+        samples *= dimension;
+    }
+    // Upstream indexes nx*(y+ny*z) and sizes auxiliary vectors using int products.
+    if (samples > (uint64_t)std::numeric_limits<int>::max()) return nullptr;
+    std::unique_ptr<SDFShape> handle(sdf_shape_bake(positions,vertexCount,indices,indexCount,resolution));
+    if (!handle) return nullptr;
+    auto *voxel = dynamic_cast<VoxelSdf *>(handle->shape.get());
+    if (!voxel) return nullptr;
+    const Mesh &mesh = voxel->mesh;
+    // computeNormals() can split the baked display mesh at hard normal seams. Weld indices
+    // again for validation only, without touching the field's triangles or display normals.
+    std::map<std::tuple<int,int,int>,int> welded;
+    std::vector<int> remap(mesh.positions.size());
+    AABB normalizedBounds = mesh.bounds();
+    float weldCell = max(maxComponent(size(normalizedBounds))*1e-5f,1e-9f);
+    for (size_t i = 0; i < mesh.positions.size(); i++) {
+        float3 q = (mesh.positions[i]-normalizedBounds.min)/weldCell;
+        auto key = std::make_tuple((int)lroundf(q.x),(int)lroundf(q.y),(int)lroundf(q.z));
+        auto result = welded.emplace(key,(int)welded.size());
+        remap[i] = result.first->second;
+    }
+    // Zero-area triangles are left out of the topology check and the winding sum, as
+    // validateMesh leaves them out: they enclose nothing, and atan2 of their solid angle is
+    // unstable. (The baker already dropped triangles whose welded corners coincide.) Upstream's
+    // isWatertight counts their edges, so it is not required here; this check is stricter.
+    std::vector<int> solid;
+    std::map<std::pair<int,int>,std::pair<int,int>> edges;
+    for (int t = 0; t < mesh.triangleCount(); t++) {
+        if (lengthSq(cross(mesh.vertex(t,1)-mesh.vertex(t,0),mesh.vertex(t,2)-mesh.vertex(t,0))) <= 1e-20f)
+            continue;
+        solid.push_back(t);
+        for (int j = 0; j < 3; j++) {
+            int from = remap[mesh.indices[3*t+j]], to = remap[mesh.indices[3*t+(j+1)%3]];
+            auto &use = edges[{std::min(from,to),std::max(from,to)}];
+            use.first++; use.second += from < to ? 1 : -1;
+        }
+    }
+    if (solid.empty()) return nullptr;
+    for (const auto &edge : edges)
+        if (edge.second.first != 2 || edge.second.second != 0) return nullptr;
+
+    // One z-slice per job on the system's threads (as the collision pass does), at the caller's
+    // quality of service. Each node depends only on the read-only mesh and writes only itself, so
+    // the result is identical to a serial pass. Not cancellable once started.
+    const Mesh *triangles = &mesh;
+    const int *solidTriangles = solid.data();
+    const size_t solidCount = solid.size();
+    VoxelSdf *field = voxel;
+    dispatch_apply((size_t)voxel->nz, DISPATCH_APPLY_AUTO, ^(size_t slice) {
+        const int z = (int)slice;
+        for (int y = 0; y < field->ny; y++) for (int x = 0; x < field->nx; x++) {
+            float3 p = field->origin + float3{(float)x,(float)y,(float)z}*field->cell;
+            double angle = 0;
+            for (size_t i = 0; i < solidCount; i++) {
+                int t = solidTriangles[i];
+                angle += nodeSolidAngle(p,triangles->vertex(t,0),triangles->vertex(t,1),triangles->vertex(t,2));
+            }
+            bool inside = fabs(angle) > 6.2831853071795864769; // |winding| > 1/2
+            float4 &node = field->grid[x+field->nx*(y+field->ny*z)];
+            float magnitude = fabsf(node.x);
+            // At a surface node upstream already stores its outward triangle normal. Away from the
+            // surface, reversing the signed distance also reverses the signed distance gradient.
+            if (magnitude > 1e-6f && (node.x < 0) != inside)
+                node.y = -node.y, node.z = -node.z, node.w = -node.w;
+            node.x = inside ? -magnitude : magnitude;
+        }
+    });
+    // Mass properties and curvature seeds depend on the corrected field too.
+    voxel->finalize();
+    return handle.release();
+}
+
 void sdf_shape_release(SDFShape *shape) { delete shape; }
+
+bool sdf_shape_baked_grid_info(const SDFShape *shape, SDFBakedGridInfo *info)
+{
+    if (!shape || !info)
+        return false;
+    const auto *voxel = dynamic_cast<const VoxelSdf *>(shape->shape.get());
+    if (!voxel)
+        return false;
+    info->sampleDimensions[0] = voxel->nx;
+    info->sampleDimensions[1] = voxel->ny;
+    info->sampleDimensions[2] = voxel->nz;
+    info->cellSize = voxel->cell / shape->unitScale;
+    info->sampleCount = static_cast<int64_t>(voxel->grid.size());
+    info->gridPayloadBytes = static_cast<int64_t>(voxel->grid.size() * sizeof(float4));
+    // Nodes lying on the surface store a distance of rounding size, of either sign
+    int64_t interior = 0;
+    const float depth = -1e-3f * voxel->cell;
+    for (const float4 &node : voxel->grid)
+        interior += node.x < depth;
+    info->interiorSampleCount = interior;
+    return true;
+}
 
 bool sdf_shape_is_watertight(const SDFShape *shape) { return shape->watertight; }
 

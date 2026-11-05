@@ -51,6 +51,13 @@ SDFShape *sdf_shape_warped_box(SDFWarp warp, float halfX, float halfY, float hal
 SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint32_t *indices, int32_t indexCount,
                          int32_t resolution);
 
+// Opt-in actual-grid-node solid-angle winding classification, without changing upstream or the
+// legacy bake. Requires a closed, consistently oriented welded mesh; NULL otherwise. This fixes
+// node signs, not the interpolation error of a finite voxel grid. Potentially expensive: O(nodes*triangles),
+// spread over z-slices on the system's threads with dispatch_apply; it cannot be cancelled.
+SDFShape *sdf_shape_bake_node_winding(const float *positions, int32_t vertexCount, const uint32_t *indices,
+                                    int32_t indexCount, int32_t resolution);
+
 // Baked shapes saved and loaded without baking again. sdf_shape_bake_data writes the data of a
 // shape from sdf_shape_bake when the buffer holds `capacity` bytes or more, and returns its size
 // either way; 0 for the other shapes. sdf_shape_from_data returns NULL for data that isn't that of a
@@ -59,6 +66,21 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
 #define SDF_BAKED_DATA_VERSION 1
 int64_t sdf_shape_bake_data(const SDFShape *shape, void *buffer, int64_t capacity);
 SDFShape *sdf_shape_from_data(const void *data, int64_t size);
+
+// Read-only dimensions of a baked voxel grid, including padding. Analytical shapes return false.
+// cellSize is in the caller's original shape units, before an entity's uniform scale.
+// gridPayloadBytes counts live (distance, gradient) samples only, not total shape or process memory.
+// interiorSampleCount counts samples deeper inside than a thousandth of a cell (samples on the
+// surface store rounding-size distances of either sign); zero means the field has no inside, as happens when the thinnest part of the mesh is under about one cell thick.
+typedef struct
+{
+    int32_t sampleDimensions[3];
+    float cellSize;
+    int64_t sampleCount;
+    int64_t gridPayloadBytes;
+    int64_t interiorSampleCount;
+} SDFBakedGridInfo;
+bool sdf_shape_baked_grid_info(const SDFShape *shape, SDFBakedGridInfo *info);
 
 void sdf_shape_release(SDFShape *shape);
 
