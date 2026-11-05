@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <dispatch/dispatch.h>
 #include <map>
 #include <memory>
 #include <limits>
@@ -272,20 +273,32 @@ SDFShape *sdf_shape_bake_node_winding(const float *positions, int32_t vertexCoun
     for (const auto &edge : edges)
         if (edge.second.first != 2 || edge.second.second != 0) return nullptr;
 
-    for (int z = 0; z < voxel->nz; z++) for (int y = 0; y < voxel->ny; y++) for (int x = 0; x < voxel->nx; x++) {
-        float3 p = voxel->origin + float3{(float)x,(float)y,(float)z}*voxel->cell;
-        double angle = 0;
-        for (int t : solid)
-            angle += nodeSolidAngle(p,mesh.vertex(t,0),mesh.vertex(t,1),mesh.vertex(t,2));
-        bool inside = fabs(angle) > 6.2831853071795864769; // |winding| > 1/2
-        float4 &node = voxel->grid[x+voxel->nx*(y+voxel->ny*z)];
-        float magnitude = fabsf(node.x);
-        // At a surface node upstream already stores its outward triangle normal. Away from the
-        // surface, reversing the signed distance also reverses the signed distance gradient.
-        if (magnitude > 1e-6f && (node.x < 0) != inside)
-            node.y = -node.y, node.z = -node.z, node.w = -node.w;
-        node.x = inside ? -magnitude : magnitude;
-    }
+    // One z-slice per job on the system's threads (as the collision pass does), at the caller's
+    // quality of service. Each node depends only on the read-only mesh and writes only itself, so
+    // the result is identical to a serial pass. Not cancellable once started.
+    const Mesh *triangles = &mesh;
+    const int *solidTriangles = solid.data();
+    const size_t solidCount = solid.size();
+    VoxelSdf *field = voxel;
+    dispatch_apply((size_t)voxel->nz, DISPATCH_APPLY_AUTO, ^(size_t slice) {
+        const int z = (int)slice;
+        for (int y = 0; y < field->ny; y++) for (int x = 0; x < field->nx; x++) {
+            float3 p = field->origin + float3{(float)x,(float)y,(float)z}*field->cell;
+            double angle = 0;
+            for (size_t i = 0; i < solidCount; i++) {
+                int t = solidTriangles[i];
+                angle += nodeSolidAngle(p,triangles->vertex(t,0),triangles->vertex(t,1),triangles->vertex(t,2));
+            }
+            bool inside = fabs(angle) > 6.2831853071795864769; // |winding| > 1/2
+            float4 &node = field->grid[x+field->nx*(y+field->ny*z)];
+            float magnitude = fabsf(node.x);
+            // At a surface node upstream already stores its outward triangle normal. Away from the
+            // surface, reversing the signed distance also reverses the signed distance gradient.
+            if (magnitude > 1e-6f && (node.x < 0) != inside)
+                node.y = -node.y, node.z = -node.z, node.w = -node.w;
+            node.x = inside ? -magnitude : magnitude;
+        }
+    });
     // Mass properties and curvature seeds depend on the corrected field too.
     voxel->finalize();
     return handle.release();

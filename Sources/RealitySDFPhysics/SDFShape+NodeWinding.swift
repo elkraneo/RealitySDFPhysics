@@ -19,7 +19,10 @@ extension SDFShape {
     }
 
     /// Opt-in node sign correction. Cost is proportional to grid nodes times triangles, in
-    /// addition to the legacy bake; call off the main actor for large meshes. No mesh repair or
+    /// addition to the legacy bake: thousands of triangles at resolution 64 take seconds even
+    /// spread over the cores, and a large grid of a large mesh can take minutes. The work runs on
+    /// the system's threads at the caller's priority and cannot be cancelled once started, so
+    /// call it off the main actor, and bake once and cache (`cached(baking:...)`). No mesh repair or
     /// automatic resolution increase is performed. Nested cavities require oppositely wound shells.
     ///
     /// Only existing grid nodes are corrected: a part thinner than about one cell has no interior

@@ -55,9 +55,22 @@ The checks do not promise that a valid but enormous grid fits available memory. 
 shells must be wound opposite to their enclosing material shell; validation does not infer the
 intended material/void semantics or rule out self-intersections.
 
+## Cost
+
 Cost is O(grid nodes × triangle count), **in addition to the legacy bake**, and includes a second
-mass/curvature-seed finalization. Run large bakes off the main actor. This is a bake-time operation;
-query APIs and the runtime overlap solver are unchanged.
+mass/curvature-seed finalization. Every node sums the solid angle of every triangle; there is no
+hierarchical acceleration. The sum runs one z-slice per job on the system's threads
+(`dispatch_apply`), at the caller's quality of service, and gives the same field as a serial pass.
+
+For scale, on an Apple silicon Mac with four performance and four efficiency cores, release
+build: a 3,968-triangle sphere at resolution 64 (71³ ≈ 358,000 nodes) took about 18 s with the
+single-threaded pass and about 6.6 s in parallel, including 0.8 s of legacy bake. Time grows
+linearly with triangles and roughly with the cube of the resolution for a mesh that is not thin.
+
+The bake **cannot be cancelled** once started: Swift task cancellation does not reach it. Run it
+off the main actor, bake once and cache (`SDFShape.cached(baking:...signMethod:)`), and simplify
+meshes of tens of thousands of triangles before baking. This is a bake-time operation; query APIs
+and the runtime overlap solver are unchanged.
 
 ## Caching and compatibility
 

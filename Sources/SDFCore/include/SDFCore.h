@@ -53,7 +53,8 @@ SDFShape *sdf_shape_bake(const float *positions, int32_t vertexCount, const uint
 
 // Opt-in actual-grid-node solid-angle winding classification, without changing upstream or the
 // legacy bake. Requires a closed, consistently oriented welded mesh; NULL otherwise. This fixes
-// node signs, not the interpolation error of a finite voxel grid. Potentially expensive: O(nodes*triangles).
+// node signs, not the interpolation error of a finite voxel grid. Potentially expensive: O(nodes*triangles),
+// spread over z-slices on the system's threads with dispatch_apply; it cannot be cancelled.
 SDFShape *sdf_shape_bake_node_winding(const float *positions, int32_t vertexCount, const uint32_t *indices,
                                     int32_t indexCount, int32_t resolution);
 
