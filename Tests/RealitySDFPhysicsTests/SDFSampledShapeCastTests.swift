@@ -118,6 +118,35 @@ import simd
         #expect(hit.sampleCount == 2)
     }
 
+    /// In Float, 2 * acos(dot) rounds a rotation under about 5e-4 radians to zero. With no
+    /// translation the cast then checked only the start and missed a destination contact.
+    @Test func aTinyRotationStillChecksTheDestination() throws {
+        let block = obstacle(.box(halfExtents: [0.5, 0.5, 0.5]), at: [0, 0, 0.5 + 0.05 + 0.0002])
+        simulation.step(root: root)
+        let bar = SDFShape.box(halfExtents: [1, 0.05, 0.05])
+        let start = Transform(), end = Transform(rotation: simd_quatf(angle: -4e-4, axis: [0, 1, 0]))
+        #expect(simulation.overlaps(of: bar, at: start).isEmpty)
+        #expect(!simulation.overlaps(of: bar, at: end).isEmpty)
+        let result = try simulation.sampledShapeCast(of: bar, from: start, to: end)
+        guard case let .hit(hit) = result else { Issue.record("Expected the destination contact, got \(result)"); return }
+        #expect(hit.fraction == 1)
+        #expect(hit.sampleCount == 2)
+        #expect(hit.previousSampleFraction == 0)
+        #expect(hit.contacts.contains { $0.entity == block })
+    }
+
+    @Test func theSameOrientationWrittenDifferentlyIsNoMotion() throws {
+        simulation.step(root: root)
+        let q = simd_quatf(vector: [0, 0, 0, 2])
+        let same = try simulation.sampledShapeCast(of: .sphere(radius: 0.1), from: Transform(rotation: q), to: Transform(rotation: q))
+        guard case let .noHitInSamples(count) = same else { Issue.record("Expected one clear sample"); return }
+        #expect(count == 1)
+        let flipped = try simulation.sampledShapeCast(of: .sphere(radius: 0.1), from: Transform(rotation: q),
+                                                      to: Transform(rotation: simd_quatf(vector: -q.vector)))
+        guard case let .noHitInSamples(count) = flipped else { Issue.record("Expected one clear sample"); return }
+        #expect(count == 1)
+    }
+
     @Test func coarseSamplesExplicitlyDoNotGuaranteeContinuousCollision() throws {
         obstacle(.box(halfExtents: [0.001, 1, 1]))
         simulation.step(root: root)

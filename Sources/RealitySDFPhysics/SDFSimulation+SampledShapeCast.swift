@@ -78,22 +78,30 @@ extension SDFSimulation {
         guard distance.isFinite else { throw SampledShapeCastError.invalidTransform }
         let startRotation = simd_normalize(start.rotation)
         var endRotation = simd_normalize(end.rotation)
-        var dot = simd_dot(startRotation.vector, endRotation.vector)
-        if dot < 0 {
+        if simd_dot(startRotation.vector, endRotation.vector) < 0 {
             endRotation = simd_quatf(vector: -endRotation.vector)
-            dot = -dot
         }
-        let angle = 2 * acos(min(1, max(0, dot)))
+        // The relative rotation's angle, in Double. 2 * acos(dot) in Float rounds every rotation
+        // under about 5e-4 radians to zero, and atan2 stays accurate near zero.
+        let relative = simd_quatd(vector: SIMD4<Double>(startRotation.vector)).conjugate
+            * simd_quatd(vector: SIMD4<Double>(endRotation.vector))
+        let angle = 2 * atan2(simd_length(relative.imag), abs(relative.real))
+        // Any change at all is sampled at least at both ends, however small the steps say it is.
+        let moves = start.translation != end.translation || startRotation.vector != endRotation.vector
         // Double avoids conversion overflow for finite but extremely small requested steps.
-        let intervals = max(ceil(Double(distance) / Double(maxTranslationStep)),
-                            ceil(Double(angle) / Double(maxRotationStep)))
+        let intervals = moves ? max(1, ceil(Double(distance) / Double(maxTranslationStep)),
+                                    ceil(angle / Double(maxRotationStep))) : 0
         let excluded = Set(entities.map { ObjectIdentifier($0) })
         var previous: Float?
         for sample in 0..<maxSamples {
-            let fraction = intervals == 0 ? Float(0) : Float(Double(sample) / intervals)
-            let pose = Transform(scale: start.scale,
-                                 rotation: simd_slerp(startRotation, endRotation, fraction),
-                                 translation: start.translation + (end.translation - start.translation) * fraction)
+            let isLast = Double(sample) >= intervals
+            let fraction = isLast ? Float(moves ? 1 : 0) : Float(Double(sample) / intervals)
+            // The last sample is exactly the requested destination, not an interpolation of it.
+            let pose = isLast && moves
+                ? Transform(scale: start.scale, rotation: endRotation, translation: end.translation)
+                : Transform(scale: start.scale,
+                            rotation: simd_slerp(startRotation, endRotation, fraction),
+                            translation: start.translation + (end.translation - start.translation) * fraction)
             let contacts = overlaps(of: shape, at: pose, margin: margin, mask: mask).filter {
                 !excluded.contains(ObjectIdentifier($0.entity)) && $0.separation <= margin
             }
@@ -101,7 +109,7 @@ extension SDFSimulation {
                 return .hit(SampledShapeCastHit(fraction: fraction, transform: pose, contacts: contacts,
                                                previousSampleFraction: previous, sampleCount: sample + 1))
             }
-            if intervals == 0 || Double(sample) >= intervals { return .noHitInSamples(sampleCount: sample + 1) }
+            if isLast { return .noHitInSamples(sampleCount: sample + 1) }
             previous = fraction
         }
         return .incomplete(lastSampleFraction: previous ?? 0, sampleCount: maxSamples)
