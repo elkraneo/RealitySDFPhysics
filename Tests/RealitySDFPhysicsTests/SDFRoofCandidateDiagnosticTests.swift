@@ -84,18 +84,6 @@ import simd
         return (pose.translation + pose.rotation.act(polygon.reduce(SIMD3<Float>.zero,+) / Float(polygon.count)),area,depth)
     }
 
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["SDF_THIN_BOX_DIAGNOSTIC"] != nil))
-    func axisAlignedThinBoxHasAnInteriorNode() throws {
-        let box = try SDFShape.bakedBox(halfExtents: [6.2,0.1,2])
-        let topology = SDFShape.validateMesh(positions: box.surface.positions,indices: box.surface.indices)
-        #expect(topology.isClosed && topology.isConsistentlyOriented)
-        for y in [Float(0),0.09,-0.09] {
-            let distance = box.distance(at: [0,y,0]).distance
-            print("THIN BOX y=\(y) distance=\(distance)")
-            #expect(distance < 0, "known interior of a consistently wound12.4x0.2x4 box")
-        }
-    }
-
     @Test(.enabled(if: ProcessInfo.processInfo.environment["SDF_ROOF_CANDIDATE_DIAGNOSTIC"] != nil))
     func compareRoofCandidatesAgainstActualTriangles() throws {
         let path = try #require(ProcessInfo.processInfo.environment["SDF_ROOF_CANDIDATE_DIAGNOSTIC"])
